@@ -1,4 +1,4 @@
-use iced::{Element, Size, Subscription, widget::column, window};
+use iced::{Element, widget::column};
 use rfd::FileDialog;
 
 use crate::comps::{bottom_row::bottom_row, main_panel::data_panel};
