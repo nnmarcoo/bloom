@@ -21,7 +21,7 @@ pub struct Uniforms {
     pub scale: f32,
 }
 
-pub struct Pipeline {
+pub struct Pipeline { // this also needs to bind a texture
     pipeline: RenderPipeline,
     uniform_buffer: Buffer,
     uniform_bind_group: BindGroup,
