@@ -7,7 +7,7 @@ mod comps;
 mod wgpu;
 
 fn main() -> iced::Result {
-    application("korjata", Img::update, Img::view)
+    application("img", Img::update, Img::view)
         .theme(move |_| Theme::Nord)
         .default_font(Font::MONOSPACE)
         .centered()

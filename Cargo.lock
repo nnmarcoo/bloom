@@ -1324,6 +1324,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "151665d9be52f9bb40fc7966565d39666f2d1e69233571b71b87791c7e0528b3"
 
 [[package]]
+name = "glam"
+version = "0.30.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e12d847aeb25f41be4c0ec9587d624e9cd631bc007a8fd7ce3f5851e064c6460"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "glow"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1498,7 +1507,7 @@ dependencies = [
  "bitflags 2.9.4",
  "bytes",
  "dark-light",
- "glam",
+ "glam 0.25.0",
  "log",
  "num-traits",
  "once_cell",
@@ -1609,7 +1618,7 @@ dependencies = [
  "bitflags 2.9.4",
  "bytemuck",
  "futures",
- "glam",
+ "glam 0.25.0",
  "guillotiere",
  "iced_glyphon",
  "iced_graphics",
@@ -1784,6 +1793,8 @@ dependencies = [
 name = "img"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
+ "glam 0.30.8",
  "iced",
  "rfd",
 ]
