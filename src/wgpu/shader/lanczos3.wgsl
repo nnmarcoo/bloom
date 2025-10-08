@@ -19,7 +19,6 @@ struct VertexOut {
 
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
-    // Two triangles that cover the whole screen
     var positions = array<vec2f, 6>(
         vec2f(-1.0, -1.0),
         vec2f( 1.0, -1.0),
@@ -41,8 +40,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;
     out.position = vec4f(positions[in.vertex_index], 0.0, 1.0);
 
-    // Apply center + scale to UVs
-    out.uv = (uvs[in.vertex_index] - 0.5) / uniforms.scale + 0.5 + uniforms.center;
+    out.uv = (uvs[in.vertex_index] - 0.5) * uniforms.scale + 0.5 + uniforms.center;
 
     return out;
 }
@@ -51,5 +49,3 @@ fn vs_main(in: VertexIn) -> VertexOut {
 fn fs_main(in: VertexOut) -> @location(0) vec4f {
     return textureSample(myTex, mySampler, in.uv);
 }
-
-
