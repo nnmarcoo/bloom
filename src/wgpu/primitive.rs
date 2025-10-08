@@ -53,7 +53,7 @@ impl Primitive for FragmentShaderPrimitive {
         _viewport: &Viewport,
     ) {
         if !storage.has::<Pipeline>() {
-            storage.store(Pipeline::new(device, format));
+            storage.store(Pipeline::new(device, queue, format));
         }
 
         let pipeline = storage.get_mut::<Pipeline>().unwrap();

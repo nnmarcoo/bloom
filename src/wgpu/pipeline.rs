@@ -4,12 +4,16 @@ use bytemuck::bytes_of;
 use glam::Vec2;
 use iced::{
     Rectangle,
+    advanced::graphics::image::image_rs::load_from_memory,
     widget::shader::wgpu::{
-        BindGroup, BindGroupDescriptor, BindGroupEntry, Buffer, BufferDescriptor, BufferUsages,
-        ColorTargetState, ColorWrites, CommandEncoder, Device, FragmentState, LoadOp,
-        MultisampleState, Operations, PrimitiveState, Queue, RenderPassColorAttachment,
-        RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, ShaderModuleDescriptor,
-        ShaderSource, StoreOp, TextureFormat, TextureView, VertexState,
+        AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindingResource, Buffer,
+        BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, CommandEncoder, Device,
+        Extent3d, FilterMode, FragmentState, LoadOp, MultisampleState, Operations, PrimitiveState,
+        Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
+        RenderPipelineDescriptor, Sampler, SamplerDescriptor, ShaderModuleDescriptor, ShaderSource,
+        StoreOp, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
+        TextureView, TextureViewDescriptor, VertexState,
+        util::{DeviceExt, TextureDataOrder},
     },
 };
 
@@ -21,14 +25,18 @@ pub struct Uniforms {
     pub scale: f32,
 }
 
-pub struct Pipeline { // this also needs to bind a texture
+pub struct Pipeline {
     pipeline: RenderPipeline,
     uniform_buffer: Buffer,
-    uniform_bind_group: BindGroup,
+    bind_group: BindGroup,
+
+    texture: Texture,
+    texture_view: TextureView,
+    sampler: Sampler,
 }
 
 impl Pipeline {
-    pub fn new(device: &Device, format: TextureFormat) -> Self {
+    pub fn new(device: &Device, queue: &Queue, format: TextureFormat) -> Self {
         let shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("Shader"),
             source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader/lanczos3.wgsl"))),
@@ -64,20 +72,32 @@ impl Pipeline {
             mapped_at_creation: false,
         });
 
-        let uniform_bind_group_layout = pipeline.get_bind_group_layout(0);
-        let uniform_bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("Bind Group"),
-            layout: &uniform_bind_group_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
+        let sampler = device.create_sampler(&SamplerDescriptor {
+            label: Some("Image Sampler"),
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            ..Default::default()
         });
+
+        let (texture, texture_view, bind_group) = Self::create_texture_bind_group(
+            device,
+            queue,
+            &pipeline,
+            &uniform_buffer,
+            &sampler,
+            include_bytes!("../assets/debug.jpg"),
+            "Initial Texture",
+        );
 
         Self {
             pipeline,
             uniform_buffer,
-            uniform_bind_group,
+            bind_group,
+            texture,
+            texture_view,
+            sampler,
         }
     }
 
@@ -115,8 +135,84 @@ impl Pipeline {
             0.,
             1.,
         );
-        pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+        pass.set_bind_group(0, &self.bind_group, &[]);
 
         pass.draw(0..3, 0..1);
+    }
+
+    fn create_texture_bind_group(
+        device: &Device,
+        queue: &Queue,
+        pipeline: &RenderPipeline,
+        uniform_buffer: &Buffer,
+        sampler: &Sampler,
+        image_bytes: &[u8],
+        label: &str,
+    ) -> (Texture, TextureView, BindGroup) {
+        let img = load_from_memory(image_bytes)
+            .expect("invalid image file")
+            .to_rgba8();
+        let (width, height) = img.dimensions();
+        let data = img.into_raw();
+
+        let texture = device.create_texture_with_data(
+            queue,
+            &TextureDescriptor {
+                label: Some(label),
+                size: Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: TextureFormat::Rgba8UnormSrgb,
+                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            TextureDataOrder::LayerMajor,
+            &data,
+        );
+
+        let texture_view = texture.create_view(&TextureViewDescriptor::default());
+
+        let layout = pipeline.get_bind_group_layout(0);
+        let bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("Image Bind Group"),
+            layout: &layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::TextureView(&texture_view),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::Sampler(sampler),
+                },
+            ],
+        });
+
+        (texture, texture_view, bind_group)
+    }
+
+    pub fn set_texture(&mut self, device: &Device, queue: &Queue, image_bytes: &[u8]) {
+        let (texture, texture_view, bind_group) = Self::create_texture_bind_group(
+            device,
+            queue,
+            &self.pipeline,
+            &self.uniform_buffer,
+            &self.sampler,
+            image_bytes,
+            "Updated Texture",
+        );
+
+        self.texture = texture;
+        self.texture_view = texture_view;
+        self.bind_group = bind_group;
     }
 }

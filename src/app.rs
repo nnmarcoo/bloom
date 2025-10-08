@@ -21,6 +21,11 @@ pub enum Message {
 }
 
 impl Img {
+    pub fn new() -> Self {
+        Self {
+            program: FragmentShaderProgram::new(),
+        }
+    }
     pub fn update(&mut self, message: Message) {}
 
     pub fn view(&self) -> Element<Message> {
