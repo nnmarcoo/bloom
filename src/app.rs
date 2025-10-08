@@ -7,10 +7,7 @@ use iced::{
 };
 use rfd::FileDialog;
 
-use crate::{
-    comps::{bottom_row::bottom_row, main_panel::main_panel},
-    wgpu::program::FragmentShaderProgram,
-};
+use crate::{comps::bottom_row::bottom_row, wgpu::program::FragmentShaderProgram};
 
 #[derive(Debug, Default)]
 pub struct Img {
@@ -46,14 +43,21 @@ impl Img {
                 let delta = delta * 0.2;
                 let prev_scale = self.program.controls.scale();
                 let prev_zoom = self.program.controls.zoom;
-                self.program.controls.zoom = (prev_zoom + delta).max(1.).min(17.);
+                self.program.controls.zoom = prev_zoom + delta;
 
                 let vec = pos - Vec2::new(bounds.width, bounds.height) * 0.5;
                 let new_scale = self.program.controls.scale();
                 self.program.controls.center += vec * (prev_scale - new_scale) * 2.0;
             }
 
-            Message::FileSelect => {}
+            Message::FileSelect => {
+                if let Some(path) = FileDialog::new()
+                    .add_filter("Image", &["png", "jpg", "jpeg"])
+                    .pick_file()
+                {
+                    todo!("set texture");
+                }
+            }
         }
     }
 

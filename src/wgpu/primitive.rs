@@ -64,6 +64,7 @@ impl Primitive for FragmentShaderPrimitive {
                 resolution: vec2(bounds.width, bounds.height), // this might need to be viewport
                 center: self.controls.center,
                 scale: self.controls.scale(),
+                _pad: f32::default(),
             },
         );
     }

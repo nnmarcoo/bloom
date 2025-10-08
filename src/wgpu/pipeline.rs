@@ -23,6 +23,7 @@ pub struct Uniforms {
     pub resolution: Vec2,
     pub center: Vec2,
     pub scale: f32,
+    pub _pad: f32,
 }
 
 pub struct Pipeline {
@@ -137,7 +138,7 @@ impl Pipeline {
         );
         pass.set_bind_group(0, &self.bind_group, &[]);
 
-        pass.draw(0..3, 0..1);
+        pass.draw(0..6, 0..1);
     }
 
     fn create_texture_bind_group(
