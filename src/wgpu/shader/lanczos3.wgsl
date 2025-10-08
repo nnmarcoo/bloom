@@ -40,7 +40,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;
     out.position = vec4f(positions[in.vertex_index], 0.0, 1.0);
 
-    out.uv = (uvs[in.vertex_index] - 0.5) * uniforms.scale + 0.5 + uniforms.center;
+    out.uv = (uvs[in.vertex_index] - 0.5) / uniforms.scale + 0.5 + uniforms.center;
 
     return out;
 }
