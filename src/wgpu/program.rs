@@ -21,7 +21,7 @@ impl Default for MouseInteraction {
 
 #[derive(Debug, Default)]
 pub struct FragmentShaderProgram {
-    controls: Controls,
+    pub controls: Controls,
 }
 
 impl FragmentShaderProgram {

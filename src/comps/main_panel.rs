@@ -8,7 +8,7 @@ use iced::{
     },
 };
 
-pub fn data_panel<'a>() -> Element<'a, Message> {
+pub fn main_panel<'a>() -> Element<'a, Message> {
     const IMAGE_BYTES: &[u8] = include_bytes!("../assets/debug.jpg");
     let handle = image::Handle::from_bytes(IMAGE_BYTES);
 

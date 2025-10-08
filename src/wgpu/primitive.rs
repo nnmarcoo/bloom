@@ -11,13 +11,13 @@ use crate::wgpu::pipeline::{Pipeline, Uniforms};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Controls {
-    zoom: f32,
-    center: Vec2,
+    pub zoom: f32,
+    pub center: Vec2,
 }
 
 impl Controls {
     // change this to be a proper scaling
-    fn scale(&self) -> f32 {
+    pub fn scale(&self) -> f32 {
         1.0 / 2.0_f32.powf(self.zoom) / 200.
     }
 }
