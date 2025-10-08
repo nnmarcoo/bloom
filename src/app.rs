@@ -62,8 +62,9 @@ impl Img {
     }
 
     pub fn view(&self) -> Element<Message> {
+        let bottom_row = bottom_row();
         let shader = shader(&self.program).width(Fill).height(Fill);
 
-        column![shader, bottom_row()].into()
+        column![shader, bottom_row].into()
     }
 }

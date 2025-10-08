@@ -1,6 +1,6 @@
 use iced::{
     Alignment::Center,
-    Element,
+    Color, Element,
     Length::Fill,
     Theme,
     widget::{container, row, text},
@@ -21,7 +21,8 @@ pub fn bottom_row<'a>() -> Element<'a, Message> {
     )
     .style(|theme: &Theme| {
         let palette = theme.extended_palette();
-        container::background(palette.secondary.base.color).color(palette.secondary.base.text)
+        container::background(Color::from_rgb(0., 255., 0.))
+        //container::background(palette.secondary.base.color).color(palette.secondary.base.text)
     })
     .into()
 }

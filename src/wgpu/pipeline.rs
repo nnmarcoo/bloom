@@ -31,6 +31,7 @@ pub struct Pipeline {
     uniform_buffer: Buffer,
     bind_group: BindGroup,
 
+    // why am I storing these
     texture: Texture,
     texture_view: TextureView,
     sampler: Sampler,
@@ -74,11 +75,11 @@ impl Pipeline {
         });
 
         let sampler = device.create_sampler(&SamplerDescriptor {
-            label: Some("Image Sampler"),
+            label: Some("Sampler"),
             address_mode_u: AddressMode::ClampToEdge,
             address_mode_v: AddressMode::ClampToEdge,
-            mag_filter: FilterMode::Linear,
-            min_filter: FilterMode::Linear,
+            mag_filter: FilterMode::Nearest,
+            min_filter: FilterMode::Nearest,
             ..Default::default()
         });
 
@@ -89,7 +90,7 @@ impl Pipeline {
             &uniform_buffer,
             &sampler,
             include_bytes!("../assets/debug.jpg"),
-            "Initial Texture",
+            "Texture",
         );
 
         Self {
@@ -209,7 +210,7 @@ impl Pipeline {
             &self.uniform_buffer,
             &self.sampler,
             image_bytes,
-            "Updated Texture",
+            "Texture",
         );
 
         self.texture = texture;
