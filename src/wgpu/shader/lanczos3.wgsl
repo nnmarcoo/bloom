@@ -5,8 +5,8 @@ struct Uniforms {
 }
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
-@group(0) @binding(1) var myTex: texture_2d<f32>;
-@group(0) @binding(2) var mySampler: sampler;
+@group(0) @binding(1) var tex: texture_2d<f32>;
+@group(0) @binding(2) var sampl: sampler;
 
 struct VertexIn {
     @builtin(vertex_index) vertex_index: u32,
@@ -47,5 +47,5 @@ fn vs_main(in: VertexIn) -> VertexOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4f {
-    return textureSample(myTex, mySampler, in.uv);
+    return textureSample(tex, sampl, in.uv);
 }

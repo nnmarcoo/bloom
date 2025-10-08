@@ -61,7 +61,7 @@ impl Primitive for FragmentShaderPrimitive {
         pipeline.update(
             queue,
             &Uniforms {
-                resolution: vec2(bounds.width, bounds.height), // this might need to be viewport
+                resolution: vec2(bounds.width, bounds.height),
                 center: self.controls.center,
                 scale: self.controls.scale(),
                 _pad: f32::default(),
@@ -77,6 +77,6 @@ impl Primitive for FragmentShaderPrimitive {
         clip_bounds: &Rectangle<u32>,
     ) {
         let pipeline = storage.get::<Pipeline>().unwrap();
-        pipeline.render(target, encoder, *clip_bounds); // this is different from demo
+        pipeline.render(target, encoder, *clip_bounds);
     }
 }

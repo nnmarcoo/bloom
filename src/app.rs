@@ -7,7 +7,10 @@ use iced::{
 };
 use rfd::FileDialog;
 
-use crate::{comps::bottom_row::bottom_row, wgpu::program::FragmentShaderProgram};
+use crate::{
+    comps::{bottom_row::bottom_row, main_panel::main_panel},
+    wgpu::program::FragmentShaderProgram,
+};
 
 #[derive(Debug, Default)]
 pub struct Img {
@@ -16,7 +19,7 @@ pub struct Img {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    FileSelect,
+    SetImage,
     UpdateZoom(f32),
     PanDelta(Vec2),
     ZoomDelta(Vec2, Rectangle, f32),
@@ -50,7 +53,7 @@ impl Img {
                 self.program.controls.center += vec * (prev_scale - new_scale) * 2.0;
             }
 
-            Message::FileSelect => {
+            Message::SetImage => {
                 if let Some(path) = FileDialog::new()
                     .add_filter("Image", &["png", "jpg", "jpeg"])
                     .pick_file()
