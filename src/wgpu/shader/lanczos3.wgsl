@@ -1,6 +1,5 @@
 struct Uniforms {
-    resolution: vec2f,
-    center: vec2f,
+    pos: vec2f,
     scale: f32,
 }
 
@@ -28,19 +27,13 @@ fn vs_main(in: VertexIn) -> VertexOut {
         vec2f( 1.0,  1.0),
     );
 
-    var uvs = array<vec2f, 6>(
-        vec2f(0.0, 1.0),
-        vec2f(1.0, 1.0),
-        vec2f(0.0, 0.0),
-        vec2f(0.0, 0.0),
-        vec2f(1.0, 1.0),
-        vec2f(1.0, 0.0),
-    );
+    let pos = positions[in.vertex_index];
+    let moved = pos * uniforms.scale + uniforms.pos;
 
     var out: VertexOut;
-    out.position = vec4f(positions[in.vertex_index], 0.0, 1.0);
+    out.position = vec4f(moved, 0.0, 1.0);
 
-    out.uv = (uvs[in.vertex_index] - 0.5) / uniforms.scale + 0.5 + uniforms.center;
+    out.uv = (pos + vec2f(1.0, 1.0)) * 0.5;
 
     return out;
 }

@@ -20,8 +20,7 @@ use iced::{
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Uniforms {
-    pub resolution: Vec2,
-    pub center: Vec2,
+    pub pos: Vec2,
     pub scale: f32,
     pub _pad: f32,
 }

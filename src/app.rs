@@ -7,10 +7,7 @@ use iced::{
 };
 use rfd::FileDialog;
 
-use crate::{
-    comps::{bottom_row::bottom_row, main_panel::main_panel},
-    wgpu::program::FragmentShaderProgram,
-};
+use crate::{comps::bottom_row::bottom_row, wgpu::program::FragmentShaderProgram};
 
 #[derive(Debug, Default)]
 pub struct Img {
@@ -38,7 +35,7 @@ impl Img {
             }
 
             Message::PanDelta(delta) => {
-                self.program.controls.center -= 2.0 * delta * self.program.controls.scale();
+                self.program.controls.pos -= 2.0 * delta * self.program.controls.scale();
             }
 
             // put actual zoom logic
@@ -50,7 +47,7 @@ impl Img {
 
                 let vec = pos - Vec2::new(bounds.width, bounds.height) * 0.5;
                 let new_scale = self.program.controls.scale();
-                self.program.controls.center += vec * (prev_scale - new_scale) * 2.0;
+                self.program.controls.pos += vec * (prev_scale - new_scale) * 2.0;
             }
 
             Message::SetImage => {

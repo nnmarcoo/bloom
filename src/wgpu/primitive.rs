@@ -12,7 +12,7 @@ use crate::wgpu::pipeline::{Pipeline, Uniforms};
 #[derive(Debug, Clone, Copy)]
 pub struct Controls {
     pub zoom: f32,
-    pub center: Vec2,
+    pub pos: Vec2,
 }
 
 impl Controls {
@@ -26,7 +26,7 @@ impl Default for Controls {
     fn default() -> Self {
         Self {
             zoom: 1.,
-            center: vec2(0., 0.),
+            pos: vec2(0., 0.),
         }
     }
 }
@@ -61,8 +61,7 @@ impl Primitive for FragmentShaderPrimitive {
         pipeline.update(
             queue,
             &Uniforms {
-                resolution: vec2(bounds.width, bounds.height),
-                center: self.controls.center,
+                pos: self.controls.pos,
                 scale: self.controls.scale(),
                 _pad: f32::default(),
             },
