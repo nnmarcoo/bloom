@@ -28,7 +28,8 @@ fn vs_main(in: VertexIn) -> VertexOut {
 
     var out: VertexOut;
     out.position = vec4f((positions[in.vertex_index] + uniforms.pos / uniforms.res) * uniforms.scale, 0.0, 1.0);
-    out.uv = (positions[in.vertex_index] + vec2f(1.0, 1.0)) * 0.5;
+    out.uv = vec2f((positions[in.vertex_index].x + 1.0) * 0.5, 1.0 - ((positions[in.vertex_index].y + 1.0) * 0.5)
+);
     return out;
 }
 
