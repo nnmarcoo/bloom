@@ -43,10 +43,6 @@ impl Img {
                 }
 
                 let new_scale = self.program.controls.scale();
-                if (new_scale - prev_scale).abs() < f32::EPSILON {
-                    return;
-                }
-
                 let cursor = vec2(cursor.x as f32, cursor.y as f32);
                 let res = vec2(bounds.width as f32, bounds.height as f32);
 

@@ -9,7 +9,6 @@ use iced::{
         AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindingResource, Buffer,
         BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, CommandEncoder, Device,
         Extent3d, FilterMode, FragmentState, LoadOp, MultisampleState, Operations, PrimitiveState,
-        Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
         PrimitiveTopology, Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
         RenderPipelineDescriptor, Sampler, SamplerDescriptor, ShaderModuleDescriptor, ShaderSource,
         StoreOp, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
