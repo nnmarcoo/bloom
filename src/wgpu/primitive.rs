@@ -1,4 +1,4 @@
-use glam::{Vec2, Vec4, vec2, vec4};
+use glam::{Vec2, vec2};
 use iced::{
     Rectangle,
     widget::shader::{
@@ -37,10 +37,8 @@ impl Controls {
         }
     }
 
-    pub fn to_ndc(&self, res: &Rectangle) -> Vec4 {
-        let ndc_x = (self.pos.x / res.width) * 2.0 - 1.0;
-        let ndc_y = 1.0 - (self.pos.y / res.height) * 2.0;
-        Vec4::new(ndc_x, ndc_y, 0.0, 1.0)
+    pub fn to_ndc(&self, res: &Rectangle) -> Vec2 {
+        todo!("GAH")
     }
 }
 

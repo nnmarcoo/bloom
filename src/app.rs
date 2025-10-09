@@ -46,6 +46,7 @@ impl Img {
                 let cursor = vec2(cursor.x as f32, cursor.y as f32);
                 let res = vec2(bounds.width as f32, bounds.height as f32);
 
+                // this kinda sucks
                 let ndc: Vec2 = vec2(
                     (cursor.x / res.x) * 2.0 - 1.0,
                     1.0 - (cursor.y / res.y) * 2.0,
