@@ -10,6 +10,7 @@ use iced::{
         BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, CommandEncoder, Device,
         Extent3d, FilterMode, FragmentState, LoadOp, MultisampleState, Operations, PrimitiveState,
         Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
+        PrimitiveTopology, Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
         RenderPipelineDescriptor, Sampler, SamplerDescriptor, ShaderModuleDescriptor, ShaderSource,
         StoreOp, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
         TextureView, TextureViewDescriptor, VertexState,
@@ -20,6 +21,7 @@ use iced::{
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Uniforms {
+    pub res: Vec2,
     pub pos: Vec2,
     pub scale: f32,
     pub _pad: f32,
@@ -51,7 +53,10 @@ impl Pipeline {
                 entry_point: "vs_main",
                 buffers: &[],
             },
-            primitive: PrimitiveState::default(),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
             depth_stencil: None,
             multisample: MultisampleState::default(),
             fragment: Some(FragmentState {
@@ -138,7 +143,7 @@ impl Pipeline {
         );
         pass.set_bind_group(0, &self.bind_group, &[]);
 
-        pass.draw(0..6, 0..1);
+        pass.draw(0..4, 0..1);
     }
 
     fn create_texture_bind_group(

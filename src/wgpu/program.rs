@@ -60,6 +60,7 @@ impl Program<Message> for FragmentShaderProgram {
                     mouse::ScrollDelta::Lines { y, .. } => y,
                     mouse::ScrollDelta::Pixels { y, .. } => y,
                 };
+
                 return (
                     Status::Captured,
                     Some(Message::ZoomDelta(pos, bounds, delta)),
@@ -83,7 +84,9 @@ impl Program<Message> for FragmentShaderProgram {
                 }
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
                     let pos = Vec2::new(position.x, position.y);
-                    let delta = pos - *prev_pos;
+                    let prev = *prev_pos;
+                    let delta = Vec2::new(pos.x - prev.x, prev.y - pos.y);
+
                     *state = MouseInteraction::Panning(pos);
                     return (Status::Captured, Some(Message::PanDelta(delta)));
                 }

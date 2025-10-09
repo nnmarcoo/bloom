@@ -1,4 +1,5 @@
 struct Uniforms {
+    res: vec2f,
     pos: vec2f,
     scale: f32,
 }
@@ -18,23 +19,16 @@ struct VertexOut {
 
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
-    var positions = array<vec2f, 6>(
+    var positions = array<vec2f, 4>(
         vec2f(-1.0, -1.0),
         vec2f( 1.0, -1.0),
         vec2f(-1.0,  1.0),
-        vec2f(-1.0,  1.0),
-        vec2f( 1.0, -1.0),
-        vec2f( 1.0,  1.0),
+        vec2f( 1.0,  1.0)
     );
 
-    let pos = positions[in.vertex_index];
-    let moved = pos * uniforms.scale + uniforms.pos;
-
     var out: VertexOut;
-    out.position = vec4f(moved, 0.0, 1.0);
-
-    out.uv = (pos + vec2f(1.0, 1.0)) * 0.5;
-
+    out.position = vec4f((positions[in.vertex_index] + uniforms.pos / uniforms.res) * uniforms.scale, 0.0, 1.0);
+    out.uv = (positions[in.vertex_index] + vec2f(1.0, 1.0)) * 0.5;
     return out;
 }
 

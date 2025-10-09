@@ -1,4 +1,4 @@
-use glam::Vec2;
+use glam::{Vec2, vec2};
 use iced::{
     Element,
     Length::Fill,
@@ -17,7 +17,6 @@ pub struct Img {
 #[derive(Debug, Clone)]
 pub enum Message {
     SetImage,
-    UpdateZoom(f32),
     PanDelta(Vec2),
     ZoomDelta(Vec2, Rectangle, f32),
 }
@@ -30,24 +29,36 @@ impl Img {
     }
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::UpdateZoom(zoom) => {
-                self.program.controls.zoom = zoom;
-            }
-
             Message::PanDelta(delta) => {
-                self.program.controls.pos -= 2.0 * delta * self.program.controls.scale();
+                self.program.controls.pos += 2. * delta / self.program.controls.scale();
             }
 
-            // put actual zoom logic
-            Message::ZoomDelta(pos, bounds, delta) => {
-                let delta = delta * 0.2;
+            Message::ZoomDelta(cursor, bounds, delta) => {
                 let prev_scale = self.program.controls.scale();
-                let prev_zoom = self.program.controls.zoom;
-                self.program.controls.zoom = prev_zoom + delta;
 
-                let vec = pos - Vec2::new(bounds.width, bounds.height) * 0.5;
+                if delta > 0.0 {
+                    self.program.controls.scale_up();
+                } else if delta < 0.0 {
+                    self.program.controls.scale_down();
+                }
+
                 let new_scale = self.program.controls.scale();
-                self.program.controls.pos += vec * (prev_scale - new_scale) * 2.0;
+                if (new_scale - prev_scale).abs() < f32::EPSILON {
+                    return;
+                }
+
+                let cursor = vec2(cursor.x as f32, cursor.y as f32);
+                let res = vec2(bounds.width as f32, bounds.height as f32);
+
+                let ndc: Vec2 = vec2(
+                    (cursor.x / res.x) * 2.0 - 1.0,
+                    1.0 - (cursor.y / res.y) * 2.0,
+                );
+
+                let factor = (1.0 / new_scale) - (1.0 / prev_scale);
+                let delta_pos = res * ndc * factor;
+
+                self.program.controls.pos += delta_pos;
             }
 
             Message::SetImage => {
@@ -62,7 +73,7 @@ impl Img {
     }
 
     pub fn view(&self) -> Element<Message> {
-        let bottom_row = bottom_row();
+        let bottom_row = bottom_row(self.program.controls.pos);
         let shader = shader(&self.program).width(Fill).height(Fill);
 
         column![shader, bottom_row].into()
