@@ -52,25 +52,45 @@ fn lanczos(x: f32, a: f32) -> f32 {
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let texSize = vec2f(textureDimensions(tex, 0));
-    let pixel = 1.0 / texSize;
+    let uvPerTexel = 1.0 / texSize;
 
-    let a = 2.0;
+    let uvF = fwidth(in.uv);
+    let texelsPerPixel = uvF * texSize;
+    var S = max(texelsPerPixel.x, texelsPerPixel.y);
+
+    if S < 1.0 { S = 1.0; }
+
+    let a = 3.0;
+
+    var radius_f = ceil(a * S);
+    if radius_f > 64.0 { radius_f = 64.0; }
+    let radius = i32(radius_f);
+
     var color = vec4f(0.0);
     var weightSum = 0.0;
 
-    let radius = i32(ceil(a / uniforms.scale));
+    let _touch = textureSampleLevel(tex, sampl, in.uv, 0.0).r * 0.0;
 
-    for (var x: i32 = -radius; x <= radius; x = x + 1) {
-        for (var y: i32 = -radius; y <= radius; y = y + 1) {
-            let offset = vec2f(f32(x), f32(y)) * pixel;
+    for (var j: i32 = -radius; j <= radius; j = j + 1) {
+        for (var i: i32 = -radius; i <= radius; i = i + 1) {
+            let offset_uv = vec2f(f32(i), f32(j)) * uvPerTexel;
 
-            let wx = lanczos(f32(x) * uniforms.scale, a);
-            let wy = lanczos(f32(y) * uniforms.scale, a);
+            let dx = f32(i) / S;
+            let dy = f32(j) / S;
+
+            let wx = lanczos(dx, a);
+            let wy = lanczos(dy, a);
             let w = wx * wy;
 
-            color += textureSample(tex, sampl, in.uv + offset) * w;
+            let sampUV = clamp(in.uv + offset_uv, vec2f(0.0, 0.0), vec2f(1.0, 1.0));
+
+            color += textureSampleLevel(tex, sampl, sampUV, 0.0) * w;
             weightSum += w;
         }
+    }
+
+    if weightSum <= 1e-9 {
+        return textureSampleLevel(tex, sampl, in.uv, 0.0);
     }
 
     return color / weightSum;
