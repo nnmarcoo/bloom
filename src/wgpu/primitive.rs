@@ -7,7 +7,10 @@ use iced::{
     },
 };
 
-use crate::{constants::SCALE_STEPS, wgpu::pipeline::{Pipeline, Uniforms}};
+use crate::{
+    constants::SCALE_STEPS,
+    wgpu::pipeline::{Pipeline, Uniforms},
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Controls {
