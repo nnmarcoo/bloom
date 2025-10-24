@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use bytemuck::bytes_of;
-use glam::Vec2;
+use glam::{Vec2, Vec4};
 use iced::{
     Rectangle,
     advanced::graphics::image::image_rs::load_from_memory,
@@ -20,10 +20,7 @@ use iced::{
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Uniforms {
-    pub res: Vec2,
-    pub pos: Vec2,
-    pub scale: f32,
-    pub _pad: f32,
+    pub pos: [Vec4; 4],
 }
 
 pub struct Pipeline {

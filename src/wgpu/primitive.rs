@@ -9,13 +9,17 @@ use iced::{
 
 use crate::{
     constants::SCALE_STEPS,
-    wgpu::pipeline::{Pipeline, Uniforms},
+    wgpu::{
+        image_data::ImageData,
+        pipeline::{Pipeline, Uniforms},
+    },
 };
 
 #[derive(Debug, Clone, Copy)]
 pub struct Controls {
     scale_index: usize,
     pub pos: Vec2,
+    pub image: ImageData,
 }
 
 impl Controls {
@@ -45,6 +49,7 @@ impl Default for Controls {
         Self {
             scale_index: 11,
             pos: vec2(0., 0.),
+            image: ImageData::new(),
         }
     }
 }
@@ -79,10 +84,7 @@ impl Primitive for FragmentShaderPrimitive {
         pipeline.update(
             queue,
             &Uniforms {
-                res: vec2(bounds.width, bounds.height),
-                pos: self.controls.pos,
-                scale: SCALE_STEPS[self.controls.scale_index],
-                _pad: f32::default(),
+                pos: self.controls.image.to_ndc(&bounds),
             },
         );
     }
