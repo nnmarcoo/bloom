@@ -4,6 +4,7 @@ use crate::app::Img;
 
 mod app;
 mod comps;
+mod constants;
 mod wgpu;
 
 fn main() -> iced::Result {
