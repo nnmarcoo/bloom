@@ -41,7 +41,7 @@ impl Pipeline {
     pub fn new(device: &Device, queue: &Queue, format: TextureFormat) -> Self {
         let shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("Shader"),
-            source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader/lanczos3.wgsl"))),
+            source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader/simple.wgsl"))),
         });
 
         let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {

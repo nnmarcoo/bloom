@@ -7,7 +7,7 @@ use iced::{
 };
 use rfd::FileDialog;
 
-use crate::{comps::bottom_row::bottom_row, wgpu::program::FragmentShaderProgram};
+use crate::{comps::bottom_row::bottom_row, wgpu::{image_data::ScaleDirection, program::FragmentShaderProgram}};
 
 #[derive(Debug, Default)]
 pub struct Img {
@@ -31,6 +31,11 @@ impl Img {
         match message {
             Message::PanDelta(delta) => {
                 self.program.controls.pos += 2. * delta / self.program.controls.scale();
+                self.program.controls.image.pan(delta);
+
+                println!("{:?}", self.program.controls.pos);
+                println!("{:?}", self.program.controls.image.pos);
+                println!("---")
             }
 
             Message::ZoomDelta(cursor, bounds, delta) => {
@@ -38,8 +43,10 @@ impl Img {
 
                 if delta > 0.0 {
                     self.program.controls.scale_up();
+                    self.program.controls.image.scale(ScaleDirection::UP, cursor);
                 } else if delta < 0.0 {
                     self.program.controls.scale_down();
+                    self.program.controls.image.scale(ScaleDirection::DOWN, cursor);
                 }
 
                 let new_scale = self.program.controls.scale();
