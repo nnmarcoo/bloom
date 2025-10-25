@@ -53,29 +53,4 @@ impl ImageData {
     pub fn pan(&mut self, delta: Vec2) {
         self.pos += 2. * delta / SCALE_STEPS[self.scale_i];
     }
-
-    pub fn to_ndc(&self, screen_size: &Rectangle) -> [Vec4; 4] {
-        let scaled_size = self.image_size * self.scale;
-        let top_left = self.pos;
-        let bottom_right = self.pos + scaled_size;
-
-        // Convert corners to NDC (Vec2)
-        let ndc_top_left = Self::screen_to_ndc(top_left, screen_size);
-        let ndc_bottom_right = Self::screen_to_ndc(bottom_right, screen_size);
-
-        // Convert to Vec4 positions for wgpu (z=0, w=1)
-        [
-            vec4(ndc_top_left.x, ndc_top_left.y, 0.0, 1.0), // top-left
-            vec4(ndc_bottom_right.x, ndc_top_left.y, 0.0, 1.0), // top-right
-            vec4(ndc_top_left.x, ndc_bottom_right.y, 0.0, 1.0), // bottom-left
-            vec4(ndc_bottom_right.x, ndc_bottom_right.y, 0.0, 1.0), // bottom-right
-        ]
-    }
-
-    fn screen_to_ndc(pos: Vec2, screen_size: &Rectangle) -> Vec2 {
-        vec2(
-            2.0 * pos.x / screen_size.x - 1.0,
-            1.0 - 2.0 * pos.y / screen_size.y,
-        )
-    }
 }
