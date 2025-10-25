@@ -7,7 +7,7 @@ use iced::{
 };
 use rfd::FileDialog;
 
-use crate::{comps::bottom_row::bottom_row, wgpu::{image_data::ScaleDirection, program::FragmentShaderProgram}};
+use crate::{comps::bottom_row::bottom_row, wgpu::program::FragmentShaderProgram};
 
 #[derive(Debug, Default)]
 pub struct Img {
@@ -17,7 +17,7 @@ pub struct Img {
 #[derive(Debug, Clone)]
 pub enum Message {
     SetImage,
-    Pan(Vec2),
+    PanDelta(Vec2),
     ZoomDelta(Vec2, Rectangle, f32),
 }
 
@@ -29,19 +29,12 @@ impl Img {
     }
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::Pan(delta) => {
+            Message::PanDelta(delta) => {
                 self.program.controls.pos += 2. * delta / self.program.controls.scale();
-                self.program.controls.image.pan(delta);
             }
 
             Message::ZoomDelta(cursor, bounds, delta) => {
                 let prev_scale = self.program.controls.scale();
-
-                if delta > 0. {
-                    self.program.controls.image.scale(ScaleDirection::UP, cursor);
-                } else {
-                    self.program.controls.image.scale(ScaleDirection::DOWN, cursor);
-                }
 
                 if delta > 0.0 {
                     self.program.controls.scale_up();
@@ -50,7 +43,7 @@ impl Img {
                 }
 
                 let new_scale = self.program.controls.scale();
-                //let cursor = vec2(cursor.x as f32, cursor.y as f32);
+                let cursor = vec2(cursor.x as f32, cursor.y as f32);
                 let res = vec2(bounds.width as f32, bounds.height as f32);
 
                 // this kinda sucks

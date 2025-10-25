@@ -1,4 +1,4 @@
-use glam::{Vec2, vec2};
+use glam::{vec2, Vec2};
 use iced::Rectangle;
 use iced::advanced::{Shell, mouse};
 use iced::event::Status;
@@ -87,7 +87,7 @@ impl Program<Message> for FragmentShaderProgram {
                     let delta = vec2(pos.x - prev.x, prev.y - pos.y);
 
                     *state = MouseInteraction::Panning(pos);
-                    return (Status::Captured, Some(Message::Pan(delta)));
+                    return (Status::Captured, Some(Message::PanDelta(delta)));
                 }
                 _ => {}
             },
