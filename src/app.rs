@@ -8,7 +8,7 @@ use iced::{
 use rfd::FileDialog;
 
 use crate::{
-    comps::bottom_row::bottom_row,
+    comps::{bottom_row::bottom_row, main_panel::main_panel},
     wgpu::{image_data::ScaleDirection, program::FragmentShaderProgram},
 };
 
@@ -85,6 +85,6 @@ impl Img {
         let bottom_row = bottom_row(self.program.controls.pos);
         let shader = shader(&self.program).width(Fill).height(Fill);
 
-        column![shader, bottom_row].into()
+        column![main_panel(self.program.controls.pos), bottom_row].into()
     }
 }
