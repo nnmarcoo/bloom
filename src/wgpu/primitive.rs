@@ -9,7 +9,10 @@ use iced::{
 
 use crate::{
     constants::SCALE_STEPS,
-    wgpu::{image_data::ImageData, pipeline::{Pipeline, Uniforms}},
+    wgpu::{
+        image_data::ImageData,
+        pipeline::{Pipeline, Uniforms},
+    },
 };
 
 #[derive(Debug, Clone, Copy)]
