@@ -49,7 +49,7 @@ impl Default for Controls {
         Self {
             scale_index: 11,
             pos: vec2(0., 0.),
-            image: ImageData::new(),
+            image: ImageData::new(vec2(2048., 2048.)),
         }
     }
 }

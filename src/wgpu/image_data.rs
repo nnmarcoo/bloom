@@ -13,27 +13,27 @@ pub enum ScaleDirection {
 #[derive(Debug, Clone, Copy)]
 pub struct ImageData {
     pub pos: Vec2,
-    pub image_size: Vec2,
+    pub original_size: Vec2,
     pub scale_i: usize,
-    pub scale: f32,
+    pub display_size: Vec2,
 }
 
 impl ImageData {
-    pub fn new() -> Self {
+    pub fn new(size: Vec2) -> Self {
         Self {
             pos: vec2(0., 0.),
-            image_size: vec2(0., 0.),
+            original_size: size,
             scale_i: 11,
-            scale: 1., // TODO: calculate to fit on screen
+            display_size: vec2(0., 0.), // TODO: calculate to fit on screen
         }
     }
 
     pub fn scale(&mut self, dir: ScaleDirection, cursor: Vec2) {
-        let prev_scale = self.scale;
+        let prev_scale = self.display_size;
 
         self.set_scale(dir);
 
-        let factor = self.scale / prev_scale;
+        let factor = self.display_size / prev_scale;
         self.pos = cursor - (cursor - self.pos) * factor;
     }
 
@@ -47,10 +47,14 @@ impl ImageData {
             }
         }
 
-        self.scale = SCALE_STEPS[self.scale_i];
+        self.display_size = self.original_size * SCALE_STEPS[self.scale_i];
     }
 
     pub fn pan(&mut self, delta: Vec2) {
         self.pos += 2. * delta / SCALE_STEPS[self.scale_i];
+    }
+
+    pub fn ndc(&self, res: Vec2) -> Vec2 {
+        (self.pos + self.display_size) / res
     }
 }
