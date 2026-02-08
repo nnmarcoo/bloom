@@ -8,13 +8,13 @@ use iced::{
 use rfd::FileDialog;
 
 use crate::{
-    comps::{bottom_row::bottom_row, main_panel::main_panel},
-    wgpu::{image_data::ScaleDirection, program::FragmentShaderProgram},
+    comps::bottom_row::bottom_row,
+    wgpu::{image_data::ScaleDirection, program::ImageProgram},
 };
 
 #[derive(Debug, Default)]
 pub struct Img {
-    program: FragmentShaderProgram,
+    program: ImageProgram,
 }
 
 #[derive(Debug, Clone)]
@@ -25,53 +25,39 @@ pub enum Message {
 }
 
 impl Img {
-    pub fn new() -> Self {
-        Self {
-            program: FragmentShaderProgram::new(),
-        }
-    }
     pub fn update(&mut self, message: Message) {
         match message {
             Message::PanDelta(delta) => {
-                self.program.controls.pos += 2. * delta / self.program.controls.scale();
-                self.program.controls.image.pan(delta);
+                self.program.view.pan += 2. * delta / self.program.view.scale();
+                self.program.view.image.pan(delta);
             }
 
             Message::ZoomDelta(cursor, bounds, delta) => {
-                let prev_scale = self.program.controls.scale();
+                let prev_scale = self.program.view.scale();
 
                 if delta > 0.0 {
-                    self.program.controls.scale_up();
-                    self.program
-                        .controls
-                        .image
-                        .scale(ScaleDirection::UP, cursor);
+                    self.program.view.scale_up();
+                    self.program.view.image.scale(ScaleDirection::UP, cursor);
                 } else if delta < 0.0 {
-                    self.program.controls.scale_down();
-                    self.program
-                        .controls
-                        .image
-                        .scale(ScaleDirection::DOWN, cursor);
+                    self.program.view.scale_down();
+                    self.program.view.image.scale(ScaleDirection::DOWN, cursor);
                 }
 
-                let new_scale = self.program.controls.scale();
-                let cursor = vec2(cursor.x as f32, cursor.y as f32);
-                let res = vec2(bounds.width as f32, bounds.height as f32);
+                let new_scale = self.program.view.scale();
+                let cursor = vec2(cursor.x, cursor.y);
+                let viewport = vec2(bounds.width, bounds.height);
 
-                // this kinda sucks
-                let ndc: Vec2 = vec2(
-                    (cursor.x / res.x) * 2.0 - 1.0,
-                    1.0 - (cursor.y / res.y) * 2.0,
+                let ndc = vec2(
+                    (cursor.x / viewport.x) * 2.0 - 1.0,
+                    1.0 - (cursor.y / viewport.y) * 2.0,
                 );
 
                 let factor = (1.0 / new_scale) - (1.0 / prev_scale);
-                let delta_pos = res * ndc * factor;
-
-                self.program.controls.pos += delta_pos;
+                self.program.view.pan += viewport * ndc * factor;
             }
 
             Message::SetImage => {
-                if let Some(path) = FileDialog::new()
+                if let Some(_path) = FileDialog::new()
                     .add_filter("Image", &["png", "jpg", "jpeg"])
                     .pick_file()
                 {
@@ -82,9 +68,9 @@ impl Img {
     }
 
     pub fn view(&self) -> Element<Message> {
-        let bottom_row = bottom_row(self.program.controls.pos);
+        let bottom_row = bottom_row(self.program.view.pan);
         let shader = shader(&self.program).width(Fill).height(Fill);
 
-        column![main_panel(self.program.controls.pos), bottom_row].into()
+        column![shader, bottom_row].into()
     }
 }

@@ -16,13 +16,13 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy)]
-pub struct Controls {
+pub struct ViewState {
     scale_index: usize,
-    pub pos: Vec2,
+    pub pan: Vec2,
     pub image: ImageData,
 }
 
-impl Controls {
+impl ViewState {
     pub fn scale(&self) -> f32 {
         SCALE_STEPS[self.scale_index]
     }
@@ -38,34 +38,30 @@ impl Controls {
             self.scale_index -= 1;
         }
     }
-
-    pub fn to_ndc(&self, res: &Rectangle) -> Vec2 {
-        todo!("GAH")
-    }
 }
 
-impl Default for Controls {
+impl Default for ViewState {
     fn default() -> Self {
         Self {
             scale_index: 11,
-            pos: vec2(0., 0.),
+            pan: Vec2::ZERO,
             image: ImageData::new(vec2(2048., 2048.)),
         }
     }
 }
 
 #[derive(Debug)]
-pub struct FragmentShaderPrimitive {
-    controls: Controls,
+pub struct ImagePrimitive {
+    view_state: ViewState,
 }
 
-impl FragmentShaderPrimitive {
-    pub fn new(controls: Controls) -> Self {
-        Self { controls }
+impl ImagePrimitive {
+    pub fn new(view_state: ViewState) -> Self {
+        Self { view_state }
     }
 }
 
-impl Primitive for FragmentShaderPrimitive {
+impl Primitive for ImagePrimitive {
     fn prepare(
         &self,
         device: &Device,
@@ -82,12 +78,14 @@ impl Primitive for FragmentShaderPrimitive {
         let pipeline = storage.get_mut::<Pipeline>().unwrap();
 
         pipeline.update(
+            device,
             queue,
             &Uniforms {
-                res: vec2(bounds.width, bounds.height),
-                pos: self.controls.pos,
-                scale: SCALE_STEPS[self.controls.scale_index],
-                _pad: f32::default(),
+                viewport_size: vec2(bounds.width, bounds.height),
+                pan: self.view_state.pan,
+                scale: self.view_state.scale(),
+                _pad: 0.0,
+                image_size: self.view_state.image.original_size,
             },
         );
     }

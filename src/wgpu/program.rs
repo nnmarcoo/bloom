@@ -5,36 +5,28 @@ use iced::event::Status;
 use iced::widget::shader::{Event, Program};
 
 use crate::app::Message;
-use crate::wgpu::primitive::{Controls, FragmentShaderPrimitive};
+use crate::wgpu::primitive::{ImagePrimitive, ViewState};
 
 #[derive(Debug, Clone)]
-pub enum MouseInteraction {
+pub enum DragState {
     Idle,
-    Panning(Vec2),
+    Dragging(Vec2),
 }
 
-impl Default for MouseInteraction {
+impl Default for DragState {
     fn default() -> Self {
-        MouseInteraction::Idle
+        DragState::Idle
     }
 }
 
 #[derive(Debug, Default)]
-pub struct FragmentShaderProgram {
-    pub controls: Controls,
+pub struct ImageProgram {
+    pub view: ViewState,
 }
 
-impl FragmentShaderProgram {
-    pub fn new() -> Self {
-        Self {
-            controls: Controls::default(),
-        }
-    }
-}
-
-impl Program<Message> for FragmentShaderProgram {
-    type State = MouseInteraction;
-    type Primitive = FragmentShaderPrimitive;
+impl Program<Message> for ImageProgram {
+    type State = DragState;
+    type Primitive = ImagePrimitive;
 
     fn draw(
         &self,
@@ -42,7 +34,7 @@ impl Program<Message> for FragmentShaderProgram {
         _cursor: mouse::Cursor,
         _bounds: Rectangle,
     ) -> Self::Primitive {
-        FragmentShaderPrimitive::new(self.controls)
+        ImagePrimitive::new(self.view)
     }
 
     fn update(
@@ -69,24 +61,24 @@ impl Program<Message> for FragmentShaderProgram {
         }
 
         match state {
-            MouseInteraction::Idle => {
+            DragState::Idle => {
                 if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
                     if let Some(pos) = cursor.position_over(bounds) {
-                        *state = MouseInteraction::Panning(Vec2::new(pos.x, pos.y));
+                        *state = DragState::Dragging(Vec2::new(pos.x, pos.y));
                         return (Status::Captured, None);
                     }
                 }
             }
-            MouseInteraction::Panning(prev) => match event {
+            DragState::Dragging(prev) => match event {
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                    *state = MouseInteraction::Idle;
+                    *state = DragState::Idle;
                     return (Status::Captured, None);
                 }
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                    let pos = vec2(position.x, position.y);
-                    let delta = vec2(pos.x - prev.x, prev.y - pos.y);
+                    let current = vec2(position.x, position.y);
+                    let delta = vec2(current.x - prev.x, prev.y - current.y);
 
-                    *state = MouseInteraction::Panning(pos);
+                    *state = DragState::Dragging(current);
                     return (Status::Captured, Some(Message::PanDelta(delta)));
                 }
                 _ => {}
@@ -103,8 +95,8 @@ impl Program<Message> for FragmentShaderProgram {
         _cursor: mouse::Cursor,
     ) -> mouse::Interaction {
         match state {
-            MouseInteraction::Idle => mouse::Interaction::Idle,
-            MouseInteraction::Panning(_) => mouse::Interaction::Grabbing,
+            DragState::Idle => mouse::Interaction::Idle,
+            DragState::Dragging(_) => mouse::Interaction::Grabbing,
         }
     }
 }
