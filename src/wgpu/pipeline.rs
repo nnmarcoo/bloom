@@ -11,11 +11,11 @@ use iced::{
         BufferBindingType, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites,
         CommandEncoder, Device, Extent3d, FilterMode, FragmentState, LoadOp, MultisampleState,
         Operations, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue,
-        RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
-        RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor,
-        ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Texture, TextureDescriptor,
-        TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
-        TextureViewDescriptor, TextureViewDimension, VertexState,
+        RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
+        Sampler, SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor, ShaderSource,
+        ShaderStages, StoreOp, Texture, TextureDescriptor, TextureDimension, TextureFormat,
+        TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension,
+        VertexState,
         util::{DeviceExt, TextureDataOrder},
     },
 };
@@ -56,7 +56,11 @@ impl RenderTarget {
             view_formats: &[],
         });
         let view = texture.create_view(&TextureViewDescriptor::default());
-        Self { texture, view, size: (width.max(1), height.max(1)) }
+        Self {
+            texture,
+            view,
+            size: (width.max(1), height.max(1)),
+        }
     }
 }
 
@@ -163,8 +167,10 @@ impl Pipeline {
             })
         };
 
-        let lanczos_h_pipeline = create_pipeline("Lanczos H", &lanczos_h_shader, INTERMEDIATE_FORMAT);
-        let lanczos_v_pipeline = create_pipeline("Lanczos V", &lanczos_v_shader, INTERMEDIATE_FORMAT);
+        let lanczos_h_pipeline =
+            create_pipeline("Lanczos H", &lanczos_h_shader, INTERMEDIATE_FORMAT);
+        let lanczos_v_pipeline =
+            create_pipeline("Lanczos V", &lanczos_v_shader, INTERMEDIATE_FORMAT);
         let blit_pipeline = create_pipeline("Blit", &blit_shader, target_format);
 
         let uniform_buffer = device.create_buffer(&BufferDescriptor {
@@ -187,17 +193,29 @@ impl Pipeline {
             Self::load_image(device, queue, include_bytes!("../assets/debug.jpg"));
 
         let source_bind_group = Self::create_bind_group(
-            device, &bind_group_layout, &uniform_buffer, &source_view, &sampler,
+            device,
+            &bind_group_layout,
+            &uniform_buffer,
+            &source_view,
+            &sampler,
         );
 
         let h_filtered = RenderTarget::new(device, 1, 1);
         let h_filtered_bind_group = Self::create_bind_group(
-            device, &bind_group_layout, &uniform_buffer, &h_filtered.view, &sampler,
+            device,
+            &bind_group_layout,
+            &uniform_buffer,
+            &h_filtered.view,
+            &sampler,
         );
 
         let hv_filtered = RenderTarget::new(device, 1, 1);
         let blit_bind_group = Self::create_bind_group(
-            device, &bind_group_layout, &uniform_buffer, &hv_filtered.view, &sampler,
+            device,
+            &bind_group_layout,
+            &uniform_buffer,
+            &hv_filtered.view,
+            &sampler,
         );
 
         Self {
@@ -230,8 +248,11 @@ impl Pipeline {
 
         if scale >= 1.0 {
             self.blit_bind_group = Self::create_bind_group(
-                device, &self.bind_group_layout, &self.uniform_buffer,
-                &self.source_view, &self.sampler,
+                device,
+                &self.bind_group_layout,
+                &self.uniform_buffer,
+                &self.source_view,
+                &self.sampler,
             );
             return;
         }
@@ -243,8 +264,11 @@ impl Pipeline {
         if h_needed != self.h_filtered.size {
             self.h_filtered = RenderTarget::new(device, h_needed.0, h_needed.1);
             self.h_filtered_bind_group = Self::create_bind_group(
-                device, &self.bind_group_layout, &self.uniform_buffer,
-                &self.h_filtered.view, &self.sampler,
+                device,
+                &self.bind_group_layout,
+                &self.uniform_buffer,
+                &self.h_filtered.view,
+                &self.sampler,
             );
         }
 
@@ -252,28 +276,30 @@ impl Pipeline {
         if hv_needed != self.hv_filtered.size {
             self.hv_filtered = RenderTarget::new(device, hv_needed.0, hv_needed.1);
             self.blit_bind_group = Self::create_bind_group(
-                device, &self.bind_group_layout, &self.uniform_buffer,
-                &self.hv_filtered.view, &self.sampler,
+                device,
+                &self.bind_group_layout,
+                &self.uniform_buffer,
+                &self.hv_filtered.view,
+                &self.sampler,
             );
         }
     }
 
-    pub fn render(
-        &self,
-        screen: &TextureView,
-        encoder: &mut CommandEncoder,
-        clip: Rectangle<u32>,
-    ) {
+    pub fn render(&self, screen: &TextureView, encoder: &mut CommandEncoder, clip: Rectangle<u32>) {
         if self.cached_scale < 1.0 {
             self.render_to_texture(
-                encoder, &self.lanczos_h_pipeline,
-                &self.h_filtered.view, self.h_filtered.size,
+                encoder,
+                &self.lanczos_h_pipeline,
+                &self.h_filtered.view,
+                self.h_filtered.size,
                 &self.source_bind_group,
             );
 
             self.render_to_texture(
-                encoder, &self.lanczos_v_pipeline,
-                &self.hv_filtered.view, self.hv_filtered.size,
+                encoder,
+                &self.lanczos_v_pipeline,
+                &self.hv_filtered.view,
+                self.hv_filtered.size,
                 &self.h_filtered_bind_group,
             );
         }
@@ -331,9 +357,12 @@ impl Pipeline {
         });
         pass.set_pipeline(&self.blit_pipeline);
         pass.set_viewport(
-            clip.x as f32, clip.y as f32,
-            clip.width as f32, clip.height as f32,
-            0., 1.,
+            clip.x as f32,
+            clip.y as f32,
+            clip.width as f32,
+            clip.height as f32,
+            0.,
+            1.,
         );
         pass.set_bind_group(0, &self.blit_bind_group, &[]);
         pass.draw(0..4, 0..1);
@@ -347,8 +376,11 @@ impl Pipeline {
         self.source_size = size;
         self.cached_scale = 0.0;
         self.source_bind_group = Self::create_bind_group(
-            device, &self.bind_group_layout, &self.uniform_buffer,
-            &self.source_view, &self.sampler,
+            device,
+            &self.bind_group_layout,
+            &self.uniform_buffer,
+            &self.source_view,
+            &self.sampler,
         );
     }
 
@@ -366,7 +398,11 @@ impl Pipeline {
             queue,
             &TextureDescriptor {
                 label: None,
-                size: Extent3d { width, height, depth_or_array_layers: 1 },
+                size: Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: TextureDimension::D2,
