@@ -7,60 +7,65 @@ use iced::{
     },
 };
 
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+
 use crate::{
     constants::SCALE_STEPS,
     wgpu::pipeline::{Pipeline, Uniforms},
 };
 
-const DEFAULT_SCALE_INDEX: usize = 11; // 1.0x in SCALE_STEPS
-
 #[derive(Debug, Clone, Copy)]
 pub struct ViewState {
-    scale_index: usize,
+    pub scale: f32,
     pub pan: Vec2,
+    pub image_size: Vec2,
 }
 
 impl Default for ViewState {
     fn default() -> Self {
         Self {
-            scale_index: DEFAULT_SCALE_INDEX,
+            scale: 0.0,
             pan: Vec2::ZERO,
+            image_size: Vec2::ZERO,
         }
     }
 }
 
 impl ViewState {
-    pub fn scale(&self) -> f32 {
-        SCALE_STEPS[self.scale_index]
-    }
-
     pub fn scale_up(&mut self) {
-        if self.scale_index + 1 < SCALE_STEPS.len() {
-            self.scale_index += 1;
+        if let Some(&s) = SCALE_STEPS.iter().find(|&&s| s > self.scale) {
+            self.scale = s;
         }
     }
 
     pub fn scale_down(&mut self) {
-        if self.scale_index > 0 {
-            self.scale_index -= 1;
+        if let Some(&s) = SCALE_STEPS.iter().rev().find(|&&s| s < self.scale) {
+            self.scale = s;
         }
     }
 
-    pub fn reset(&mut self) {
-        *self = Self::default();
+    pub fn clamp_pan(&mut self) {
+        self.pan = self.pan.clamp(-self.image_size, self.image_size);
     }
 }
 
 pub struct ImagePrimitive {
     view_state: ViewState,
     pending_image: Option<Vec<u8>>,
+    scale_out: Arc<AtomicU32>,
 }
 
 impl ImagePrimitive {
-    pub fn new(view_state: ViewState, pending_image: Option<Vec<u8>>) -> Self {
+    pub fn new(
+        view_state: ViewState,
+        pending_image: Option<Vec<u8>>,
+        scale_out: Arc<AtomicU32>,
+    ) -> Self {
         Self {
             view_state,
             pending_image,
+            scale_out,
         }
     }
 }
@@ -69,7 +74,10 @@ impl std::fmt::Debug for ImagePrimitive {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ImagePrimitive")
             .field("view_state", &self.view_state)
-            .field("pending_image", &self.pending_image.as_ref().map(|b| b.len()))
+            .field(
+                "pending_image",
+                &self.pending_image.as_ref().map(|b| b.len()),
+            )
             .finish()
     }
 }
@@ -95,14 +103,26 @@ impl Primitive for ImagePrimitive {
         }
 
         let image_size = pipeline.image_size();
+        let viewport = vec2(bounds.width, bounds.height);
+
+        let scale = if self.view_state.scale == 0.0
+            && image_size != Vec2::ZERO
+            && viewport != Vec2::ZERO
+        {
+            let fit = (viewport.x / image_size.x).min(viewport.y / image_size.y);
+            self.scale_out.store(fit.to_bits(), Ordering::Relaxed);
+            fit
+        } else {
+            self.view_state.scale
+        };
 
         pipeline.update(
             device,
             queue,
             &Uniforms {
-                viewport_size: vec2(bounds.width, bounds.height),
+                viewport_size: viewport,
                 pan: self.view_state.pan,
-                scale: self.view_state.scale(),
+                scale,
                 _pad: 0.0,
                 image_size,
             },

@@ -1,8 +1,10 @@
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use glam::{Vec2, vec2};
 use iced::Rectangle;
-use iced::advanced::{Shell, mouse};
+use iced::advanced::{Shell, graphics::image::image_rs, mouse};
 use iced::event::Status;
 use iced::widget::shader::{Event, Program};
 
@@ -16,15 +18,53 @@ pub enum DragState {
     Dragging(Vec2),
 }
 
-#[derive(Debug, Default)]
 pub struct ImageProgram {
     pub view: ViewState,
     pending_image: RefCell<Option<Vec<u8>>>,
+    fit_scale: Arc<AtomicU32>,
+}
+
+impl std::fmt::Debug for ImageProgram {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImageProgram")
+            .field("view", &self.view)
+            .finish()
+    }
+}
+
+impl Default for ImageProgram {
+    fn default() -> Self {
+        let debug_bytes = include_bytes!("../assets/debug.jpg");
+        let mut view = ViewState::default();
+        if let Ok(reader) =
+            image_rs::io::Reader::new(std::io::Cursor::new(debug_bytes as &[u8]))
+                .with_guessed_format()
+        {
+            if let Ok((w, h)) = reader.into_dimensions() {
+                view.image_size = vec2(w as f32, h as f32);
+            }
+        }
+
+        Self {
+            view,
+            pending_image: RefCell::new(None),
+            fit_scale: Arc::new(AtomicU32::new(0f32.to_bits())),
+        }
+    }
 }
 
 impl ImageProgram {
     pub fn set_pending_image(&self, bytes: Vec<u8>) {
         *self.pending_image.borrow_mut() = Some(bytes);
+    }
+
+    pub fn resolve_scale(&mut self) {
+        if self.view.scale == 0.0 {
+            let fit = f32::from_bits(self.fit_scale.load(Ordering::Relaxed));
+            if fit > 0.0 {
+                self.view.scale = fit;
+            }
+        }
     }
 }
 
@@ -38,7 +78,11 @@ impl Program<Message> for ImageProgram {
         _cursor: mouse::Cursor,
         _bounds: Rectangle,
     ) -> Self::Primitive {
-        ImagePrimitive::new(self.view, self.pending_image.borrow_mut().take())
+        ImagePrimitive::new(
+            self.view,
+            self.pending_image.borrow_mut().take(),
+            Arc::clone(&self.fit_scale),
+        )
     }
 
     fn update(
