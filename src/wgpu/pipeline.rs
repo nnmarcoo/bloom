@@ -368,7 +368,10 @@ impl Pipeline {
         pass.draw(0..4, 0..1);
     }
 
-    #[allow(dead_code)]
+    pub fn image_size(&self) -> Vec2 {
+        Vec2::new(self.source_size.0 as f32, self.source_size.1 as f32)
+    }
+
     pub fn set_image(&mut self, device: &Device, queue: &Queue, image_bytes: &[u8]) {
         let (texture, view, size) = Self::load_image(device, queue, image_bytes);
         self._source_texture = texture;
@@ -376,7 +379,19 @@ impl Pipeline {
         self.source_size = size;
         self.cached_scale = 0.0;
         self.blit_source = BlitSource::Source;
-        self.source_bind_group = Self::create_bind_group(
+
+        let bind_group = Self::create_bind_group(
+            device,
+            &self.bind_group_layout,
+            &self.uniform_buffer,
+            &self.source_view,
+            &self.sampler,
+        );
+        self.source_bind_group = bind_group;
+
+        // Blit must also point at the new source immediately, otherwise it
+        // keeps referencing the old texture until the next scale change.
+        self.blit_bind_group = Self::create_bind_group(
             device,
             &self.bind_group_layout,
             &self.uniform_buffer,

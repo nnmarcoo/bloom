@@ -12,11 +12,21 @@ use crate::{
     wgpu::pipeline::{Pipeline, Uniforms},
 };
 
+const DEFAULT_SCALE_INDEX: usize = 11; // 1.0x in SCALE_STEPS
+
 #[derive(Debug, Clone, Copy)]
 pub struct ViewState {
     scale_index: usize,
     pub pan: Vec2,
-    pub image_size: Vec2,
+}
+
+impl Default for ViewState {
+    fn default() -> Self {
+        Self {
+            scale_index: DEFAULT_SCALE_INDEX,
+            pan: Vec2::ZERO,
+        }
+    }
 }
 
 impl ViewState {
@@ -35,26 +45,32 @@ impl ViewState {
             self.scale_index -= 1;
         }
     }
+
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
 }
 
-impl Default for ViewState {
-    fn default() -> Self {
+pub struct ImagePrimitive {
+    view_state: ViewState,
+    pending_image: Option<Vec<u8>>,
+}
+
+impl ImagePrimitive {
+    pub fn new(view_state: ViewState, pending_image: Option<Vec<u8>>) -> Self {
         Self {
-            scale_index: 11,
-            pan: Vec2::ZERO,
-            image_size: vec2(2048., 2048.),
+            view_state,
+            pending_image,
         }
     }
 }
 
-#[derive(Debug)]
-pub struct ImagePrimitive {
-    view_state: ViewState,
-}
-
-impl ImagePrimitive {
-    pub fn new(view_state: ViewState) -> Self {
-        Self { view_state }
+impl std::fmt::Debug for ImagePrimitive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImagePrimitive")
+            .field("view_state", &self.view_state)
+            .field("pending_image", &self.pending_image.as_ref().map(|b| b.len()))
+            .finish()
     }
 }
 
@@ -74,6 +90,12 @@ impl Primitive for ImagePrimitive {
 
         let pipeline = storage.get_mut::<Pipeline>().unwrap();
 
+        if let Some(bytes) = &self.pending_image {
+            pipeline.set_image(device, queue, bytes);
+        }
+
+        let image_size = pipeline.image_size();
+
         pipeline.update(
             device,
             queue,
@@ -82,7 +104,7 @@ impl Primitive for ImagePrimitive {
                 pan: self.view_state.pan,
                 scale: self.view_state.scale(),
                 _pad: 0.0,
-                image_size: self.view_state.image_size,
+                image_size,
             },
         );
     }

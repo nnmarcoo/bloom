@@ -1,3 +1,5 @@
+use std::fs;
+
 use glam::{Vec2, vec2};
 use iced::{
     Element,
@@ -56,11 +58,14 @@ impl Img {
             }
 
             Message::SetImage => {
-                if let Some(_path) = FileDialog::new()
-                    .add_filter("Image", &["png", "jpg", "jpeg"])
+                if let Some(path) = FileDialog::new()
+                    .add_filter("Image", &["png", "jpg", "jpeg", "bmp", "webp", "gif"])
                     .pick_file()
                 {
-                    todo!("set texture");
+                    if let Ok(bytes) = fs::read(&path) {
+                        self.program.set_pending_image(bytes);
+                        self.program.view.reset();
+                    }
                 }
             }
         }

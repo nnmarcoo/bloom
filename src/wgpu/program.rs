@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use glam::{Vec2, vec2};
 use iced::Rectangle;
 use iced::advanced::{Shell, mouse};
@@ -17,6 +19,13 @@ pub enum DragState {
 #[derive(Debug, Default)]
 pub struct ImageProgram {
     pub view: ViewState,
+    pending_image: RefCell<Option<Vec<u8>>>,
+}
+
+impl ImageProgram {
+    pub fn set_pending_image(&self, bytes: Vec<u8>) {
+        *self.pending_image.borrow_mut() = Some(bytes);
+    }
 }
 
 impl Program<Message> for ImageProgram {
@@ -29,7 +38,7 @@ impl Program<Message> for ImageProgram {
         _cursor: mouse::Cursor,
         _bounds: Rectangle,
     ) -> Self::Primitive {
-        ImagePrimitive::new(self.view)
+        ImagePrimitive::new(self.view, self.pending_image.borrow_mut().take())
     }
 
     fn update(
