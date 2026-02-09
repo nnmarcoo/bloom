@@ -9,7 +9,7 @@ use rfd::FileDialog;
 
 use crate::{
     comps::bottom_row::bottom_row,
-    wgpu::{image_data::ScaleDirection, program::ImageProgram},
+    wgpu::program::ImageProgram,
 };
 
 #[derive(Debug, Default)]
@@ -28,8 +28,8 @@ impl Img {
     pub fn update(&mut self, message: Message) {
         match message {
             Message::PanDelta(delta) => {
-                self.program.view.pan += 2. * delta / self.program.view.scale();
-                self.program.view.image.pan(delta);
+                let scale = self.program.view.scale();
+                self.program.view.pan += 2.0 * delta / scale;
             }
 
             Message::ZoomDelta(cursor, bounds, delta) => {
@@ -37,21 +37,20 @@ impl Img {
 
                 if delta > 0.0 {
                     self.program.view.scale_up();
-                    self.program.view.image.scale(ScaleDirection::UP, cursor);
                 } else if delta < 0.0 {
                     self.program.view.scale_down();
-                    self.program.view.image.scale(ScaleDirection::DOWN, cursor);
                 }
 
                 let new_scale = self.program.view.scale();
-                let cursor = vec2(cursor.x, cursor.y);
                 let viewport = vec2(bounds.width, bounds.height);
 
+                // Convert cursor from screen-space to NDC (-1..1)
                 let ndc = vec2(
                     (cursor.x / viewport.x) * 2.0 - 1.0,
                     1.0 - (cursor.y / viewport.y) * 2.0,
                 );
 
+                // Adjust pan so the point under the cursor stays fixed
                 let factor = (1.0 / new_scale) - (1.0 / prev_scale);
                 self.program.view.pan += viewport * ndc * factor;
             }
@@ -68,7 +67,8 @@ impl Img {
     }
 
     pub fn view(&self) -> Element<Message> {
-        let bottom_row = bottom_row(self.program.view.pan);
+        let view = &self.program.view;
+        let bottom_row = bottom_row(view.pan, view.scale());
         let shader = shader(&self.program).width(Fill).height(Fill);
 
         column![shader, bottom_row].into()

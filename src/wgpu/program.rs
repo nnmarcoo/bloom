@@ -7,16 +7,11 @@ use iced::widget::shader::{Event, Program};
 use crate::app::Message;
 use crate::wgpu::primitive::{ImagePrimitive, ViewState};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum DragState {
+    #[default]
     Idle,
     Dragging(Vec2),
-}
-
-impl Default for DragState {
-    fn default() -> Self {
-        DragState::Idle
-    }
 }
 
 #[derive(Debug, Default)]

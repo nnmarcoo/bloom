@@ -9,17 +9,14 @@ use iced::{
 
 use crate::{
     constants::SCALE_STEPS,
-    wgpu::{
-        image_data::ImageData,
-        pipeline::{Pipeline, Uniforms},
-    },
+    wgpu::pipeline::{Pipeline, Uniforms},
 };
 
 #[derive(Debug, Clone, Copy)]
 pub struct ViewState {
     scale_index: usize,
     pub pan: Vec2,
-    pub image: ImageData,
+    pub image_size: Vec2,
 }
 
 impl ViewState {
@@ -45,7 +42,7 @@ impl Default for ViewState {
         Self {
             scale_index: 11,
             pan: Vec2::ZERO,
-            image: ImageData::new(vec2(2048., 2048.)),
+            image_size: vec2(2048., 2048.),
         }
     }
 }
@@ -85,7 +82,7 @@ impl Primitive for ImagePrimitive {
                 pan: self.view_state.pan,
                 scale: self.view_state.scale(),
                 _pad: 0.0,
-                image_size: self.view_state.image.original_size,
+                image_size: self.view_state.image_size,
             },
         );
     }

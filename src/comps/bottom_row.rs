@@ -13,11 +13,16 @@ const FONT_SIZE: f32 = 14.;
 const PADDING: f32 = 3.;
 const SPACING: f32 = 5.;
 
-pub fn bottom_row<'a>(pos: Vec2) -> Element<'a, Message> {
+pub fn bottom_row<'a>(pan: Vec2, scale: f32) -> Element<'a, Message> {
+    let zoom_pct = scale * 100.0;
+
     container(
         row![
-            text("hi").width(Fill).size(FONT_SIZE),
-            button(text(format!("x: {:.2}, y: {:.2}", pos.x, pos.y))).on_press(Message::SetImage)
+            text(format!("{zoom_pct:.0}%")).size(FONT_SIZE),
+            text(format!("x: {:.1}  y: {:.1}", pan.x, pan.y))
+                .width(Fill)
+                .size(FONT_SIZE),
+            button(text("Open").size(FONT_SIZE)).on_press(Message::SetImage)
         ]
         .align_y(Center)
         .spacing(SPACING)

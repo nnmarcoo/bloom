@@ -33,19 +33,19 @@ pub struct Uniforms {
 const INTERMEDIATE_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
 
 struct RenderTarget {
-    #[allow(dead_code)]
-    texture: Texture,
+    _texture: Texture,
     view: TextureView,
     size: (u32, u32),
 }
 
 impl RenderTarget {
     fn new(device: &Device, width: u32, height: u32) -> Self {
+        let (width, height) = (width.max(1), height.max(1));
         let texture = device.create_texture(&TextureDescriptor {
             label: None,
             size: Extent3d {
-                width: width.max(1),
-                height: height.max(1),
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -57,11 +57,19 @@ impl RenderTarget {
         });
         let view = texture.create_view(&TextureViewDescriptor::default());
         Self {
-            texture,
+            _texture: texture,
             view,
-            size: (width.max(1), height.max(1)),
+            size: (width, height),
         }
     }
+}
+
+/// Whether the blit pass reads from the source texture directly (upscale)
+/// or from the Lanczos-filtered intermediate (downscale).
+#[derive(PartialEq)]
+enum BlitSource {
+    Source,
+    Filtered,
 }
 
 pub struct Pipeline {
@@ -73,8 +81,7 @@ pub struct Pipeline {
     uniform_buffer: Buffer,
     sampler: Sampler,
 
-    #[allow(dead_code)]
-    source_texture: Texture,
+    _source_texture: Texture,
     source_view: TextureView,
     source_size: (u32, u32),
     source_bind_group: BindGroup,
@@ -84,43 +91,14 @@ pub struct Pipeline {
 
     hv_filtered: RenderTarget,
     blit_bind_group: BindGroup,
+    blit_source: BlitSource,
 
     cached_scale: f32,
 }
 
 impl Pipeline {
     pub fn new(device: &Device, queue: &Queue, target_format: TextureFormat) -> Self {
-        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::VERTEX_FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Texture {
-                        sample_type: TextureSampleType::Float { filterable: true },
-                        view_dimension: TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        let bind_group_layout = Self::create_bind_group_layout(device);
 
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: None,
@@ -200,6 +178,15 @@ impl Pipeline {
             &sampler,
         );
 
+        // Blit starts pointing at source (default scale is 1.0)
+        let blit_bind_group = Self::create_bind_group(
+            device,
+            &bind_group_layout,
+            &uniform_buffer,
+            &source_view,
+            &sampler,
+        );
+
         let h_filtered = RenderTarget::new(device, 1, 1);
         let h_filtered_bind_group = Self::create_bind_group(
             device,
@@ -210,13 +197,6 @@ impl Pipeline {
         );
 
         let hv_filtered = RenderTarget::new(device, 1, 1);
-        let blit_bind_group = Self::create_bind_group(
-            device,
-            &bind_group_layout,
-            &uniform_buffer,
-            &hv_filtered.view,
-            &sampler,
-        );
 
         Self {
             lanczos_h_pipeline,
@@ -225,7 +205,7 @@ impl Pipeline {
             bind_group_layout,
             uniform_buffer,
             sampler,
-            source_texture,
+            _source_texture: source_texture,
             source_view,
             source_size,
             source_bind_group,
@@ -233,6 +213,7 @@ impl Pipeline {
             h_filtered_bind_group,
             hv_filtered,
             blit_bind_group,
+            blit_source: BlitSource::Source,
             cached_scale: 0.0,
         }
     }
@@ -247,16 +228,22 @@ impl Pipeline {
         self.cached_scale = scale;
 
         if scale >= 1.0 {
-            self.blit_bind_group = Self::create_bind_group(
-                device,
-                &self.bind_group_layout,
-                &self.uniform_buffer,
-                &self.source_view,
-                &self.sampler,
-            );
+            // At 1:1 or upscaled, blit reads directly from the source texture.
+            // Only recreate the bind group when switching from filtered → source.
+            if self.blit_source != BlitSource::Source {
+                self.blit_bind_group = Self::create_bind_group(
+                    device,
+                    &self.bind_group_layout,
+                    &self.uniform_buffer,
+                    &self.source_view,
+                    &self.sampler,
+                );
+                self.blit_source = BlitSource::Source;
+            }
             return;
         }
 
+        // Downscaled: resize intermediate render targets to match scaled dimensions.
         let dst_w = ((self.source_size.0 as f32 * scale).round() as u32).max(1);
         let dst_h = ((self.source_size.1 as f32 * scale).round() as u32).max(1);
 
@@ -282,20 +269,26 @@ impl Pipeline {
                 &self.hv_filtered.view,
                 &self.sampler,
             );
+            self.blit_source = BlitSource::Filtered;
         }
     }
 
-    pub fn render(&self, screen: &TextureView, encoder: &mut CommandEncoder, clip: Rectangle<u32>) {
+    pub fn render(
+        &self,
+        screen: &TextureView,
+        encoder: &mut CommandEncoder,
+        clip: Rectangle<u32>,
+    ) {
         if self.cached_scale < 1.0 {
-            self.render_to_texture(
+            // Two-pass separable Lanczos3 downscale
+            self.render_pass(
                 encoder,
                 &self.lanczos_h_pipeline,
                 &self.h_filtered.view,
                 self.h_filtered.size,
                 &self.source_bind_group,
             );
-
-            self.render_to_texture(
+            self.render_pass(
                 encoder,
                 &self.lanczos_v_pipeline,
                 &self.hv_filtered.view,
@@ -307,7 +300,7 @@ impl Pipeline {
         self.blit_to_screen(encoder, screen, clip);
     }
 
-    fn render_to_texture(
+    fn render_pass(
         &self,
         encoder: &mut CommandEncoder,
         pipeline: &RenderPipeline,
@@ -330,7 +323,14 @@ impl Pipeline {
             occlusion_query_set: None,
         });
         pass.set_pipeline(pipeline);
-        pass.set_viewport(0., 0., target_size.0 as f32, target_size.1 as f32, 0., 1.);
+        pass.set_viewport(
+            0.0,
+            0.0,
+            target_size.0 as f32,
+            target_size.1 as f32,
+            0.0,
+            1.0,
+        );
         pass.set_bind_group(0, bind_group, &[]);
         pass.draw(0..4, 0..1);
     }
@@ -361,8 +361,8 @@ impl Pipeline {
             clip.y as f32,
             clip.width as f32,
             clip.height as f32,
-            0.,
-            1.,
+            0.0,
+            1.0,
         );
         pass.set_bind_group(0, &self.blit_bind_group, &[]);
         pass.draw(0..4, 0..1);
@@ -371,10 +371,11 @@ impl Pipeline {
     #[allow(dead_code)]
     pub fn set_image(&mut self, device: &Device, queue: &Queue, image_bytes: &[u8]) {
         let (texture, view, size) = Self::load_image(device, queue, image_bytes);
-        self.source_texture = texture;
+        self._source_texture = texture;
         self.source_view = view;
         self.source_size = size;
         self.cached_scale = 0.0;
+        self.blit_source = BlitSource::Source;
         self.source_bind_group = Self::create_bind_group(
             device,
             &self.bind_group_layout,
@@ -382,6 +383,40 @@ impl Pipeline {
             &self.source_view,
             &self.sampler,
         );
+    }
+
+    fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
+        device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::VERTEX_FRAGMENT,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Texture {
+                        sample_type: TextureSampleType::Float { filterable: true },
+                        view_dimension: TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        })
     }
 
     fn load_image(
