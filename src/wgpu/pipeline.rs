@@ -2,23 +2,21 @@ use std::borrow::Cow;
 
 use bytemuck::bytes_of;
 use glam::Vec2;
-use iced::{
-    Rectangle,
-    advanced::graphics::image::image_rs::load_from_memory,
-    widget::shader::wgpu::{
-        AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
-        BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer,
-        BufferBindingType, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites,
-        CommandEncoder, Device, Extent3d, FilterMode, FragmentState, LoadOp, MultisampleState,
-        Operations, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue,
-        RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
-        Sampler, SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor, ShaderSource,
-        ShaderStages, StoreOp, Texture, TextureDescriptor, TextureDimension, TextureFormat,
-        TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension,
-        VertexState,
-        util::{DeviceExt, TextureDataOrder},
-    },
+use iced::Rectangle;
+use iced::wgpu::{
+    AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
+    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer,
+    BufferBindingType, BufferDescriptor, BufferUsages, Color, ColorTargetState, ColorWrites,
+    CommandEncoder, Device, Extent3d, FilterMode, FragmentState, LoadOp, MultisampleState,
+    Operations, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue,
+    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
+    Sampler, SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor, ShaderSource,
+    ShaderStages, StoreOp, Texture, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension,
+    VertexState,
+    util::{DeviceExt, TextureDataOrder},
 };
+use image::load_from_memory;
 
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
@@ -96,8 +94,14 @@ pub struct Pipeline {
     cached_scale: f32,
 }
 
+impl iced::widget::shader::Pipeline for Pipeline {
+    fn new(device: &Device, queue: &Queue, format: TextureFormat) -> Self {
+        Pipeline::create(device, queue, format)
+    }
+}
+
 impl Pipeline {
-    pub fn new(device: &Device, queue: &Queue, target_format: TextureFormat) -> Self {
+    fn create(device: &Device, queue: &Queue, target_format: TextureFormat) -> Self {
         let bind_group_layout = Self::create_bind_group_layout(device);
 
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
@@ -123,7 +127,8 @@ impl Pipeline {
                 layout: Some(&pipeline_layout),
                 vertex: VertexState {
                     module: shader,
-                    entry_point: "vs_main",
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
                     buffers: &[],
                 },
                 primitive: PrimitiveState {
@@ -134,7 +139,8 @@ impl Pipeline {
                 multisample: MultisampleState::default(),
                 fragment: Some(FragmentState {
                     module: shader,
-                    entry_point: "fs_main",
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
                     targets: &[Some(ColorTargetState {
                         format: output_format,
                         blend: None,
@@ -142,6 +148,7 @@ impl Pipeline {
                     })],
                 }),
                 multiview: None,
+                cache: None,
             })
         };
 
@@ -314,9 +321,10 @@ impl Pipeline {
                 view: target,
                 resolve_target: None,
                 ops: Operations {
-                    load: LoadOp::Clear(iced::widget::shader::wgpu::Color::TRANSPARENT),
+                    load: LoadOp::Clear(Color::TRANSPARENT),
                     store: StoreOp::Store,
                 },
+                depth_slice: None,
             })],
             depth_stencil_attachment: None,
             timestamp_writes: None,
@@ -350,6 +358,7 @@ impl Pipeline {
                     load: LoadOp::Load,
                     store: StoreOp::Store,
                 },
+                depth_slice: None,
             })],
             depth_stencil_attachment: None,
             timestamp_writes: None,
@@ -439,9 +448,17 @@ impl Pipeline {
         queue: &Queue,
         image_bytes: &[u8],
     ) -> (Texture, TextureView, (u32, u32)) {
-        let img = load_from_memory(image_bytes)
-            .expect("invalid image file")
-            .to_rgba8();
+        let max_dim = device.limits().max_texture_dimension_2d;
+        let mut img = load_from_memory(image_bytes)
+            .expect("invalid image file");
+        let (w, h) = (img.width(), img.height());
+        if w > max_dim || h > max_dim {
+            let scale = max_dim as f64 / w.max(h) as f64;
+            let nw = (w as f64 * scale) as u32;
+            let nh = (h as f64 * scale) as u32;
+            img = img.resize_exact(nw, nh, image::imageops::FilterType::Lanczos3);
+        }
+        let img = img.to_rgba8();
         let (width, height) = img.dimensions();
 
         let texture = device.create_texture_with_data(
@@ -456,7 +473,7 @@ impl Pipeline {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: TextureDimension::D2,
-                format: TextureFormat::Rgba8UnormSrgb,
+                format: TextureFormat::Rgba8Unorm,
                 usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
                 view_formats: &[],
             },

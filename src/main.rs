@@ -8,9 +8,10 @@ mod constants;
 mod wgpu;
 
 fn main() -> iced::Result {
-    application("img", Img::update, Img::view)
+    application(Img::default, Img::update, Img::view)
+        .title("img")
         .subscription(Img::subscription)
-        .theme(move |_| Theme::Nord)
+        .theme(|_: &Img| Theme::Nord)
         .default_font(Font::MONOSPACE)
         .centered()
         .run()

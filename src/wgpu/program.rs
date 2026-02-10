@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use glam::{Vec2, vec2};
 use iced::Rectangle;
-use iced::advanced::{Shell, graphics::image::image_rs, mouse};
-use iced::event::Status;
-use iced::widget::shader::{Event, Program};
+use iced::advanced::mouse;
+use iced::Event;
+use iced::widget::shader::{Action, Program};
 
 use crate::app::Message;
 use crate::wgpu::primitive::{ImagePrimitive, ViewState};
@@ -37,7 +37,7 @@ impl Default for ImageProgram {
         let debug_bytes = include_bytes!("../assets/debug.jpg");
         let mut view = ViewState::default();
         if let Ok(reader) =
-            image_rs::io::Reader::new(std::io::Cursor::new(debug_bytes as &[u8]))
+            image::ImageReader::new(std::io::Cursor::new(debug_bytes as &[u8]))
                 .with_guessed_format()
         {
             if let Ok((w, h)) = reader.into_dimensions() {
@@ -88,22 +88,20 @@ impl Program<Message> for ImageProgram {
     fn update(
         &self,
         state: &mut Self::State,
-        event: Event,
+        event: &Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-        _shell: &mut Shell<'_, Message>,
-    ) -> (Status, Option<Message>) {
+    ) -> Option<Action<Message>> {
         if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
             if let Some(pos) = cursor.position_in(bounds) {
                 let pos = Vec2::new(pos.x, pos.y);
                 let delta = match delta {
-                    mouse::ScrollDelta::Lines { y, .. } => y,
-                    mouse::ScrollDelta::Pixels { y, .. } => y,
+                    mouse::ScrollDelta::Lines { y, .. } => *y,
+                    mouse::ScrollDelta::Pixels { y, .. } => *y,
                 };
 
-                return (
-                    Status::Captured,
-                    Some(Message::ZoomDelta(pos, bounds, delta)),
+                return Some(
+                    Action::publish(Message::ZoomDelta(pos, bounds, delta)).and_capture(),
                 );
             }
         }
@@ -113,27 +111,27 @@ impl Program<Message> for ImageProgram {
                 if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
                     if let Some(pos) = cursor.position_over(bounds) {
                         *state = DragState::Dragging(Vec2::new(pos.x, pos.y));
-                        return (Status::Captured, None);
+                        return Some(Action::capture());
                     }
                 }
             }
             DragState::Dragging(prev) => match event {
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                     *state = DragState::Idle;
-                    return (Status::Captured, None);
+                    return Some(Action::capture());
                 }
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
                     let current = vec2(position.x, position.y);
                     let delta = vec2(current.x - prev.x, prev.y - current.y);
 
                     *state = DragState::Dragging(current);
-                    return (Status::Captured, Some(Message::PanDelta(delta)));
+                    return Some(Action::publish(Message::PanDelta(delta)).and_capture());
                 }
                 _ => {}
             },
         }
 
-        (Status::Ignored, None)
+        None
     }
 
     fn mouse_interaction(

@@ -5,7 +5,6 @@ use iced::{
     Element, Subscription,
     Length::Fill,
     Rectangle,
-    advanced::graphics::image::image_rs,
     widget::{column, shader},
 };
 use rfd::FileDialog;
@@ -68,7 +67,7 @@ impl Img {
                     if let Ok(bytes) = fs::read(&path) {
                         let mut view = ViewState::default();
                         if let Ok(reader) =
-                            image_rs::io::Reader::new(std::io::Cursor::new(&bytes))
+                            image::ImageReader::new(std::io::Cursor::new(&bytes))
                                 .with_guessed_format()
                         {
                             if let Ok((w, h)) = reader.into_dimensions() {

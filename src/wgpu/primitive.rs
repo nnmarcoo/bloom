@@ -1,11 +1,7 @@
 use glam::{Vec2, vec2};
-use iced::{
-    Rectangle,
-    widget::shader::{
-        Primitive, Storage, Viewport,
-        wgpu::{CommandEncoder, Device, Queue, TextureFormat, TextureView},
-    },
-};
+use iced::Rectangle;
+use iced::widget::shader::{Primitive, Viewport};
+use iced::wgpu::{CommandEncoder, Device, Queue, TextureView};
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -83,21 +79,16 @@ impl std::fmt::Debug for ImagePrimitive {
 }
 
 impl Primitive for ImagePrimitive {
+    type Pipeline = Pipeline;
+
     fn prepare(
         &self,
+        pipeline: &mut Pipeline,
         device: &Device,
         queue: &Queue,
-        format: TextureFormat,
-        storage: &mut Storage,
         bounds: &Rectangle,
         _viewport: &Viewport,
     ) {
-        if !storage.has::<Pipeline>() {
-            storage.store(Pipeline::new(device, queue, format));
-        }
-
-        let pipeline = storage.get_mut::<Pipeline>().unwrap();
-
         if let Some(bytes) = &self.pending_image {
             pipeline.set_image(device, queue, bytes);
         }
@@ -131,12 +122,11 @@ impl Primitive for ImagePrimitive {
 
     fn render(
         &self,
+        pipeline: &Pipeline,
         encoder: &mut CommandEncoder,
-        storage: &Storage,
         target: &TextureView,
         clip_bounds: &Rectangle<u32>,
     ) {
-        let pipeline = storage.get::<Pipeline>().unwrap();
         pipeline.render(target, encoder, *clip_bounds);
     }
 }
