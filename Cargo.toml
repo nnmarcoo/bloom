@@ -1,18 +1,15 @@
 [package]
-name = "img"
+name = "bloom"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-iced = { version = "0.14", features = ["image", "advanced", "tokio"] }
-image = { version = "0.25", default-features = false }
-glam = { version = "0.30.8", features = ["bytemuck"] }
-bytemuck = "1.24.0"
-rfd = "0.15.4"
+iced = { version = "0.14.0", features = ["canvas", "advanced", "svg", "tokio", "image"] }
+tokio = { version = "1", features = ["rt"] }
+bytemuck = { version = "1.25.0", features = ["derive"] }
+glam = { version = "0.32.0", features = ["bytemuck"] }
+image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "gif", "tiff", "webp", "bmp", "ico", "qoi", "pnm"] }
+rfd = "0.17.2"
 
-[profile.release]
-panic = "abort"
-codegen-units = 1
-lto = true
-opt-level = 3
-strip = true
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"
