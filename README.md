@@ -70,7 +70,9 @@ Requires a GPU with WebGPU support. On Windows, DX12 is used by default.
 
 ## Stack
 
-- [Iced](https://github.com/iced-rs/iced) — GUI framework
-- [wgpu](https://github.com/gfx-rs/wgpu) — GPU rendering
-- [image](https://github.com/image-rs/image) — image decoding
-- [glam](https://github.com/bitshifter/glam-rs) — math
+| Crate | Role |
+|-------|------|
+| [iced](https://github.com/iced-rs/iced) | GUI framework |
+| [wgpu](https://github.com/gfx-rs/wgpu) | GPU rendering |
+| [image](https://github.com/image-rs/image) | Image decoding |
+| [glam](https://github.com/bitshifter/glam-rs) | Math |
