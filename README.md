@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/logo/bloom.svg" width="80" alt="bloom">
   <h1>bloom</h1>
-  <p>A fast, GPU-accelerated image viewer built with Rust and WebGPU.</p>
+  <p>GPU-accelerated image viewer built with Rust.</p>
 
   ![Rust](https://img.shields.io/badge/rust-2024_edition-orange?style=flat-square&logo=rust&logoColor=white)
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey?style=flat-square)
