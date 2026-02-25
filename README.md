@@ -25,7 +25,8 @@
 - **Tiled texture system** — handles images larger than GPU texture limits
 - Smooth **pan and zoom** with discrete steps from 0.01× to 35×
 
-## Supported Formats
+<details>
+<summary>Supported Formats</summary>
 
 | Format | Extension |
 |--------|-----------|
@@ -39,7 +40,7 @@
 | QOI | `.qoi` |
 | Portable bitmap | `.pbm` `.pgm` `.ppm` |
 
-## Keyboard Shortcuts
+</details>
 
 <details>
 <summary>Default Shortcuts</summary>
