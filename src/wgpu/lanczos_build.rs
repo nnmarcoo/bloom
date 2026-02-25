@@ -14,7 +14,7 @@ use crate::wgpu::{
     tiled_source::TiledSource,
 };
 
-/// LOD scale ratios for the Lanczos pyramid.
+// LOD scale ratios for the Lanczos pyramid.
 pub const LOD_SCALES: &[f32] = &[1.0, 0.5, 0.25, 0.125, 0.0625];
 
 pub fn compute_lanczos_mip_count(w: u32, h: u32) -> u32 {
@@ -34,11 +34,7 @@ pub fn compute_lanczos_mip_count(w: u32, h: u32) -> u32 {
     count
 }
 
-// ---------------------------------------------------------------------------
-// LanczosBuildState
-// ---------------------------------------------------------------------------
-
-/// Per-tile result kept until all tiles are done, then flushed into `TiledSource`.
+// Per-tile result kept until all tiles are done, then flushed into `TiledSource`.
 struct TileResult {
     texture: Texture,
     bind_group: BindGroup,
@@ -61,8 +57,8 @@ impl LanczosBuildState {
         self.next_tile >= self.results.len()
     }
 
-    /// Process one tile per call. Returns `true` when all tiles are done,
-    /// at which point results have been written into `source.tiles`.
+    // Process one tile per call. Returns `true` when all tiles are done,
+    // at which point results have been written into `source.tiles`.
     pub fn step(
         &mut self,
         device: &Device,
