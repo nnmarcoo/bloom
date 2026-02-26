@@ -80,15 +80,13 @@ impl LanczosBuildState {
         let label = format!("tile[{}]:lanczos", tile_idx);
         let mip_count = compute_lanczos_mip_count(tw, th);
 
-        let (mip_widths, mip_heights): (Vec<u32>, Vec<u32>) = (0..mip_count)
-            .map(|m| {
-                let s = LOD_SCALES[m as usize];
-                (
-                    ((tw as f32 * s).round() as u32).max(1),
-                    ((th as f32 * s).round() as u32).max(1),
-                )
-            })
-            .unzip();
+        let mut mip_widths = [0u32; 5];
+        let mut mip_heights = [0u32; 5];
+        for m in 0..mip_count as usize {
+            let s = LOD_SCALES[m];
+            mip_widths[m] = ((tw as f32 * s).round() as u32).max(1);
+            mip_heights[m] = ((th as f32 * s).round() as u32).max(1);
+        }
 
         let mip_texture = gpu::texture_2d_mipmapped(
             device,
