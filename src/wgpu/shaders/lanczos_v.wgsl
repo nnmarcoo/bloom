@@ -1,3 +1,4 @@
+// could be merged into one shader with a `horizontal: u32` uniform flag if needed
 struct LanczosUniforms {
     src_size: vec2<f32>,
     scale: f32,
