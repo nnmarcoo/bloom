@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/logo/bloom.svg" width="80" alt="bloom">
+  <img src="assets/logo/bloom.svg" width="160" alt="bloom">
   <h1>bloom</h1>
   <p>hardware-accelerated image viewer built with Rust</p>
 
