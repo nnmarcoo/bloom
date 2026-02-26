@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use glam::Vec2;
 use iced::time::every;
@@ -223,10 +223,10 @@ impl App {
     pub fn subscription(&self) -> Subscription<Message> {
         let events = event::listen().map(Message::Event);
 
-        if self.program.is_animated() {
+        if let Some(delay) = self.program.time_until_next_frame() {
             Subscription::batch([
                 events,
-                every(Duration::from_millis(15)).map(Message::AnimationTick),
+                every(delay).map(Message::AnimationTick),
             ])
         } else {
             events

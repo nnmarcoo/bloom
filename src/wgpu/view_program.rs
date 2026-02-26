@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use glam::{Mat4, Vec2, vec2, vec3};
 use iced::{
@@ -126,8 +126,8 @@ impl ViewProgram {
         }
     }
 
-    pub fn is_animated(&self) -> bool {
-        self.animation.is_some()
+    pub fn time_until_next_frame(&self) -> Option<Duration> {
+        self.animation.as_ref().map(|a| a.time_until_next_frame())
     }
 }
 

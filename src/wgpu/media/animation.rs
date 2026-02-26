@@ -31,6 +31,10 @@ impl Animation {
         &self.frames[self.current].data
     }
 
+    pub fn time_until_next_frame(&self) -> Duration {
+        self.frames[self.current].delay.saturating_sub(self.elapsed)
+    }
+
     pub fn tick(&mut self, now: Instant) -> Option<Arc<ImageData>> {
         let delta = self.last_tick.map(|t| now - t).unwrap_or(Duration::ZERO);
         self.last_tick = Some(now);
