@@ -35,8 +35,8 @@ fn ndc_rect_of_transform(transform: &Mat4) -> (Vec2, Vec2) {
         vec4(1.0, 1.0, 0.0, 1.0),
     ];
     let clip = corners.map(|c| (*transform * c).truncate().truncate());
-    let min = clip.iter().copied().reduce(Vec2::min).unwrap();
-    let max = clip.iter().copied().reduce(Vec2::max).unwrap();
+    let min = clip.iter().copied().fold(clip[0], Vec2::min);
+    let max = clip.iter().copied().fold(clip[0], Vec2::max);
     (min, max)
 }
 
