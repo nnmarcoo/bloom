@@ -12,7 +12,7 @@ use iced::{
     widget::{column, shader},
     window::{self, Mode},
 };
-use rfd::FileDialog;
+use rfd::AsyncFileDialog;
 
 use crate::{
     components::bottom_bar,
@@ -59,6 +59,7 @@ pub enum Message {
     AnimationTick(Instant),
     ToggleFullscreen,
     ToggleLanczos,
+    Noop,
 }
 
 fn load_media(path: PathBuf) -> Task<Message> {
@@ -132,10 +133,17 @@ impl App {
                 }
             }
             Message::SelectMedia => {
-                let path = FileDialog::new().add_filter("Media", SUPPORTED).pick_file();
-                if let Some(p) = path {
-                    return Task::done(Message::MediaSelected(p));
-                }
+                return Task::future(async {
+                    let handle = AsyncFileDialog::new()
+                        .add_filter("Media", SUPPORTED)
+                        .pick_file()
+                        .await;
+                    if let Some(h) = handle {
+                        Message::MediaSelected(h.path().to_path_buf())
+                    } else {
+                        Message::Noop
+                    }
+                });
             }
             Message::MediaSelected(path) => {
                 if let Some(p) = self.gallery.set(path) {
@@ -173,6 +181,7 @@ impl App {
             Message::ToggleLanczos => {
                 self.program.lanczos_enabled = !self.program.lanczos_enabled;
             }
+            Message::Noop => {}
             Message::Event(event) => match event {
                 Event::Window(window::Event::FileDropped(path)) => {
                     return Task::done(Message::MediaSelected(path));
