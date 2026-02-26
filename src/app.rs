@@ -151,9 +151,8 @@ impl App {
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_default();
-                    let p = p.clone();
                     self.loading = Some(filename);
-                    return load_media(p);
+                    return load_media(p.clone());
                 }
             }
             Message::MediaLoaded(media) => {
