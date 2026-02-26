@@ -223,10 +223,7 @@ impl App {
         let events = event::listen().map(Message::Event);
 
         if let Some(delay) = self.program.time_until_next_frame() {
-            Subscription::batch([
-                events,
-                every(delay).map(Message::AnimationTick),
-            ])
+            Subscription::batch([events, every(delay).map(Message::AnimationTick)])
         } else {
             events
         }

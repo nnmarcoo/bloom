@@ -12,20 +12,48 @@ use crate::styles::{
 };
 use crate::widgets::loading_spinner::Circular;
 
+fn icon_button<'a>(
+    icon: &'static [u8],
+    tooltip_text: &'a str,
+    msg: Option<Message>,
+) -> Element<'a, Message> {
+    let btn = button(
+        svg(Handle::from_memory(icon))
+            .style(svg_style)
+            .width(Length::Fixed(BUTTON_SIZE))
+            .height(Length::Fixed(BUTTON_SIZE)),
+    )
+    .padding(PAD)
+    .style(icon_button_style);
+
+    let btn = if let Some(m) = msg {
+        btn.on_press(m)
+    } else {
+        btn
+    };
+
+    tooltip(
+        btn,
+        container(text(tooltip_text).size(12))
+            .padding(PAD)
+            .style(container::rounded_box),
+        Position::Top,
+    )
+    .delay(TOOLTIP_DELAY)
+    .into()
+}
+
 pub fn view<'a>(
     mode: Mode,
     loading: Option<&'a str>,
     lanczos_enabled: bool,
 ) -> Element<'a, Message> {
     let is_fullscreen = matches!(mode, Mode::Fullscreen);
-    let (fullscreen_icon, fullscreen_tooltip) = if is_fullscreen {
-        (
-            include_bytes!("../../assets/icons/restore.svg").as_slice(),
-            "Restore",
-        )
+    let (fullscreen_icon, fullscreen_tooltip): (&'static [u8], &str) = if is_fullscreen {
+        (include_bytes!("../../assets/icons/restore.svg"), "Restore")
     } else {
         (
-            include_bytes!("../../assets/icons/fullscreen.svg").as_slice(),
+            include_bytes!("../../assets/icons/fullscreen.svg"),
             "Fullscreen",
         )
     };
@@ -44,94 +72,31 @@ pub fn view<'a>(
     };
 
     let buttons = row![
-        tooltip(
-            button(
-                svg(Handle::from_memory(include_bytes!(
-                    "../../assets/icons/left.svg"
-                )))
-                .style(svg_style)
-                .width(Length::Fixed(BUTTON_SIZE))
-                .height(Length::Fixed(BUTTON_SIZE))
-            )
-            .padding(PAD)
-            .style(icon_button_style)
-            .on_press(Message::Previous),
-            container(text("Previous").size(12))
-                .padding(PAD)
-                .style(container::rounded_box),
-            Position::Top
-        )
-        .delay(TOOLTIP_DELAY),
-        tooltip(
-            button(
-                svg(Handle::from_memory(include_bytes!(
-                    "../../assets/icons/right.svg"
-                )))
-                .style(svg_style)
-                .width(Length::Fixed(BUTTON_SIZE))
-                .height(Length::Fixed(BUTTON_SIZE))
-            )
-            .padding(PAD)
-            .style(icon_button_style)
-            .on_press(Message::Next),
-            container(text("Next").size(12))
-                .padding(PAD)
-                .style(container::rounded_box),
-            Position::Top
-        )
-        .delay(TOOLTIP_DELAY),
-        tooltip(
-            button(
-                svg(Handle::from_memory(include_bytes!(
-                    "../../assets/icons/fit.svg"
-                )))
-                .style(svg_style)
-                .width(Length::Fixed(BUTTON_SIZE))
-                .height(Length::Fixed(BUTTON_SIZE))
-            )
-            .padding(PAD)
-            .style(icon_button_style)
-            .on_press(Message::Fit),
-            container(text("Fit to viewport").size(12))
-                .padding(PAD)
-                .style(container::rounded_box),
-            Position::Top
-        )
-        .delay(TOOLTIP_DELAY),
-        tooltip(
-            button(
-                svg(Handle::from_memory(fullscreen_icon))
-                    .style(svg_style)
-                    .width(Length::Fixed(BUTTON_SIZE))
-                    .height(Length::Fixed(BUTTON_SIZE))
-            )
-            .padding(PAD)
-            .style(icon_button_style)
-            .on_press(Message::ToggleFullscreen),
-            container(text(fullscreen_tooltip).size(12))
-                .padding(PAD)
-                .style(container::rounded_box),
-            Position::Top
-        )
-        .delay(TOOLTIP_DELAY),
-        tooltip(
-            button(
-                svg(Handle::from_memory(include_bytes!(
-                    "../../assets/icons/folder.svg"
-                )))
-                .style(svg_style)
-                .width(Length::Fixed(BUTTON_SIZE))
-                .height(Length::Fixed(BUTTON_SIZE))
-            )
-            .padding(PAD)
-            .style(icon_button_style)
-            .on_press(Message::SelectMedia),
-            container(text("Select media").size(12))
-                .padding(PAD)
-                .style(container::rounded_box),
-            Position::Top
-        )
-        .delay(TOOLTIP_DELAY),
+        icon_button(
+            include_bytes!("../../assets/icons/left.svg"),
+            "Previous",
+            Some(Message::Previous)
+        ),
+        icon_button(
+            include_bytes!("../../assets/icons/right.svg"),
+            "Next",
+            Some(Message::Next)
+        ),
+        icon_button(
+            include_bytes!("../../assets/icons/fit.svg"),
+            "Fit to viewport",
+            Some(Message::Fit)
+        ),
+        icon_button(
+            fullscreen_icon,
+            fullscreen_tooltip,
+            Some(Message::ToggleFullscreen)
+        ),
+        icon_button(
+            include_bytes!("../../assets/icons/folder.svg"),
+            "Select media",
+            Some(Message::SelectMedia)
+        ),
         tooltip(
             button(text("L").size(12))
                 .padding(PAD)
@@ -151,26 +116,14 @@ pub fn view<'a>(
             )
             .padding(PAD)
             .style(container::rounded_box),
-            Position::Top
+            Position::Top,
         )
         .delay(TOOLTIP_DELAY),
-        tooltip(
-            button(
-                svg(Handle::from_memory(include_bytes!(
-                    "../../assets/icons/kebab.svg"
-                )))
-                .style(svg_style)
-                .width(Length::Fixed(BUTTON_SIZE))
-                .height(Length::Fixed(BUTTON_SIZE))
-            )
-            .padding(PAD)
-            .style(icon_button_style),
-            container(text("More actions").size(12))
-                .padding(PAD)
-                .style(container::rounded_box),
-            Position::Top
-        )
-        .delay(TOOLTIP_DELAY),
+        icon_button(
+            include_bytes!("../../assets/icons/kebab.svg"),
+            "More actions",
+            None
+        ),
     ]
     .align_y(Vertical::Center);
 
