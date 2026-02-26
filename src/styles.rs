@@ -10,7 +10,7 @@ pub const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
 pub const BUTTON_SIZE: f32 = 20.0;
 pub const BAR_HEIGHT: f32 = 40.0;
 
-fn darken(color: Color, factor: f32) -> Color {
+pub fn darken(color: Color, factor: f32) -> Color {
     Color {
         r: (color.r * factor).clamp(0.0, 1.0),
         g: (color.g * factor).clamp(0.0, 1.0),
@@ -56,6 +56,30 @@ pub fn icon_button_active_style(theme: &Theme, status: button::Status) -> button
         background,
         border: iced::border::rounded(10),
         text_color: palette.primary.base.text,
+        ..Default::default()
+    }
+}
+
+pub fn menu_container_style(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        text_color: Some(palette.background.base.text),
+        background: Some(Background::Color(palette.background.base.color)),
+        border: iced::Border {
+            color: palette.background.strong.color.scale_alpha(0.5),
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+pub fn menu_separator_style(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(
+            palette.background.strong.color.scale_alpha(0.5),
+        )),
         ..Default::default()
     }
 }

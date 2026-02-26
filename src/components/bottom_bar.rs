@@ -1,9 +1,10 @@
 use iced::alignment::Vertical;
 use iced::widget::svg::Handle;
 use iced::widget::tooltip::Position;
-use iced::widget::{button, container, row, svg, text, tooltip};
+use iced::widget::{button, column, container, row, svg, text, tooltip};
 use iced::window::Mode;
 use iced::{Element, Length};
+use iced_aw::ContextMenu;
 
 use crate::app::Message;
 use crate::styles::{
@@ -11,30 +12,41 @@ use crate::styles::{
     icon_button_style, svg_style,
 };
 use crate::widgets::loading_spinner::Circular;
+use crate::widgets::menu::{menu_item, menu_separator, styled_menu};
 
 fn icon_button<'a>(
     icon: &'static [u8],
     tooltip_text: &'a str,
     msg: Option<Message>,
 ) -> Element<'a, Message> {
-    let btn = button(
-        svg(Handle::from_memory(icon))
-            .style(svg_style)
-            .width(Length::Fixed(BUTTON_SIZE))
-            .height(Length::Fixed(BUTTON_SIZE)),
-    )
-    .padding(PAD)
-    .style(icon_button_style);
-
-    let btn = if let Some(m) = msg {
-        btn.on_press(m)
-    } else {
-        btn
-    };
-
     tooltip(
-        btn,
+        button(
+            svg(Handle::from_memory(icon))
+                .style(svg_style)
+                .width(Length::Fixed(BUTTON_SIZE))
+                .height(Length::Fixed(BUTTON_SIZE)),
+        )
+        .padding(PAD)
+        .style(icon_button_style)
+        .on_press_maybe(msg),
         container(text(tooltip_text).size(12))
+            .padding(PAD)
+            .style(container::rounded_box),
+        Position::Top,
+    )
+    .delay(TOOLTIP_DELAY)
+    .into()
+}
+
+fn lanczos_button(enabled: bool) -> Element<'static, Message> {
+    let style = if enabled { icon_button_active_style } else { icon_button_style };
+    let label = if enabled { "Lanczos quality: on" } else { "Lanczos quality: off" };
+    tooltip(
+        button(text("L").size(12))
+            .padding(PAD)
+            .style(style)
+            .on_press(Message::ToggleLanczos),
+        container(text(label).size(12))
             .padding(PAD)
             .style(container::rounded_box),
         Position::Top,
@@ -97,28 +109,7 @@ pub fn view<'a>(
             "Select media",
             Some(Message::SelectMedia)
         ),
-        tooltip(
-            button(text("L").size(12))
-                .padding(PAD)
-                .style(if lanczos_enabled {
-                    icon_button_active_style
-                } else {
-                    icon_button_style
-                })
-                .on_press(Message::ToggleLanczos),
-            container(
-                text(if lanczos_enabled {
-                    "Lanczos quality: on"
-                } else {
-                    "Lanczos quality: off"
-                })
-                .size(12)
-            )
-            .padding(PAD)
-            .style(container::rounded_box),
-            Position::Top,
-        )
-        .delay(TOOLTIP_DELAY),
+        lanczos_button(lanczos_enabled),
         icon_button(
             include_bytes!("../../assets/icons/kebab.svg"),
             "More actions",
@@ -127,12 +118,19 @@ pub fn view<'a>(
     ]
     .align_y(Vertical::Center);
 
-    container(
+    let bar = container(
         row![loading_indicator, buttons]
             .height(Length::Fixed(BAR_HEIGHT))
             .width(Length::Fill)
             .align_y(Vertical::Center),
     )
-    .style(bar_style)
-    .into()
+    .style(bar_style);
+
+    ContextMenu::new(bar, || {
+        styled_menu(column![
+            menu_item("Hide Bar", Message::Noop),
+            menu_separator(),
+            menu_item("Copy Path", Message::Noop),
+        ])
+    }).into()
 }
