@@ -31,7 +31,7 @@ impl Default for Scale {
 }
 
 impl Scale {
-    /// Step up one level. Returns the previous value (for scroll-anchor calculation).
+    #[must_use]
     pub fn up(&mut self) -> f32 {
         let prev = self.value();
         if let Some(custom) = self.custom.take() {
@@ -42,7 +42,7 @@ impl Scale {
         prev
     }
 
-    /// Step down one level. Returns the previous value.
+    #[must_use]
     pub fn down(&mut self) -> f32 {
         let prev = self.value();
         if let Some(custom) = self.custom.take() {
@@ -53,12 +53,10 @@ impl Scale {
         prev
     }
 
-    /// Set a fit-to-viewport scale from image and bounds dimensions.
     pub fn fit(&mut self, image_size: Vec2, bounds: Rectangle) {
         self.custom = Some((bounds.width / image_size.x).min(bounds.height / image_size.y));
     }
 
-    /// Set an arbitrary scale value, snapping to a step if close enough.
     pub fn custom(&mut self, scale: f32) {
         if let Some(index) = STEPS.iter().position(|&s| (s - scale).abs() < EPS) {
             self.index = index;
