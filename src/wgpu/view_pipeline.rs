@@ -351,6 +351,4 @@ impl Pipeline for ViewPipeline {
             scale_factor: 1.0,
         }
     }
-
-    fn trim(&mut self) {}
 }
