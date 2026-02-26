@@ -13,3 +13,10 @@ rfd = "0.17.2"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true
