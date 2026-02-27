@@ -72,8 +72,16 @@ impl Gallery {
         self.current()
     }
 
-    fn current(&self) -> Option<&PathBuf> {
+    pub fn current(&self) -> Option<&PathBuf> {
         self.paths.get(self.index)
+    }
+
+    pub fn position(&self) -> usize {
+        self.index
+    }
+
+    pub fn len(&self) -> usize {
+        self.paths.len()
     }
 }
 

@@ -129,6 +129,21 @@ impl ViewProgram {
     pub fn time_until_next_frame(&self) -> Option<Duration> {
         self.animation.as_ref().map(|a| a.time_until_next_frame())
     }
+
+    pub fn scale(&self) -> f32 {
+        self.scale.value()
+    }
+
+    pub fn image_size(&self) -> Option<(u32, u32)> {
+        if self.image_size == Vec2::ZERO {
+            return None;
+        }
+        Some((self.image_size.x as u32, self.image_size.y as u32))
+    }
+
+    pub fn animation_info(&self) -> Option<(usize, usize)> {
+        self.animation.as_ref().map(|a| (a.current_index(), a.frame_count()))
+    }
 }
 
 impl Program<Message> for ViewProgram {

@@ -30,6 +30,14 @@ impl Animation {
         &self.frames[self.current].data
     }
 
+    pub fn frame_count(&self) -> usize {
+        self.frames.len()
+    }
+
+    pub fn current_index(&self) -> usize {
+        self.current
+    }
+
     pub fn time_until_next_frame(&self) -> Duration {
         self.deadline.saturating_duration_since(Instant::now())
     }
