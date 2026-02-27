@@ -1,7 +1,7 @@
 use iced::alignment::Vertical;
 use iced::widget::svg::Handle;
 use iced::widget::tooltip::Position;
-use iced::widget::{button, column, container, row, svg, text, tooltip};
+use iced::widget::{button, column, container, row, svg, text, tooltip, Space};
 use iced::window::Mode;
 use iced::{Element, Length};
 use iced_aw::ContextMenu;
@@ -80,7 +80,7 @@ pub fn view<'a>(
         .align_y(Vertical::Center)
         .into()
     } else {
-        row![].width(Length::Fill).into()
+        Space::new().width(Length::Fill).into()
     };
 
     let buttons = row![
