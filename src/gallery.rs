@@ -6,6 +6,7 @@ use std::{
 
 pub const SUPPORTED: &[&str] = &[
     "jpg", "jpeg", "png", "gif", "tif", "tiff", "webp", "bmp", "ico", "qoi", "pbm", "pgm", "ppm",
+    "tga", "dds", "ff", "hdr", "exr", "jxl", "psd", "icns", "kra", "avif", "svg", "svgz", "apng",
 ];
 
 #[derive(Default)]

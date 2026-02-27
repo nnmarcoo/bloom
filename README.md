@@ -20,7 +20,8 @@
 - **GPU rendering** via [wgpu](https://wgpu.rs) — hardware-accelerated at any resolution
 - **Lanczos filtering** for high-quality downsampling with a 5-level mip pyramid
 - **Hardware mipmaps** for smooth zoomed-out views
-- **GIF & animation** playback with per-frame timing
+- **GIF, APNG & WebP** animation playback
+- **SVG** rendering via resvg
 - **Gallery mode** — browse every image in a folder seamlessly
 - **Tiled texture system** — handles images larger than GPU texture limits
 - Smooth **pan and zoom** with discrete steps from 0.01× to 35×
@@ -34,13 +35,25 @@
 |--------|-----------|
 | JPEG | `.jpg` `.jpeg` |
 | PNG | `.png` |
+| Animated PNG | `.apng` |
 | GIF | `.gif` |
-| TIFF | `.tiff` |
-| WebP | `.webp` |
+| WebP (static & animated) | `.webp` |
+| TIFF | `.tif` `.tiff` |
 | BMP | `.bmp` |
 | ICO | `.ico` |
 | QOI | `.qoi` |
 | Portable bitmap | `.pbm` `.pgm` `.ppm` |
+| TGA | `.tga` |
+| DDS | `.dds` |
+| Farbfeld | `.ff` |
+| AVIF | `.avif` |
+| SVG | `.svg` `.svgz` |
+| HDR (Radiance) | `.hdr` |
+| OpenEXR | `.exr` |
+| JPEG XL | `.jxl` |
+| Photoshop | `.psd` |
+| Krita | `.kra` |
+| Apple Icon | `.icns` |
 
 </details>
 

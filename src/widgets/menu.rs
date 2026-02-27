@@ -4,9 +4,9 @@ use iced::advanced::widget::tree::{self, Tree};
 use iced::advanced::{self, Clipboard, Layout, Shell, Widget};
 use iced::alignment::Vertical;
 use iced::mouse;
+use iced::widget::{Column, container, text};
 use iced::window;
 use iced::{Background, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme};
-use iced::widget::{Column, container, text};
 
 use crate::styles::{darken, menu_container_style, menu_separator_style};
 
@@ -147,11 +147,12 @@ impl<'a, Message: Clone + 'a> From<MenuItem<'a, Message>> for Element<'a, Messag
     }
 }
 
-pub fn menu_item<'a, Message: Clone + 'a>(
-    label: &'a str,
-    msg: Message,
-) -> Element<'a, Message> {
-    MenuItem { label, on_press: msg }.into()
+pub fn menu_item<'a, Message: Clone + 'a>(label: &'a str, msg: Message) -> Element<'a, Message> {
+    MenuItem {
+        label,
+        on_press: msg,
+    }
+    .into()
 }
 
 pub fn menu_separator<'a, Message: 'a + Clone>() -> Element<'a, Message> {
@@ -162,9 +163,7 @@ pub fn menu_separator<'a, Message: 'a + Clone>() -> Element<'a, Message> {
         .into()
 }
 
-pub fn styled_menu<'a, Message: 'a>(
-    items: Column<'a, Message>,
-) -> Element<'a, Message> {
+pub fn styled_menu<'a, Message: 'a>(items: Column<'a, Message>) -> Element<'a, Message> {
     container(items.spacing(2))
         .width(180)
         .padding(6)

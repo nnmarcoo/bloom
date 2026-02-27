@@ -9,8 +9,19 @@ iced_aw = "0.13.1"
 tokio = { version = "1", features = ["rt"] }
 bytemuck = { version = "1.25.0", features = ["derive"] }
 glam = { version = "0.32.0", features = ["bytemuck"] }
-image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "gif", "tiff", "webp", "bmp", "ico", "qoi", "pnm"] }
+image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "gif", "tiff", "webp", "bmp", "ico", "qoi", "pnm", "tga", "dds", "ff", "hdr", "exr", "avif-native"] }
+# TODO: turbojpeg for faster jpeg, zune-png for faster png, file-format for magic-byte detection
 rfd = "0.17.2"
+jxl-oxide = "0.12.5"
+psd = "0.3.5"
+icns = "0.4.0"
+zip = { version = "8.1.0", default-features = false, features = ["deflate"] }
+gif = "0.14.1"
+image-webp = "0.2.4"
+gif-dispose = "6.0.0"
+resvg = "0.45.1"
+usvg = "0.45.1"
+tiny-skia = "0.11.4"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
