@@ -51,7 +51,6 @@ impl ImageData {
         let (width, height) = img.dimensions();
         let pixels = img.into_raw();
         let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
-
         Ok(Self {
             pixels,
             width,
@@ -74,7 +73,6 @@ impl ImageData {
             .read_next_frame()
             .map_err(|e| ImageError::IoError(std::io::Error::other(e)))?
         {
-            // GIF delay is in centiseconds; 0 is "as fast as possible", use 100ms fallback
             let delay_ms = frame.delay as u64 * 10;
             let delay = Duration::from_millis(if delay_ms < 20 { 100 } else { delay_ms });
 
@@ -84,19 +82,16 @@ impl ImageData {
 
             let img = screen.pixels_rgba();
             let (pixels_rgba, width, height) = img.to_contiguous_buf();
-            let width = width as u32;
-            let height = height as u32;
             let pixels = pixels_rgba
                 .iter()
                 .flat_map(|p| [p.r, p.g, p.b, p.a])
                 .collect();
             let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
-
             frames.push(Frame {
                 data: Arc::new(ImageData {
                     pixels,
-                    width,
-                    height,
+                    width: width as u32,
+                    height: height as u32,
                     id,
                 }),
                 delay,
@@ -106,10 +101,20 @@ impl ImageData {
         Ok(Animation::new(frames))
     }
 
-    // Reinhard tonemapping + gamma 2.2 for a single channel value
-    fn tonemap_channel(v: f32) -> u8 {
-        let v = v / (1.0 + v);
-        (v.powf(1.0 / 2.2).clamp(0.0, 1.0) * 255.0) as u8
+    // Extended Reinhard tonemapping (Reinhard et al. 2002, eq. 4) preserving hue.
+    // Scale is derived from the peak channel so all three channels compress
+    // proportionally — no channel clips relative to the others.
+    fn tonemap_scale(r: f32, g: f32, b: f32) -> f32 {
+        let peak = r.max(g).max(b);
+        if peak > 1e-6 {
+            (peak / (1.0 + peak)) / peak
+        } else {
+            1.0
+        }
+    }
+
+    fn tonemap_channel(v: f32, scale: f32) -> u8 {
+        ((v * scale).clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0) as u8
     }
 
     pub fn load_hdr(path: &Path) -> Result<Self, ImageError> {
@@ -119,15 +124,16 @@ impl ImageData {
         let width = meta.width;
         let height = meta.height;
         let pixel_count = width as usize * height as usize;
-        let mut buf = vec![0u8; pixel_count * 12]; // Rgb32F: 3×f32
+        let mut buf = vec![0u8; pixel_count * 12];
         decoder.read_image(&mut buf)?;
 
         let floats: &[f32] = bytemuck::cast_slice(&buf);
         let mut pixels = Vec::with_capacity(pixel_count * 4);
         for chunk in floats.chunks_exact(3) {
-            pixels.push(Self::tonemap_channel(chunk[0]));
-            pixels.push(Self::tonemap_channel(chunk[1]));
-            pixels.push(Self::tonemap_channel(chunk[2]));
+            let scale = Self::tonemap_scale(chunk[0], chunk[1], chunk[2]);
+            pixels.push(Self::tonemap_channel(chunk[0], scale));
+            pixels.push(Self::tonemap_channel(chunk[1], scale));
+            pixels.push(Self::tonemap_channel(chunk[2], scale));
             pixels.push(255);
         }
 
@@ -146,7 +152,6 @@ impl ImageData {
         let (width, height) = decoder.dimensions();
         let color_type = decoder.color_type();
         let pixel_count = width as usize * height as usize;
-
         let mut pixels = Vec::with_capacity(pixel_count * 4);
 
         match color_type {
@@ -155,9 +160,10 @@ impl ImageData {
                 decoder.read_image(&mut buf)?;
                 let floats: &[f32] = bytemuck::cast_slice(&buf);
                 for chunk in floats.chunks_exact(3) {
-                    pixels.push(Self::tonemap_channel(chunk[0]));
-                    pixels.push(Self::tonemap_channel(chunk[1]));
-                    pixels.push(Self::tonemap_channel(chunk[2]));
+                    let scale = Self::tonemap_scale(chunk[0], chunk[1], chunk[2]);
+                    pixels.push(Self::tonemap_channel(chunk[0], scale));
+                    pixels.push(Self::tonemap_channel(chunk[1], scale));
+                    pixels.push(Self::tonemap_channel(chunk[2], scale));
                     pixels.push(255);
                 }
             }
@@ -166,17 +172,14 @@ impl ImageData {
                 decoder.read_image(&mut buf)?;
                 let floats: &[f32] = bytemuck::cast_slice(&buf);
                 for chunk in floats.chunks_exact(4) {
-                    pixels.push(Self::tonemap_channel(chunk[0]));
-                    pixels.push(Self::tonemap_channel(chunk[1]));
-                    pixels.push(Self::tonemap_channel(chunk[2]));
-                    // Alpha is linear opacity, not luminance — clamp to u8 directly
+                    let scale = Self::tonemap_scale(chunk[0], chunk[1], chunk[2]);
+                    pixels.push(Self::tonemap_channel(chunk[0], scale));
+                    pixels.push(Self::tonemap_channel(chunk[1], scale));
+                    pixels.push(Self::tonemap_channel(chunk[2], scale));
                     pixels.push((chunk[3].clamp(0.0, 1.0) * 255.0) as u8);
                 }
             }
-            _ => {
-                // Fall back to the generic path for any other EXR color type
-                return Self::load(path);
-            }
+            _ => return Self::load(path),
         }
 
         let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
@@ -227,14 +230,11 @@ impl ImageData {
         let bytes = std::fs::read(path).map_err(ImageError::IoError)?;
         let psd =
             Psd::from_bytes(&bytes).map_err(|e| ImageError::IoError(std::io::Error::other(e)))?;
-        let width = psd.width();
-        let height = psd.height();
-        let pixels = psd.rgba();
         let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
         Ok(Self {
-            pixels,
-            width,
-            height,
+            pixels: psd.rgba(),
+            width: psd.width(),
+            height: psd.height(),
             id,
         })
     }
@@ -251,10 +251,9 @@ impl ImageData {
         let img =
             image::load_from_memory_with_format(&png_bytes, image::ImageFormat::Png)?.into_rgba8();
         let (width, height) = img.dimensions();
-        let pixels = img.into_raw();
         let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
         Ok(Self {
-            pixels,
+            pixels: img.into_raw(),
             width,
             height,
             id,
@@ -272,15 +271,14 @@ impl ImageData {
         let image = family
             .get_icon_with_type(icon_type)
             .map_err(ImageError::IoError)?;
-        let width = image.width();
-        let height = image.height();
-        let rgba = image.convert_to(IcnsPixelFormat::RGBA);
-        let pixels = rgba.into_data().into_vec();
         let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
         Ok(Self {
-            pixels,
-            width,
-            height,
+            pixels: image
+                .convert_to(IcnsPixelFormat::RGBA)
+                .into_data()
+                .into_vec(),
+            width: image.width(),
+            height: image.height(),
             id,
         })
     }
@@ -294,7 +292,6 @@ impl ImageData {
         opt.fontdb_mut().load_system_fonts();
         let tree = usvg::Tree::from_data(&svg_data, &opt)
             .map_err(|e| ImageError::IoError(std::io::Error::other(e)))?;
-        // TODO: expose render scale as a setting for users who want sharper SVG zoom
         let size = tree.size().to_int_size();
         let width = size.width().max(1);
         let height = size.height().max(1);
@@ -302,10 +299,9 @@ impl ImageData {
             ImageError::IoError(std::io::Error::other("SVG dimensions too large"))
         })?;
         resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
-        let pixels = pixmap.take();
         let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
         Ok(Self {
-            pixels,
+            pixels: pixmap.take(),
             width,
             height,
             id,
@@ -323,11 +319,10 @@ impl ImageData {
             let delay = Duration::from_millis(if delay_ms < 20 { 100 } else { delay_ms });
             let rgba = frame.into_buffer();
             let (width, height) = rgba.dimensions();
-            let pixels = rgba.into_raw();
             let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
             frames.push(Frame {
                 data: Arc::new(ImageData {
-                    pixels,
+                    pixels: rgba.into_raw(),
                     width,
                     height,
                     id,
