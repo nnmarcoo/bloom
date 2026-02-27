@@ -43,6 +43,12 @@ impl Gallery {
         Self { paths, index }
     }
 
+    pub fn filename(path: &Path) -> String {
+        path.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
     pub fn set(&mut self, file_path: PathBuf) -> Option<&PathBuf> {
         if let Some(index) = self.paths.iter().position(|p| p == &file_path) {
             self.index = index;

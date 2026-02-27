@@ -28,6 +28,7 @@ pub struct App {
     gallery: Gallery,
     mode: Mode,
     loading: Option<String>,
+    load_generation: u64,
 }
 
 impl Default for App {
@@ -37,6 +38,7 @@ impl Default for App {
             gallery: Gallery::default(),
             mode: Mode::Windowed,
             loading: None,
+            load_generation: 0,
         }
     }
 }
@@ -54,20 +56,26 @@ pub enum Message {
     Previous,
     SelectMedia,
     MediaSelected(PathBuf),
-    MediaLoaded(MediaData),
-    MediaFailed(String),
+    MediaLoaded(u64, MediaData),
+    MediaFailed(u64, String),
     AnimationTick(Instant),
     ToggleFullscreen,
     ToggleLanczos,
     Noop,
 }
 
-fn load_media(path: PathBuf) -> Task<Message> {
+fn load_media(path: PathBuf, generation: u64) -> Task<Message> {
     Task::future(async move {
-        match tokio::task::spawn_blocking(move || ImageData::load_media(&path)).await {
-            Ok(Ok(media)) => Message::MediaLoaded(media),
-            Ok(Err(e)) => Message::MediaFailed(e.to_string()),
-            Err(e) => Message::MediaFailed(e.to_string()),
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        std::thread::spawn(move || {
+            let _ = tx.send(ImageData::load_media(&path));
+        });
+
+        match rx.await {
+            Ok(Ok(media)) => Message::MediaLoaded(generation, media),
+            Ok(Err(e)) => Message::MediaFailed(generation, e.to_string()),
+            Err(_) => Message::MediaFailed(generation, "load thread panicked".to_string()),
         }
     })
 }
@@ -85,18 +93,13 @@ fn set_window_mode(mode: Mode) -> Task<Message> {
 impl App {
     pub fn new(path: Option<PathBuf>) -> (Self, Task<Message>) {
         if let Some(p) = path {
-            let gallery = Gallery::new(&p);
-            let filename = p
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
             let app = Self {
-                program: ViewProgram::default(),
-                gallery,
-                mode: Mode::Windowed,
-                loading: Some(filename),
+                gallery: Gallery::new(&p),
+                loading: Some(Gallery::filename(&p)),
+                load_generation: 1,
+                ..Self::default()
             };
-            return (app, load_media(p));
+            return (app, load_media(p, 1));
         }
         (Self::default(), Task::none())
     }
@@ -147,27 +150,28 @@ impl App {
             }
             Message::MediaSelected(path) => {
                 if let Some(p) = self.gallery.set(path) {
-                    let filename = p
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    self.loading = Some(filename);
-                    return load_media(p.clone());
+                    self.loading = Some(Gallery::filename(p));
+                    self.load_generation = self.load_generation.wrapping_add(1);
+                    return load_media(p.clone(), self.load_generation);
                 }
             }
-            Message::MediaLoaded(media) => {
-                self.loading = None;
-                match media {
-                    MediaData::Image(data) => self.program.set_image(data),
-                    MediaData::Animation(anim) => self.program.set_animation(anim),
+            Message::MediaLoaded(generation, media) => {
+                if generation == self.load_generation {
+                    self.loading = None;
+                    match media {
+                        MediaData::Image(data) => self.program.set_image(data),
+                        MediaData::Animation(anim) => self.program.set_animation(anim),
+                    }
+                    self.program.fit();
                 }
-                self.program.fit();
             }
             Message::AnimationTick(now) => {
                 self.program.tick_animation(now);
             }
-            Message::MediaFailed(err) => {
-                self.loading = None;
+            Message::MediaFailed(generation, err) => {
+                if generation == self.load_generation {
+                    self.loading = None;
+                }
                 eprintln!("Failed to load media: {err}");
             }
             Message::ToggleFullscreen => {
