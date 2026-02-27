@@ -31,43 +31,53 @@
 <details>
 <summary>Supported Formats</summary>
 
-| Format | Extension | Notes |
-|--------|-----------|-------|
-| JPEG | `.jpg` `.jpeg` | |
-| PNG | `.png` | |
-| Animated PNG | `.apng` | Animated |
-| GIF | `.gif` | Animated |
-| WebP | `.webp` | Static and animated |
-| TIFF | `.tif` `.tiff` | |
-| BMP | `.bmp` | |
-| ICO | `.ico` | |
-| QOI | `.qoi` | |
-| Portable bitmap | `.pbm` `.pgm` `.ppm` | |
-| TGA | `.tga` | |
-| DDS | `.dds` | DXT1/3/5 only |
-| Farbfeld | `.ff` | |
-| AVIF | `.avif` | |
-| SVG | `.svg` `.svgz` | Rasterized at native size |
-| HDR (Radiance) | `.hdr` | Tonemapped (Reinhard) |
-| OpenEXR | `.exr` | Tonemapped (Reinhard) |
-| JPEG XL | `.jxl` | |
-| Photoshop | `.psd` | Merged composite, no layers |
-| Krita | `.kra` | Merged composite, no layers |
-| Apple Icon | `.icns` | Largest available size |
+<table align="center">
+  <thead>
+    <tr><th>Format</th><th>Extension</th><th>Notes</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>JPEG</td><td><code>.jpg</code> <code>.jpeg</code></td><td></td></tr>
+    <tr><td>PNG</td><td><code>.png</code></td><td></td></tr>
+    <tr><td>Animated PNG</td><td><code>.apng</code></td><td>Animated</td></tr>
+    <tr><td>GIF</td><td><code>.gif</code></td><td>Animated</td></tr>
+    <tr><td>WebP</td><td><code>.webp</code></td><td>Static and animated</td></tr>
+    <tr><td>TIFF</td><td><code>.tif</code> <code>.tiff</code></td><td></td></tr>
+    <tr><td>BMP</td><td><code>.bmp</code></td><td></td></tr>
+    <tr><td>ICO</td><td><code>.ico</code></td><td></td></tr>
+    <tr><td>QOI</td><td><code>.qoi</code></td><td></td></tr>
+    <tr><td>Portable bitmap</td><td><code>.pbm</code> <code>.pgm</code> <code>.ppm</code></td><td></td></tr>
+    <tr><td>TGA</td><td><code>.tga</code></td><td></td></tr>
+    <tr><td>DDS</td><td><code>.dds</code></td><td>DXT1/3/5 only</td></tr>
+    <tr><td>Farbfeld</td><td><code>.ff</code></td><td></td></tr>
+    <tr><td>AVIF</td><td><code>.avif</code></td><td></td></tr>
+    <tr><td>SVG</td><td><code>.svg</code> <code>.svgz</code></td><td>Rasterized at native size</td></tr>
+    <tr><td>HDR (Radiance)</td><td><code>.hdr</code></td><td>Tonemapped (Reinhard)</td></tr>
+    <tr><td>OpenEXR</td><td><code>.exr</code></td><td>Tonemapped (Reinhard)</td></tr>
+    <tr><td>JPEG XL</td><td><code>.jxl</code></td><td></td></tr>
+    <tr><td>Photoshop</td><td><code>.psd</code></td><td>Merged composite, no layers</td></tr>
+    <tr><td>Krita</td><td><code>.kra</code></td><td>Merged composite, no layers</td></tr>
+    <tr><td>Apple Icon</td><td><code>.icns</code></td><td>Largest available size</td></tr>
+  </tbody>
+</table>
 
 </details>
 
 <details>
 <summary>Default Shortcuts</summary>
 
-| Key | Action |
-|-----|--------|
-| `←` / `→` | Previous / next image in folder |
-| `Ctrl` `=` | Zoom in |
-| `Ctrl` `-` | Zoom out |
-| `Ctrl` `0` | Fit to window |
-| `Ctrl` `1`–`9` | Fixed zoom (1×–9×) |
-| `F` | Toggle fullscreen |
+<table align="center">
+  <thead>
+    <tr><th>Key</th><th>Action</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>←</code> / <code>→</code></td><td>Previous / next image in folder</td></tr>
+    <tr><td><code>Ctrl</code> <code>=</code></td><td>Zoom in</td></tr>
+    <tr><td><code>Ctrl</code> <code>-</code></td><td>Zoom out</td></tr>
+    <tr><td><code>Ctrl</code> <code>0</code></td><td>Fit to window</td></tr>
+    <tr><td><code>Ctrl</code> <code>1</code>–<code>9</code></td><td>Fixed zoom (1×–9×)</td></tr>
+    <tr><td><code>F</code></td><td>Toggle fullscreen</td></tr>
+  </tbody>
+</table>
 
 Drag to pan. Scroll wheel to zoom.
 
