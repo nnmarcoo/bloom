@@ -26,10 +26,7 @@
 - **Tiled texture system** — handles images larger than GPU texture limits
 - Smooth **pan and zoom** with discrete steps from 0.01× to 35×
 
-## Usage
-
-<details>
-<summary>Supported Formats</summary>
+## Supported Formats
 
 <table align="center">
   <thead>
@@ -60,10 +57,7 @@
   </tbody>
 </table>
 
-</details>
-
-<details>
-<summary>Default Shortcuts</summary>
+## Default Shortcuts
 
 <table align="center">
   <thead>
@@ -81,8 +75,6 @@
 
 Drag to pan. Scroll wheel to zoom.
 
-</details>
-
 ## Build
 
 ```sh
@@ -93,9 +85,14 @@ Requires a GPU with WebGPU support. On Windows, DX12 is used by default.
 
 ## Stack
 
-| Crate | Role |
-|-------|------|
-| [iced](https://github.com/iced-rs/iced) | GUI framework |
-| [wgpu](https://github.com/gfx-rs/wgpu) | GPU rendering |
-| [image](https://github.com/image-rs/image) | Image decoding |
-| [glam](https://github.com/bitshifter/glam-rs) | Math |
+<table align="center">
+  <thead>
+    <tr><th>Crate</th><th>Role</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><a href="https://github.com/iced-rs/iced">iced</a></td><td>GUI framework</td></tr>
+    <tr><td><a href="https://github.com/gfx-rs/wgpu">wgpu</a></td><td>GPU rendering</td></tr>
+    <tr><td><a href="https://github.com/image-rs/image">image</a></td><td>Image decoding</td></tr>
+    <tr><td><a href="https://github.com/bitshifter/glam-rs">glam</a></td><td>Math</td></tr>
+  </tbody>
+</table>
