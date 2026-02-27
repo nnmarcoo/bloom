@@ -1,7 +1,7 @@
 use iced::alignment::Vertical;
 use iced::widget::svg::Handle;
 use iced::widget::tooltip::Position;
-use iced::widget::{button, column, container, row, svg, text, tooltip, Space};
+use iced::widget::{Space, button, column, container, row, svg, text, tooltip};
 use iced::window::Mode;
 use iced::{Element, Length};
 use iced_aw::ContextMenu;
@@ -39,8 +39,16 @@ fn icon_button<'a>(
 }
 
 fn lanczos_button(enabled: bool) -> Element<'static, Message> {
-    let style = if enabled { icon_button_active_style } else { icon_button_style };
-    let label = if enabled { "Lanczos quality: on" } else { "Lanczos quality: off" };
+    let style = if enabled {
+        icon_button_active_style
+    } else {
+        icon_button_style
+    };
+    let label = if enabled {
+        "Lanczos quality: on"
+    } else {
+        "Lanczos quality: off"
+    };
     tooltip(
         button(text("L").size(12))
             .padding(PAD)
@@ -132,5 +140,6 @@ pub fn view<'a>(
             menu_separator(),
             menu_item("Copy Path", Message::Noop),
         ])
-    }).into()
+    })
+    .into()
 }
