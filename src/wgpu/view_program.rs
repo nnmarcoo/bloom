@@ -142,7 +142,9 @@ impl ViewProgram {
     }
 
     pub fn animation_info(&self) -> Option<(usize, usize)> {
-        self.animation.as_ref().map(|a| (a.current_index(), a.frame_count()))
+        self.animation
+            .as_ref()
+            .map(|a| (a.current_index(), a.frame_count()))
     }
 }
 
