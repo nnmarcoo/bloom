@@ -31,29 +31,29 @@
 <details>
 <summary>Supported Formats</summary>
 
-| Format | Extension |
-|--------|-----------|
-| JPEG | `.jpg` `.jpeg` |
-| PNG | `.png` |
-| Animated PNG | `.apng` |
-| GIF | `.gif` |
-| WebP (static & animated) | `.webp` |
-| TIFF | `.tif` `.tiff` |
-| BMP | `.bmp` |
-| ICO | `.ico` |
-| QOI | `.qoi` |
-| Portable bitmap | `.pbm` `.pgm` `.ppm` |
-| TGA | `.tga` |
-| DDS | `.dds` |
-| Farbfeld | `.ff` |
-| AVIF | `.avif` |
-| SVG | `.svg` `.svgz` |
-| HDR (Radiance) | `.hdr` |
-| OpenEXR | `.exr` |
-| JPEG XL | `.jxl` |
-| Photoshop | `.psd` |
-| Krita | `.kra` |
-| Apple Icon | `.icns` |
+| Format | Extension | Notes |
+|--------|-----------|-------|
+| JPEG | `.jpg` `.jpeg` | |
+| PNG | `.png` | |
+| Animated PNG | `.apng` | Animated |
+| GIF | `.gif` | Animated |
+| WebP | `.webp` | Static and animated |
+| TIFF | `.tif` `.tiff` | |
+| BMP | `.bmp` | |
+| ICO | `.ico` | |
+| QOI | `.qoi` | |
+| Portable bitmap | `.pbm` `.pgm` `.ppm` | |
+| TGA | `.tga` | |
+| DDS | `.dds` | DXT1/3/5 only |
+| Farbfeld | `.ff` | |
+| AVIF | `.avif` | |
+| SVG | `.svg` `.svgz` | Rasterized at native size |
+| HDR (Radiance) | `.hdr` | Tonemapped (Reinhard) |
+| OpenEXR | `.exr` | Tonemapped (Reinhard) |
+| JPEG XL | `.jxl` | |
+| Photoshop | `.psd` | Merged composite, no layers |
+| Krita | `.kra` | Merged composite, no layers |
+| Apple Icon | `.icns` | Largest available size |
 
 </details>
 
