@@ -44,19 +44,22 @@ impl ImageData {
         self.width as usize * self.height as usize * 4
     }
 
+    fn new(pixels: Vec<u8>, width: u32, height: u32) -> Self {
+        let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
+        Self {
+            pixels,
+            width,
+            height,
+            id,
+        }
+    }
+
     pub fn load(path: &Path) -> Result<Self, ImageError> {
         let mut reader = ImageReader::open(path)?.with_guessed_format()?;
         reader.no_limits();
         let img = reader.decode()?.into_rgba8();
         let (width, height) = img.dimensions();
-        let pixels = img.into_raw();
-        let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
-        Ok(Self {
-            pixels,
-            width,
-            height,
-            id,
-        })
+        Ok(Self::new(img.into_raw(), width, height))
     }
 
     pub fn load_gif(path: &Path) -> Result<Animation, ImageError> {
@@ -86,14 +89,8 @@ impl ImageData {
                 .iter()
                 .flat_map(|p| [p.r, p.g, p.b, p.a])
                 .collect();
-            let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
             frames.push(Frame {
-                data: Arc::new(ImageData {
-                    pixels,
-                    width: width as u32,
-                    height: height as u32,
-                    id,
-                }),
+                data: Arc::new(ImageData::new(pixels, width as u32, height as u32)),
                 delay,
             });
         }
@@ -137,13 +134,7 @@ impl ImageData {
             pixels.push(255);
         }
 
-        let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
-        Ok(Self {
-            pixels,
-            width,
-            height,
-            id,
-        })
+        Ok(Self::new(pixels, width, height))
     }
 
     pub fn load_exr(path: &Path) -> Result<Self, ImageError> {
@@ -182,13 +173,7 @@ impl ImageData {
             _ => return Self::load(path),
         }
 
-        let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
-        Ok(Self {
-            pixels,
-            width,
-            height,
-            id,
-        })
+        Ok(Self::new(pixels, width, height))
     }
 
     pub fn load_jxl(path: &Path) -> Result<Self, ImageError> {
@@ -217,26 +202,14 @@ impl ImageData {
             });
         }
 
-        let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
-        Ok(Self {
-            pixels,
-            width,
-            height,
-            id,
-        })
+        Ok(Self::new(pixels, width, height))
     }
 
     pub fn load_psd(path: &Path) -> Result<Self, ImageError> {
         let bytes = std::fs::read(path).map_err(ImageError::IoError)?;
         let psd =
             Psd::from_bytes(&bytes).map_err(|e| ImageError::IoError(std::io::Error::other(e)))?;
-        let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
-        Ok(Self {
-            pixels: psd.rgba(),
-            width: psd.width(),
-            height: psd.height(),
-            id,
-        })
+        Ok(Self::new(psd.rgba(), psd.width(), psd.height()))
     }
 
     pub fn load_kra(path: &Path) -> Result<Self, ImageError> {
@@ -251,13 +224,7 @@ impl ImageData {
         let img =
             image::load_from_memory_with_format(&png_bytes, image::ImageFormat::Png)?.into_rgba8();
         let (width, height) = img.dimensions();
-        let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
-        Ok(Self {
-            pixels: img.into_raw(),
-            width,
-            height,
-            id,
-        })
+        Ok(Self::new(img.into_raw(), width, height))
     }
 
     pub fn load_icns(path: &Path) -> Result<Self, ImageError> {
@@ -271,16 +238,14 @@ impl ImageData {
         let image = family
             .get_icon_with_type(icon_type)
             .map_err(ImageError::IoError)?;
-        let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
-        Ok(Self {
-            pixels: image
+        Ok(Self::new(
+            image
                 .convert_to(IcnsPixelFormat::RGBA)
                 .into_data()
                 .into_vec(),
-            width: image.width(),
-            height: image.height(),
-            id,
-        })
+            image.width(),
+            image.height(),
+        ))
     }
 
     pub fn load_svg(path: &Path) -> Result<Self, ImageError> {
@@ -299,13 +264,7 @@ impl ImageData {
             ImageError::IoError(std::io::Error::other("SVG dimensions too large"))
         })?;
         resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
-        let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
-        Ok(Self {
-            pixels: pixmap.take(),
-            width,
-            height,
-            id,
-        })
+        Ok(Self::new(pixmap.take(), width, height))
     }
 
     pub fn load_apng(path: &Path) -> Result<Animation, ImageError> {
@@ -319,14 +278,8 @@ impl ImageData {
             let delay = Duration::from_millis(if delay_ms < 20 { 100 } else { delay_ms });
             let rgba = frame.into_buffer();
             let (width, height) = rgba.dimensions();
-            let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
             frames.push(Frame {
-                data: Arc::new(ImageData {
-                    pixels: rgba.into_raw(),
-                    width,
-                    height,
-                    id,
-                }),
+                data: Arc::new(ImageData::new(rgba.into_raw(), width, height)),
                 delay,
             });
         }
@@ -361,14 +314,8 @@ impl ImageData {
                     .flat_map(|p| [p[0], p[1], p[2], 255])
                     .collect()
             };
-            let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
             frames.push(Frame {
-                data: Arc::new(ImageData {
-                    pixels,
-                    width,
-                    height,
-                    id,
-                }),
+                data: Arc::new(ImageData::new(pixels, width, height)),
                 delay,
             });
         }
@@ -377,35 +324,27 @@ impl ImageData {
 
     pub fn load_media(path: &Path) -> Result<MediaData, ImageError> {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if ext.eq_ignore_ascii_case("gif") {
-            Ok(MediaData::Animation(Self::load_gif(path)?))
-        } else if ext.eq_ignore_ascii_case("hdr") {
-            Ok(MediaData::Image(Self::load_hdr(path)?))
-        } else if ext.eq_ignore_ascii_case("exr") {
-            Ok(MediaData::Image(Self::load_exr(path)?))
-        } else if ext.eq_ignore_ascii_case("jxl") {
-            Ok(MediaData::Image(Self::load_jxl(path)?))
-        } else if ext.eq_ignore_ascii_case("psd") {
-            Ok(MediaData::Image(Self::load_psd(path)?))
-        } else if ext.eq_ignore_ascii_case("icns") {
-            Ok(MediaData::Image(Self::load_icns(path)?))
-        } else if ext.eq_ignore_ascii_case("kra") {
-            Ok(MediaData::Image(Self::load_kra(path)?))
-        } else if ext.eq_ignore_ascii_case("svg") || ext.eq_ignore_ascii_case("svgz") {
-            Ok(MediaData::Image(Self::load_svg(path)?))
-        } else if ext.eq_ignore_ascii_case("apng") {
-            Ok(MediaData::Animation(Self::load_apng(path)?))
-        } else if ext.eq_ignore_ascii_case("webp") {
-            let file = File::open(path).map_err(ImageError::IoError)?;
-            let decoder = image_webp::WebPDecoder::new(BufReader::new(file))
-                .map_err(|e| ImageError::IoError(std::io::Error::other(e)))?;
-            if decoder.is_animated() {
-                Ok(MediaData::Animation(Self::load_webp_animated(path)?))
-            } else {
-                Ok(MediaData::Image(Self::load(path)?))
+        match ext.to_ascii_lowercase().as_str() {
+            "gif" => Ok(MediaData::Animation(Self::load_gif(path)?)),
+            "hdr" => Ok(MediaData::Image(Self::load_hdr(path)?)),
+            "exr" => Ok(MediaData::Image(Self::load_exr(path)?)),
+            "jxl" => Ok(MediaData::Image(Self::load_jxl(path)?)),
+            "psd" => Ok(MediaData::Image(Self::load_psd(path)?)),
+            "icns" => Ok(MediaData::Image(Self::load_icns(path)?)),
+            "kra" => Ok(MediaData::Image(Self::load_kra(path)?)),
+            "svg" | "svgz" => Ok(MediaData::Image(Self::load_svg(path)?)),
+            "apng" => Ok(MediaData::Animation(Self::load_apng(path)?)),
+            "webp" => {
+                let file = File::open(path).map_err(ImageError::IoError)?;
+                let decoder = image_webp::WebPDecoder::new(BufReader::new(file))
+                    .map_err(|e| ImageError::IoError(std::io::Error::other(e)))?;
+                if decoder.is_animated() {
+                    Ok(MediaData::Animation(Self::load_webp_animated(path)?))
+                } else {
+                    Ok(MediaData::Image(Self::load(path)?))
+                }
             }
-        } else {
-            Ok(MediaData::Image(Self::load(path)?))
+            _ => Ok(MediaData::Image(Self::load(path)?)),
         }
     }
 }
