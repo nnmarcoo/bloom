@@ -63,7 +63,6 @@ pub enum Message {
     MediaFailed(u64, String),
     AnimationTick(Instant),
     ToggleFullscreen,
-    ToggleLanczos,
     ClipboardLoaded(MediaData),
     Noop,
 }
@@ -203,9 +202,6 @@ impl App {
                 };
                 return set_window_mode(self.mode);
             }
-            Message::ToggleLanczos => {
-                self.program.lanczos_enabled = !self.program.lanczos_enabled;
-            }
             Message::ClipboardLoaded(media) => {
                 self.loading = None;
                 match media {
@@ -252,7 +248,6 @@ impl App {
             viewer::view(self.program.clone(), self.loading.as_deref()),
             bottom_bar::view(
                 self.mode,
-                self.program.lanczos_enabled,
                 self.program.scale(),
                 self.focus_scale,
             ),

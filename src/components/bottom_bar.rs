@@ -8,7 +8,7 @@ use iced_aw::ContextMenu;
 
 use crate::app::Message;
 use crate::styles::{
-    BAR_HEIGHT, BUTTON_SIZE, PAD, TOOLTIP_DELAY, bar_style, icon_button_active_style,
+    BAR_HEIGHT, BUTTON_SIZE, PAD, TOOLTIP_DELAY, bar_style,
     icon_button_style, svg_style,
 };
 use crate::widgets::menu::{menu_item, menu_separator, styled_menu};
@@ -47,32 +47,8 @@ fn icon_button<'a>(
     bottom_bar_tooltip(button, tooltip_text)
 }
 
-// This is temporary
-fn lanczos_button(enabled: bool) -> Element<'static, Message> {
-    let style = if enabled {
-        icon_button_active_style
-    } else {
-        icon_button_style
-    };
-
-    let label = if enabled {
-        "Lanczos quality: on"
-    } else {
-        "Lanczos quality: off"
-    };
-
-    bottom_bar_tooltip(
-        button(text("L").size(12))
-            .padding(PAD)
-            .style(style)
-            .on_press(Message::ToggleLanczos),
-        label,
-    )
-}
-
 pub fn view<'a>(
     mode: Mode,
-    lanczos_enabled: bool,
     scale: f32,
     focus_scale: bool,
 ) -> Element<'a, Message> {
@@ -101,6 +77,16 @@ pub fn view<'a>(
             ScaleEntry::new(scale, Message::Scale).focused(focus_scale),
             "Scale"
         ),
+        icon_button(
+            include_bytes!("../../assets/icons/information.svg"),
+            "Information",
+            Some(Message::Noop)
+        ),
+        icon_button(
+            include_bytes!("../../assets/icons/edit.svg"),
+            "Edit",
+            Some(Message::Noop)
+        ),
     ]
     .align_y(Vertical::Center);
 
@@ -120,11 +106,10 @@ pub fn view<'a>(
             "Select media",
             Some(Message::SelectMedia)
         ),
-        lanczos_button(lanczos_enabled),
         icon_button(
             include_bytes!("../../assets/icons/kebab.svg"),
             "More actions",
-            None
+            Some(Message::Noop)
         ),
     ]
     .align_y(Vertical::Center);
