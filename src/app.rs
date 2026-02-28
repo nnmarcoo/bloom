@@ -15,7 +15,7 @@ use iced::{
 };
 use rfd::AsyncFileDialog;
 
-use crate::components::info_column::{self, InfoData};
+use crate::components::info_column;
 use crate::{
     clipboard::{self, ClipboardImage},
     components::{bottom_bar, viewer},
@@ -254,30 +254,26 @@ impl App {
     pub fn view(&self) -> Element<'_, Message> {
         let viewer = viewer::view(self.program.clone(), self.loading.as_deref());
         let main_row = if self.show_info {
-            let current_path = self.gallery.current();
-            let file_size = current_path
-                .and_then(|p| std::fs::metadata(p).ok())
-                .map(|m| m.len());
-            let info = InfoData {
-                filename: current_path
-                    .and_then(|p| p.file_name())
-                    .and_then(|n| n.to_str()),
-                path: current_path.and_then(|p| p.to_str()),
-                dimensions: self.program.image_size(),
-                file_size,
-                scale: self.program.scale(),
-                index: self.gallery.position(),
-                count: self.gallery.len(),
-                animation: self.program.animation_info(),
-            };
-            row![info_column::view(info), viewer]
+            row![
+                info_column::view(
+                    self.gallery.current().map(|p| p.as_path()),
+                    &self.gallery,
+                    &self.program,
+                ),
+                viewer
+            ]
         } else {
             row![viewer]
         };
 
         column![
             main_row,
-            bottom_bar::view(self.mode, self.program.scale(), self.focus_scale, self.show_info),
+            bottom_bar::view(
+                self.mode,
+                self.program.scale(),
+                self.focus_scale,
+                self.show_info
+            ),
         ]
         .into()
     }

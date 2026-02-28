@@ -65,7 +65,12 @@ fn icon_button_active<'a>(
     bottom_bar_tooltip(button, tooltip_text)
 }
 
-pub fn view<'a>(mode: Mode, scale: f32, focus_scale: bool, show_info: bool) -> Element<'a, Message> {
+pub fn view<'a>(
+    mode: Mode,
+    scale: f32,
+    focus_scale: bool,
+    show_info: bool,
+) -> Element<'a, Message> {
     let is_fullscreen = matches!(mode, Mode::Fullscreen);
     let (fullscreen_icon, fullscreen_tooltip): (&'static [u8], &str) = if is_fullscreen {
         (include_bytes!("../../assets/icons/restore.svg"), "Restore")
