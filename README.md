@@ -18,10 +18,9 @@
 - **Lanczos filtering** for high-quality downsampling with a 5-level mip pyramid
 - **Hardware mipmaps** for smooth zoomed-out views
 - **GIF, APNG & WebP** animation playback
-- **SVG** rendering via resvg
-- **Gallery mode** — browse every image in a folder seamlessly
+- **Gallery** — browse every image in a folder seamlessly
 - **Tiled texture system** — handles images larger than GPU texture limits
-- Smooth **pan and zoom** with discrete steps from 0.01× to 35×
+- **pan and zoom** — flexible zoom from 0.01× to 35×, with custom % input
 - **Clipboard import** (`Ctrl+V`) — load an image directly from clipboard, or import via file path
 
 ## Supported Formats
