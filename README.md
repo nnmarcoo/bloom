@@ -44,16 +44,19 @@
     <tr><td>QOI</td><td><code>.qoi</code></td><td></td></tr>
     <tr><td>Portable bitmap</td><td><code>.pbm</code> <code>.pgm</code> <code>.ppm</code></td><td></td></tr>
     <tr><td>TGA</td><td><code>.tga</code></td><td></td></tr>
-    <tr><td>DDS</td><td><code>.dds</code></td><td>DXT1/3/5 only</td></tr>
+    <tr><td>DDS</td><td><code>.dds</code></td><td>BC1–BC7 and uncompressed</td></tr>
     <tr><td>Farbfeld</td><td><code>.ff</code></td><td></td></tr>
     <tr><td>AVIF</td><td><code>.avif</code></td><td></td></tr>
     <tr><td>SVG</td><td><code>.svg</code> <code>.svgz</code></td><td>Rasterized at native size</td></tr>
     <tr><td>HDR (Radiance)</td><td><code>.hdr</code></td><td>Tonemapped (Reinhard)</td></tr>
     <tr><td>OpenEXR</td><td><code>.exr</code></td><td>Tonemapped (Reinhard)</td></tr>
     <tr><td>JPEG XL</td><td><code>.jxl</code></td><td></td></tr>
+    <tr><td>JPEG 2000</td><td><code>.jp2</code> <code>.j2k</code> <code>.j2c</code> <code>.jpx</code></td><td></td></tr>
     <tr><td>Photoshop</td><td><code>.psd</code></td><td>Merged composite, no layers</td></tr>
     <tr><td>Krita</td><td><code>.kra</code></td><td>Merged composite, no layers</td></tr>
     <tr><td>Apple Icon</td><td><code>.icns</code></td><td>Largest available size</td></tr>
+    <tr><td>DICOM</td><td><code>.dcm</code> <code>.dicom</code></td><td>Medical imaging, first frame</td></tr>
+    <tr><td>KTX2</td><td><code>.ktx2</code></td><td>Basis Universal and uncompressed</td></tr>
   </tbody>
 </table>
 
@@ -92,7 +95,13 @@ Requires a GPU with WebGPU support. On Windows, DX12 is used by default.
   <tbody>
     <tr><td><a href="https://github.com/iced-rs/iced">iced</a></td><td>GUI framework</td></tr>
     <tr><td><a href="https://github.com/gfx-rs/wgpu">wgpu</a></td><td>GPU rendering</td></tr>
-    <tr><td><a href="https://github.com/image-rs/image">image</a></td><td>Image decoding</td></tr>
+    <tr><td><a href="https://github.com/image-rs/image">image</a></td><td>Core image decoding</td></tr>
+    <tr><td><a href="https://github.com/nicowillis/jxl-oxide">jxl-oxide</a></td><td>JPEG XL decoding</td></tr>
+    <tr><td><a href="https://github.com/dclong/jpeg2k">jpeg2k</a></td><td>JPEG 2000 decoding</td></tr>
+    <tr><td><a href="https://github.com/Ajordat/dicom-rs">dicom-rs</a></td><td>DICOM decoding</td></tr>
+    <tr><td><a href="https://github.com/image-rs/image-dds">dds</a></td><td>DDS / BC-compressed texture decoding</td></tr>
+    <tr><td><a href="https://github.com/BinomialLLC/basis_universal">basis-universal</a></td><td>KTX2 / Basis Universal texture decoding</td></tr>
+    <tr><td><a href="https://github.com/RazrFalcon/resvg">resvg</a></td><td>SVG rendering</td></tr>
     <tr><td><a href="https://github.com/bitshifter/glam-rs">glam</a></td><td>Math</td></tr>
   </tbody>
 </table>

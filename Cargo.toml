@@ -19,9 +19,16 @@ zip = { version = "8.1.0", default-features = false, features = ["deflate"] }
 gif = "0.14.1"
 image-webp = "0.2.4"
 gif-dispose = "6.0.0"
+jpeg2k = { version = "0.10.1", default-features = false, features = ["threads", "file-io", "openjpeg-sys"] }
+dicom-object = "0.9.0"
+dicom-pixeldata = { version = "0.9.0", features = ["image"] }
+ktx2 = "0.4.0"
+basis-universal = "0.3.1"
+dds = "0.2.0"
 resvg = "0.45.1"
 usvg = "0.45.1"
 tiny-skia = "0.11.4"
+zstd = "0.13.3"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
