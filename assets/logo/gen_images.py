@@ -113,7 +113,8 @@ def render_icon(svg_content: str, size: int) -> Image.Image:
 
 def render_banner(svg_content: str, font: ImageFont.FreeTypeFont) -> Image.Image:
     """Blue rounded-rect with the glyph and 'loom' text side by side."""
-    glyph = render_svg(svg_content, BANNER_LOGO_H * 4).resize(
+    SCALE = 4
+    glyph = render_svg(svg_content, BANNER_LOGO_H * SCALE).resize(
         (BANNER_LOGO_H, BANNER_LOGO_H), Image.LANCZOS
     )
 
@@ -123,9 +124,12 @@ def render_banner(svg_content: str, font: ImageFont.FreeTypeFont) -> Image.Image
 
     W = BANNER_LOGO_H + tw + BANNER_INNER_PAD * 2
     H = max(BANNER_LOGO_H, th) + BANNER_INNER_PAD * 2
-    banner = blue_rounded_rect(W, H)
-    draw = ImageDraw.Draw(banner)
 
+    # Render background at 4x for smooth corners, then downscale
+    hi_banner = blue_rounded_rect(W * SCALE, H * SCALE)
+    banner = hi_banner.resize((W, H), Image.LANCZOS)
+
+    draw = ImageDraw.Draw(banner)
     banner.paste(glyph, (BANNER_INNER_PAD, (H - BANNER_LOGO_H) // 2), glyph)
     ty = (H - BANNER_INNER_PAD) - th - bbox[1]
     draw.text((BANNER_INNER_PAD + BANNER_LOGO_H, ty), "loom", font=font, fill=(255, 255, 255, 255))
