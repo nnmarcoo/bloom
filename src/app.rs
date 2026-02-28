@@ -217,7 +217,8 @@ impl App {
             bottom_bar::view(
                 self.mode,
                 self.loading.as_deref(),
-                self.program.lanczos_enabled
+                self.program.lanczos_enabled,
+                self.program.scale(),
             )
         ]
         .into()

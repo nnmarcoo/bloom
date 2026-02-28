@@ -13,6 +13,7 @@ use crate::styles::{
 };
 use crate::widgets::loading_spinner::Circular;
 use crate::widgets::menu::{menu_item, menu_separator, styled_menu};
+use crate::widgets::scale_entry::ScaleEntry;
 
 fn icon_button<'a>(
     icon: &'static [u8],
@@ -67,6 +68,7 @@ pub fn view<'a>(
     mode: Mode,
     loading: Option<&'a str>,
     lanczos_enabled: bool,
+    scale: f32,
 ) -> Element<'a, Message> {
     let is_fullscreen = matches!(mode, Mode::Fullscreen);
     let (fullscreen_icon, fullscreen_tooltip): (&'static [u8], &str) = if is_fullscreen {
@@ -90,6 +92,8 @@ pub fn view<'a>(
     } else {
         Space::new().width(Length::Fill).into()
     };
+
+    let scale_widget = ScaleEntry::new(scale, Message::Scale);
 
     let buttons = row![
         icon_button(
@@ -127,10 +131,11 @@ pub fn view<'a>(
     .align_y(Vertical::Center);
 
     let bar = container(
-        row![loading_indicator, buttons]
+        row![loading_indicator, scale_widget, buttons]
             .height(Length::Fixed(BAR_HEIGHT))
             .width(Length::Fill)
-            .align_y(Vertical::Center),
+            .align_y(Vertical::Center)
+            .spacing(PAD),
     )
     .style(bar_style);
 
