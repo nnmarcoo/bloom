@@ -35,7 +35,7 @@
     <tr><td>Animated PNG</td><td><code>.apng</code></td><td>Animated</td></tr>
     <tr><td>GIF</td><td><code>.gif</code></td><td>Animated</td></tr>
     <tr><td>WebP</td><td><code>.webp</code></td><td>Static and animated</td></tr>
-    <tr><td>TIFF</td><td><code>.tif</code> <code>.tiff</code></td><td></td></tr>
+    <tr><td>TIFF</td><td><code>.tif</code> <code>.tiff</code></td><td>No 64-bit float</td></tr>
     <tr><td>BMP</td><td><code>.bmp</code></td><td></td></tr>
     <tr><td>ICO</td><td><code>.ico</code></td><td>Largest available size</td></tr>
     <tr><td>QOI</td><td><code>.qoi</code></td><td></td></tr>
