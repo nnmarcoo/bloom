@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/logo/banner.png" width="200" alt="bloom">
+  <a href="https://github.com/nnmarcoo/bloom/releases/latest"><img src="assets/logo/banner.png" width="200" alt="bloom"></a>
   <br><br>
   <p><em>hardware-accelerated image viewer built with Rust</em></p>
 
