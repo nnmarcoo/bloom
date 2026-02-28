@@ -15,6 +15,7 @@ use iced::{
 use rfd::AsyncFileDialog;
 
 use crate::{
+    clipboard::{self, ClipboardImage},
     components::bottom_bar,
     gallery::{Gallery, SUPPORTED},
     wgpu::{
@@ -61,6 +62,7 @@ pub enum Message {
     AnimationTick(Instant),
     ToggleFullscreen,
     ToggleLanczos,
+    ClipboardLoaded(MediaData),
     Noop,
 }
 
@@ -76,6 +78,22 @@ fn load_media(path: PathBuf, generation: u64) -> Task<Message> {
             Ok(Ok(media)) => Message::MediaLoaded(generation, media),
             Ok(Err(e)) => Message::MediaFailed(generation, e.to_string()),
             Err(_) => Message::MediaFailed(generation, "load thread panicked".to_string()),
+        }
+    })
+}
+
+fn load_from_clipboard() -> Task<Message> {
+    Task::future(async move {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(clipboard::read());
+        });
+        match rx.await {
+            Ok(Some(ClipboardImage::Pixels(data))) => {
+                Message::ClipboardLoaded(MediaData::Image(data))
+            }
+            Ok(Some(ClipboardImage::Path(path))) => Message::MediaSelected(path),
+            _ => Message::Noop,
         }
     })
 }
@@ -184,25 +202,38 @@ impl App {
             Message::ToggleLanczos => {
                 self.program.lanczos_enabled = !self.program.lanczos_enabled;
             }
+            Message::ClipboardLoaded(media) => {
+                self.loading = None;
+                match media {
+                    MediaData::Image(data) => self.program.set_image(data),
+                    MediaData::Animation(anim) => self.program.set_animation(anim),
+                }
+                self.program.fit();
+            }
             Message::Noop => {}
             Message::Event(event) => match event {
                 Event::Window(window::Event::FileDropped(path)) => {
                     return Task::done(Message::MediaSelected(path));
                 }
-                Event::Keyboard(keyboard::Event::KeyPressed { physical_key, .. }) => {
-                    match physical_key {
-                        Physical::Code(key::Code::ArrowRight) => {
-                            return Task::done(Message::Next);
-                        }
-                        Physical::Code(key::Code::ArrowLeft) => {
-                            return Task::done(Message::Previous);
-                        }
-                        Physical::Code(key::Code::KeyF) => {
-                            return Task::done(Message::ToggleFullscreen);
-                        }
-                        _ => {}
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                    physical_key,
+                    modifiers,
+                    ..
+                }) => match physical_key {
+                    Physical::Code(key::Code::ArrowRight) => {
+                        return Task::done(Message::Next);
                     }
-                }
+                    Physical::Code(key::Code::ArrowLeft) => {
+                        return Task::done(Message::Previous);
+                    }
+                    Physical::Code(key::Code::KeyF) => {
+                        return Task::done(Message::ToggleFullscreen);
+                    }
+                    Physical::Code(key::Code::KeyV) if modifiers.control() => {
+                        return load_from_clipboard();
+                    }
+                    _ => {}
+                },
                 _ => {}
             },
         }

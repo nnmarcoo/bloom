@@ -52,7 +52,7 @@ impl ImageData {
         self.width as usize * self.height as usize * 4
     }
 
-    fn new(pixels: Vec<u8>, width: u32, height: u32) -> Self {
+    pub fn new(pixels: Vec<u8>, width: u32, height: u32) -> Self {
         let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
         Self {
             pixels,

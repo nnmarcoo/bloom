@@ -22,6 +22,7 @@
 - **Gallery mode** — browse every image in a folder seamlessly
 - **Tiled texture system** — handles images larger than GPU texture limits
 - Smooth **pan and zoom** with discrete steps from 0.01× to 35×
+- **Clipboard import** (`Ctrl+V`) — load an image directly from clipboard, or import via file path
 
 ## Supported Formats
 
@@ -37,7 +38,7 @@
     <tr><td>WebP</td><td><code>.webp</code></td><td>Static and animated</td></tr>
     <tr><td>TIFF</td><td><code>.tif</code> <code>.tiff</code></td><td></td></tr>
     <tr><td>BMP</td><td><code>.bmp</code></td><td></td></tr>
-    <tr><td>ICO</td><td><code>.ico</code></td><td></td></tr>
+    <tr><td>ICO</td><td><code>.ico</code></td><td>Largest available size</td></tr>
     <tr><td>QOI</td><td><code>.qoi</code></td><td></td></tr>
     <tr><td>Portable bitmap</td><td><code>.pbm</code> <code>.pgm</code> <code>.ppm</code></td><td></td></tr>
     <tr><td>TGA</td><td><code>.tga</code></td><td></td></tr>
@@ -70,6 +71,7 @@
     <tr><td><code>Ctrl</code> <code>0</code></td><td>Fit to window</td></tr>
     <tr><td><code>Ctrl</code> <code>1</code>–<code>9</code></td><td>Fixed zoom (1×–9×)</td></tr>
     <tr><td><code>F</code></td><td>Toggle fullscreen</td></tr>
+    <tr><td><code>Ctrl</code> <code>V</code></td><td>Import image or file path from clipboard</td></tr>
   </tbody>
 </table>
 
