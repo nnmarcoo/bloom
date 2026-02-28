@@ -14,21 +14,12 @@ use crate::styles::{
 use crate::widgets::menu::{menu_item, menu_separator, styled_menu};
 use crate::widgets::scale_entry::ScaleEntry;
 
-fn icon_button<'a>(
-    icon: &'static [u8],
+fn bottom_bar_tooltip<'a>(
+    content: impl Into<Element<'a, Message>>,
     tooltip_text: &'a str,
-    msg: Option<Message>,
 ) -> Element<'a, Message> {
     tooltip(
-        button(
-            svg(Handle::from_memory(icon))
-                .style(svg_style)
-                .width(Length::Fixed(BUTTON_SIZE))
-                .height(Length::Fixed(BUTTON_SIZE)),
-        )
-        .padding(PAD)
-        .style(icon_button_style)
-        .on_press_maybe(msg),
+        content,
         container(text(tooltip_text).size(12))
             .padding(PAD)
             .style(container::rounded_box),
@@ -38,29 +29,45 @@ fn icon_button<'a>(
     .into()
 }
 
+fn icon_button<'a>(
+    icon: &'static [u8],
+    tooltip_text: &'a str,
+    msg: Option<Message>,
+) -> Element<'a, Message> {
+    let button = button(
+        svg(Handle::from_memory(icon))
+            .style(svg_style)
+            .width(Length::Fixed(BUTTON_SIZE))
+            .height(Length::Fixed(BUTTON_SIZE)),
+    )
+    .padding(PAD)
+    .style(icon_button_style)
+    .on_press_maybe(msg);
+
+    bottom_bar_tooltip(button, tooltip_text)
+}
+
+// This is temporary
 fn lanczos_button(enabled: bool) -> Element<'static, Message> {
     let style = if enabled {
         icon_button_active_style
     } else {
         icon_button_style
     };
+
     let label = if enabled {
         "Lanczos quality: on"
     } else {
         "Lanczos quality: off"
     };
-    tooltip(
+
+    bottom_bar_tooltip(
         button(text("L").size(12))
             .padding(PAD)
             .style(style)
             .on_press(Message::ToggleLanczos),
-        container(text(label).size(12))
-            .padding(PAD)
-            .style(container::rounded_box),
-        Position::Top,
+        label,
     )
-    .delay(TOOLTIP_DELAY)
-    .into()
 }
 
 pub fn view<'a>(
@@ -90,7 +97,10 @@ pub fn view<'a>(
             "Next",
             Some(Message::Next)
         ),
-        ScaleEntry::new(scale, Message::Scale).focused(focus_scale),
+        bottom_bar_tooltip(
+            ScaleEntry::new(scale, Message::Scale).focused(focus_scale),
+            "Scale"
+        ),
     ]
     .align_y(Vertical::Center);
 
