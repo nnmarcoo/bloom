@@ -1,7 +1,7 @@
 use iced::alignment::Vertical;
 use iced::widget::svg::Handle;
 use iced::widget::tooltip::Position;
-use iced::widget::{Space, button, column, container, row, svg, text, tooltip};
+use iced::widget::{button, column, container, row, svg, text, tooltip};
 use iced::window::Mode;
 use iced::{Element, Length};
 use iced_aw::ContextMenu;
@@ -11,7 +11,6 @@ use crate::styles::{
     BAR_HEIGHT, BUTTON_SIZE, PAD, TOOLTIP_DELAY, bar_style, icon_button_active_style,
     icon_button_style, svg_style,
 };
-use crate::widgets::loading_spinner::Circular;
 use crate::widgets::menu::{menu_item, menu_separator, styled_menu};
 use crate::widgets::scale_entry::ScaleEntry;
 
@@ -64,12 +63,7 @@ fn lanczos_button(enabled: bool) -> Element<'static, Message> {
     .into()
 }
 
-pub fn view<'a>(
-    mode: Mode,
-    loading: Option<&'a str>,
-    lanczos_enabled: bool,
-    scale: f32,
-) -> Element<'a, Message> {
+pub fn view<'a>(mode: Mode, lanczos_enabled: bool, scale: f32) -> Element<'a, Message> {
     let is_fullscreen = matches!(mode, Mode::Fullscreen);
     let (fullscreen_icon, fullscreen_tooltip): (&'static [u8], &str) = if is_fullscreen {
         (include_bytes!("../../assets/icons/restore.svg"), "Restore")
@@ -80,22 +74,7 @@ pub fn view<'a>(
         )
     };
 
-    let loading_indicator: Element<'a, Message> = if let Some(filename) = loading {
-        row![
-            Circular::new().size(BUTTON_SIZE).bar_height(3.0),
-            text(filename).size(12)
-        ]
-        .spacing(PAD)
-        .width(Length::Fill)
-        .align_y(Vertical::Center)
-        .into()
-    } else {
-        Space::new().width(Length::Fill).into()
-    };
-
-    let scale_widget = ScaleEntry::new(scale, Message::Scale);
-
-    let buttons = row![
+    let left_buttons = row![
         icon_button(
             include_bytes!("../../assets/icons/left.svg"),
             "Previous",
@@ -106,6 +85,11 @@ pub fn view<'a>(
             "Next",
             Some(Message::Next)
         ),
+        ScaleEntry::new(scale, Message::Scale),
+    ]
+    .align_y(Vertical::Center);
+
+    let right_buttons = row![
         icon_button(
             include_bytes!("../../assets/icons/fit.svg"),
             "Fit to viewport",
@@ -131,7 +115,7 @@ pub fn view<'a>(
     .align_y(Vertical::Center);
 
     let bar = container(
-        row![loading_indicator, scale_widget, buttons]
+        row![left_buttons, iced::widget::Space::new().width(Length::Fill), right_buttons]
             .height(Length::Fixed(BAR_HEIGHT))
             .width(Length::Fill)
             .align_y(Vertical::Center)

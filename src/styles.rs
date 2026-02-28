@@ -61,6 +61,18 @@ pub fn icon_button_active_style(theme: &Theme, status: button::Status) -> button
     }
 }
 
+pub fn spinner_bg_style(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        text_color: Some(palette.background.base.text),
+        background: Some(Background::Color(
+            palette.background.base.color.scale_alpha(0.9),
+        )),
+        border: iced::border::rounded(WIDGET_RADIUS),
+        ..Default::default()
+    }
+}
+
 pub fn menu_container_style(theme: &Theme) -> container::Style {
     let palette = theme.extended_palette();
     container::Style {

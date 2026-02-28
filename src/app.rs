@@ -4,19 +4,19 @@ use std::time::{Duration, Instant};
 use glam::Vec2;
 use iced::time::every;
 use iced::{
-    Element, Event, Length, Rectangle, Subscription, Task, event,
+    Element, Event, Rectangle, Subscription, Task, event,
     keyboard::{
         self,
         key::{self, Physical},
     },
-    widget::{column, shader},
+    widget::column,
     window::{self, Mode},
 };
 use rfd::AsyncFileDialog;
 
 use crate::{
     clipboard::{self, ClipboardImage},
-    components::bottom_bar,
+    components::{bottom_bar, viewer},
     gallery::{Gallery, SUPPORTED},
     wgpu::{
         media::image_data::{ImageData, MediaData},
@@ -242,15 +242,12 @@ impl App {
 
     pub fn view(&self) -> Element<'_, Message> {
         column![
-            shader(self.program.clone())
-                .height(Length::Fill)
-                .width(Length::Fill),
+            viewer::view(self.program.clone(), self.loading.as_deref()),
             bottom_bar::view(
                 self.mode,
-                self.loading.as_deref(),
                 self.program.lanczos_enabled,
-                self.program.scale(),
-            )
+                self.program.scale()
+            ),
         ]
         .into()
     }
