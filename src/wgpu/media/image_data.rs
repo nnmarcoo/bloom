@@ -329,7 +329,8 @@ impl ImageData {
     }
 
     pub fn load_jp2(path: &Path) -> Result<Self, ImageError> {
-        let img = Jp2Image::from_file(path).map_err(|e| ImageError::IoError(Error::other(e)))?;
+        let bytes = std::fs::read(path).map_err(ImageError::IoError)?;
+        let img = Jp2Image::from_bytes(&bytes).map_err(|e| ImageError::IoError(Error::other(e)))?;
         let img_data = img
             .get_pixels(Some(255))
             .map_err(|e| ImageError::IoError(Error::other(e)))?;
@@ -405,43 +406,85 @@ impl ImageData {
     }
 
     pub fn load_ktx2(path: &Path) -> Result<Self, ImageError> {
+        use ktx2::Format;
+
         let data = std::fs::read(path).map_err(ImageError::IoError)?;
         let reader = Ktx2Reader::new(&data)
             .map_err(|e| ImageError::IoError(Error::other(format!("{e:?}"))))?;
         let header = reader.header();
+        let width = header.pixel_width;
+        let height = header.pixel_height;
         let level = reader
             .levels()
             .next()
             .ok_or_else(|| ImageError::IoError(Error::other("KTX2 has no mip levels")))?;
 
-        let basis_data: Vec<u8> = match header.supercompression_scheme {
+        // Basis LZ supercompression (vkFormat == 0) — use the Basis Universal transcoder.
+        let is_basis = header.supercompression_scheme == Some(SupercompressionScheme::BasisLZ)
+            || header.format.is_none();
+        if is_basis {
+            let basis_data = level.data.to_vec();
+            let mut transcoder = Transcoder::new();
+            transcoder.prepare_transcoding(&basis_data).map_err(|_| {
+                ImageError::IoError(Error::other("KTX2 prepare_transcoding failed"))
+            })?;
+
+            let desc = transcoder
+                .image_level_description(&basis_data, 0, 0)
+                .ok_or_else(|| {
+                    ImageError::IoError(Error::other("KTX2 no image level description"))
+                })?;
+
+            let params = TranscodeParameters {
+                image_index: 0,
+                level_index: 0,
+                decode_flags: Some(DecodeFlags::HIGH_QUALITY),
+                output_row_pitch_in_blocks_or_pixels: None,
+                output_rows_in_pixels: None,
+            };
+            let pixels = transcoder
+                .transcode_image_level(&basis_data, TranscoderTextureFormat::RGBA32, params)
+                .map_err(|e| ImageError::IoError(Error::other(format!("{e:?}"))))?;
+
+            return Ok(Self::new(pixels, desc.original_width, desc.original_height));
+        }
+
+        // Raw / Zstd-compressed KTX2 with an explicit Vulkan format.
+        let raw: Vec<u8> = match header.supercompression_scheme {
             Some(s) if s == SupercompressionScheme::Zstandard => {
                 zstd::decode_all(level.data).map_err(|e| ImageError::IoError(Error::other(e)))?
             }
             _ => level.data.to_vec(),
         };
 
-        let mut transcoder = Transcoder::new();
-        transcoder
-            .prepare_transcoding(&basis_data)
-            .map_err(|_| ImageError::IoError(Error::other("KTX2 prepare_transcoding failed")))?;
-
-        let desc = transcoder
-            .image_level_description(&basis_data, 0, 0)
-            .ok_or_else(|| ImageError::IoError(Error::other("KTX2 no image level description")))?;
-
-        let params = TranscodeParameters {
-            image_index: 0,
-            level_index: 0,
-            decode_flags: Some(DecodeFlags::HIGH_QUALITY),
-            output_row_pitch_in_blocks_or_pixels: None,
-            output_rows_in_pixels: None,
+        let fmt = header.format.unwrap();
+        let pixels: Vec<u8> = match fmt {
+            // Native RGBA8 — already the right layout.
+            f if f == Format::R8G8B8A8_UNORM || f == Format::R8G8B8A8_SRGB => raw,
+            // BGRA8 — swap R and B channels.
+            f if f == Format::B8G8R8A8_UNORM || f == Format::B8G8R8A8_SRGB => raw
+                .chunks_exact(4)
+                .flat_map(|p| [p[2], p[1], p[0], p[3]])
+                .collect(),
+            // RGB8 — add full-opacity alpha.
+            f if f == Format::R8G8B8_UNORM || f == Format::R8G8B8_SRGB => raw
+                .chunks_exact(3)
+                .flat_map(|p| [p[0], p[1], p[2], 255])
+                .collect(),
+            // BGR8 — swap and add alpha.
+            f if f == Format::B8G8R8_UNORM || f == Format::B8G8R8_SRGB => raw
+                .chunks_exact(3)
+                .flat_map(|p| [p[2], p[1], p[0], 255])
+                .collect(),
+            _ => {
+                return Err(ImageError::IoError(Error::other(format!(
+                    "KTX2: unsupported Vulkan format {:?}",
+                    fmt.value()
+                ))));
+            }
         };
-        let pixels = transcoder
-            .transcode_image_level(&basis_data, TranscoderTextureFormat::RGBA32, params)
-            .map_err(|e| ImageError::IoError(Error::other(format!("{e:?}"))))?;
 
-        Ok(Self::new(pixels, desc.original_width, desc.original_height))
+        Ok(Self::new(pixels, width, height))
     }
 
     pub fn load_media(path: &Path) -> Result<MediaData, ImageError> {
