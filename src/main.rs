@@ -10,7 +10,7 @@ mod widgets;
 use std::{env, path::PathBuf};
 
 use app::App;
-use iced::{Theme, window};
+use iced::window;
 
 fn app_icon() -> Option<window::Icon> {
     #[cfg(target_os = "linux")]
@@ -30,7 +30,6 @@ fn main() -> iced::Result {
             icon: app_icon(),
             ..Default::default()
         })
-        .theme(Theme::CatppuccinFrappe)
         .centered()
         .subscription(App::subscription)
         .run()
