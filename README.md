@@ -83,3 +83,7 @@ cargo build --release
 
 Requires a GPU with WebGPU support. On Windows, DX12 is used by default.
 
+## Privacy
+
+Bloom is entirely local. It does not collect, transmit, or store any data of any kind. No telemetry, no analytics, no network requests — ever. Your files stay on your machine.
+
