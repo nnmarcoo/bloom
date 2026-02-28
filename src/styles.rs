@@ -97,3 +97,21 @@ pub fn icon_button_style(theme: &Theme, status: button::Status) -> button::Style
         ..Default::default()
     }
 }
+
+pub fn icon_button_active_style(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = theme.extended_palette();
+    let active_bg = palette.primary.weak.color;
+
+    let background = match status {
+        button::Status::Hovered => Some(Background::Color(darken(active_bg, 1.1))),
+        button::Status::Pressed => Some(Background::Color(darken(active_bg, 0.85))),
+        _ => Some(Background::Color(active_bg)),
+    };
+
+    button::Style {
+        background,
+        border: iced::border::rounded(BUTTON_RADIUS),
+        text_color: palette.background.base.text,
+        ..Default::default()
+    }
+}

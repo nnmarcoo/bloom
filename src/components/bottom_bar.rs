@@ -8,7 +8,7 @@ use iced_aw::ContextMenu;
 
 use crate::app::Message;
 use crate::styles::{
-    BAR_HEIGHT, BUTTON_SIZE, PAD, TOOLTIP_DELAY, bar_style,
+    BAR_HEIGHT, BUTTON_SIZE, PAD, TOOLTIP_DELAY, bar_style, icon_button_active_style,
     icon_button_style, svg_style,
 };
 use crate::widgets::menu::{menu_item, menu_separator, styled_menu};
@@ -47,11 +47,25 @@ fn icon_button<'a>(
     bottom_bar_tooltip(button, tooltip_text)
 }
 
-pub fn view<'a>(
-    mode: Mode,
-    scale: f32,
-    focus_scale: bool,
+fn icon_button_active<'a>(
+    icon: &'static [u8],
+    tooltip_text: &'a str,
+    msg: Option<Message>,
 ) -> Element<'a, Message> {
+    let button = button(
+        svg(Handle::from_memory(icon))
+            .style(svg_style)
+            .width(Length::Fixed(BUTTON_SIZE))
+            .height(Length::Fixed(BUTTON_SIZE)),
+    )
+    .padding(PAD)
+    .style(icon_button_active_style)
+    .on_press_maybe(msg);
+
+    bottom_bar_tooltip(button, tooltip_text)
+}
+
+pub fn view<'a>(mode: Mode, scale: f32, focus_scale: bool, show_info: bool) -> Element<'a, Message> {
     let is_fullscreen = matches!(mode, Mode::Fullscreen);
     let (fullscreen_icon, fullscreen_tooltip): (&'static [u8], &str) = if is_fullscreen {
         (include_bytes!("../../assets/icons/restore.svg"), "Restore")
@@ -78,23 +92,31 @@ pub fn view<'a>(
             "Scale"
         ),
         icon_button(
-            include_bytes!("../../assets/icons/information.svg"),
-            "Information",
-            Some(Message::Noop)
-        ),
-        icon_button(
-            include_bytes!("../../assets/icons/edit.svg"),
-            "Edit",
-            Some(Message::Noop)
+            include_bytes!("../../assets/icons/fit.svg"),
+            "Fit to viewport",
+            Some(Message::Fit)
         ),
     ]
     .align_y(Vertical::Center);
 
     let right_buttons = row![
+        if show_info {
+            icon_button_active(
+                include_bytes!("../../assets/icons/info.svg"),
+                "Information",
+                Some(Message::ToggleInfoColumn),
+            )
+        } else {
+            icon_button(
+                include_bytes!("../../assets/icons/info.svg"),
+                "Information",
+                Some(Message::ToggleInfoColumn),
+            )
+        },
         icon_button(
-            include_bytes!("../../assets/icons/fit.svg"),
-            "Fit to viewport",
-            Some(Message::Fit)
+            include_bytes!("../../assets/icons/edit.svg"),
+            "Edit",
+            Some(Message::Noop)
         ),
         icon_button(
             fullscreen_icon,

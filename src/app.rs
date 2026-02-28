@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use glam::Vec2;
 use iced::time::every;
+use iced::widget::row;
 use iced::{
     Element, Event, Rectangle, Subscription, Task, event,
     keyboard::{
@@ -14,6 +15,7 @@ use iced::{
 };
 use rfd::AsyncFileDialog;
 
+use crate::components::info_column::{self, InfoData};
 use crate::{
     clipboard::{self, ClipboardImage},
     components::{bottom_bar, viewer},
@@ -31,6 +33,7 @@ pub struct App {
     loading: Option<String>,
     load_generation: u64,
     focus_scale: bool,
+    show_info: bool,
 }
 
 impl Default for App {
@@ -42,6 +45,7 @@ impl Default for App {
             loading: None,
             load_generation: 0,
             focus_scale: false,
+            show_info: false,
         }
     }
 }
@@ -63,6 +67,7 @@ pub enum Message {
     MediaFailed(u64, String),
     AnimationTick(Instant),
     ToggleFullscreen,
+    ToggleInfoColumn,
     ClipboardLoaded(MediaData),
     Noop,
 }
@@ -202,6 +207,9 @@ impl App {
                 };
                 return set_window_mode(self.mode);
             }
+            Message::ToggleInfoColumn => {
+                self.show_info = !self.show_info;
+            }
             Message::ClipboardLoaded(media) => {
                 self.loading = None;
                 match media {
@@ -244,13 +252,32 @@ impl App {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
+        let viewer = viewer::view(self.program.clone(), self.loading.as_deref());
+        let main_row = if self.show_info {
+            let current_path = self.gallery.current();
+            let file_size = current_path
+                .and_then(|p| std::fs::metadata(p).ok())
+                .map(|m| m.len());
+            let info = InfoData {
+                filename: current_path
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str()),
+                path: current_path.and_then(|p| p.to_str()),
+                dimensions: self.program.image_size(),
+                file_size,
+                scale: self.program.scale(),
+                index: self.gallery.position(),
+                count: self.gallery.len(),
+                animation: self.program.animation_info(),
+            };
+            row![info_column::view(info), viewer]
+        } else {
+            row![viewer]
+        };
+
         column![
-            viewer::view(self.program.clone(), self.loading.as_deref()),
-            bottom_bar::view(
-                self.mode,
-                self.program.scale(),
-                self.focus_scale,
-            ),
+            main_row,
+            bottom_bar::view(self.mode, self.program.scale(), self.focus_scale, self.show_info),
         ]
         .into()
     }
