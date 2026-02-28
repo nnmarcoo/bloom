@@ -70,6 +70,7 @@
     <tr><td><code>Ctrl</code> <code>0</code></td><td>Fit to window</td></tr>
     <tr><td><code>Ctrl</code> <code>1</code>–<code>9</code></td><td>Fixed zoom (1×–9×)</td></tr>
     <tr><td><code>F</code></td><td>Toggle fullscreen</td></tr>
+    <tr><td><code>Z</code></td><td>Focus zoom input</td></tr>
     <tr><td><code>Ctrl</code> <code>V</code></td><td>Import image or file path from clipboard</td></tr>
   </tbody>
 </table>

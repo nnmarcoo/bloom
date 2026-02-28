@@ -63,7 +63,12 @@ fn lanczos_button(enabled: bool) -> Element<'static, Message> {
     .into()
 }
 
-pub fn view<'a>(mode: Mode, lanczos_enabled: bool, scale: f32) -> Element<'a, Message> {
+pub fn view<'a>(
+    mode: Mode,
+    lanczos_enabled: bool,
+    scale: f32,
+    focus_scale: bool,
+) -> Element<'a, Message> {
     let is_fullscreen = matches!(mode, Mode::Fullscreen);
     let (fullscreen_icon, fullscreen_tooltip): (&'static [u8], &str) = if is_fullscreen {
         (include_bytes!("../../assets/icons/restore.svg"), "Restore")
@@ -85,7 +90,7 @@ pub fn view<'a>(mode: Mode, lanczos_enabled: bool, scale: f32) -> Element<'a, Me
             "Next",
             Some(Message::Next)
         ),
-        ScaleEntry::new(scale, Message::Scale),
+        ScaleEntry::new(scale, Message::Scale).focused(focus_scale),
     ]
     .align_y(Vertical::Center);
 
@@ -115,11 +120,15 @@ pub fn view<'a>(mode: Mode, lanczos_enabled: bool, scale: f32) -> Element<'a, Me
     .align_y(Vertical::Center);
 
     let bar = container(
-        row![left_buttons, iced::widget::Space::new().width(Length::Fill), right_buttons]
-            .height(Length::Fixed(BAR_HEIGHT))
-            .width(Length::Fill)
-            .align_y(Vertical::Center)
-            .spacing(PAD),
+        row![
+            left_buttons,
+            iced::widget::Space::new().width(Length::Fill),
+            right_buttons
+        ]
+        .height(Length::Fixed(BAR_HEIGHT))
+        .width(Length::Fill)
+        .align_y(Vertical::Center)
+        .spacing(PAD),
     )
     .style(bar_style);
 

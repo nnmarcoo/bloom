@@ -30,6 +30,7 @@ pub struct App {
     mode: Mode,
     loading: Option<String>,
     load_generation: u64,
+    focus_scale: bool,
 }
 
 impl Default for App {
@@ -40,6 +41,7 @@ impl Default for App {
             mode: Mode::Windowed,
             loading: None,
             load_generation: 0,
+            focus_scale: false,
         }
     }
 }
@@ -123,6 +125,8 @@ impl App {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        self.focus_scale = false;
+
         match message {
             Message::Pan(delta) => {
                 self.program.pan(delta);
@@ -229,6 +233,9 @@ impl App {
                     Physical::Code(key::Code::KeyF) => {
                         return Task::done(Message::ToggleFullscreen);
                     }
+                    Physical::Code(key::Code::KeyZ) if !modifiers.control() => {
+                        self.focus_scale = true;
+                    }
                     Physical::Code(key::Code::KeyV) if modifiers.control() => {
                         return load_from_clipboard();
                     }
@@ -246,7 +253,8 @@ impl App {
             bottom_bar::view(
                 self.mode,
                 self.program.lanczos_enabled,
-                self.program.scale()
+                self.program.scale(),
+                self.focus_scale,
             ),
         ]
         .into()

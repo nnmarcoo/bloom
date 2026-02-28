@@ -19,6 +19,7 @@ pub struct ScaleEntry<Message> {
     width: f32,
     height: f32,
     text_size: f32,
+    focused: bool,
 }
 
 impl<Message> ScaleEntry<Message> {
@@ -29,7 +30,13 @@ impl<Message> ScaleEntry<Message> {
             width: 58.0,
             height: 24.0,
             text_size: 12.0,
+            focused: false,
         }
+    }
+
+    pub fn focused(mut self, focused: bool) -> Self {
+        self.focused = focused;
+        self
     }
 }
 
@@ -91,6 +98,14 @@ where
         let state = tree.state.downcast_mut::<State>();
         let bounds = layout.bounds();
 
+        if self.focused && !state.is_editing() {
+            *state = State::Editing {
+                buffer: format!("{}", (self.value * 100.0).round() as i32),
+                fresh: true,
+            };
+            shell.request_redraw();
+        }
+
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if cursor.is_over(bounds) {
@@ -126,6 +141,7 @@ where
                             } else {
                                 buffer.pop();
                             }
+                            self.publish_buffer(buffer, shell);
                         }
                         shell.capture_event();
                     }
@@ -140,6 +156,7 @@ where
                                     if buffer.len() < 4 {
                                         buffer.push(ch);
                                     }
+                                    self.publish_buffer(buffer, shell);
                                 }
                                 shell.capture_event();
                             }
@@ -292,13 +309,17 @@ where
 }
 
 impl<Message: Clone> ScaleEntry<Message> {
+    fn publish_buffer(&self, buffer: &str, shell: &mut Shell<'_, Message>) {
+        if let Ok(pct) = buffer.parse::<u32>() {
+            if pct > 0 {
+                shell.publish((self.on_change)(pct as f32 / 100.0));
+            }
+        }
+    }
+
     fn commit(&self, state: &mut State, shell: &mut Shell<'_, Message>) {
         if let State::Editing { buffer, .. } = state {
-            if let Ok(pct) = buffer.parse::<u32>() {
-                if pct > 0 {
-                    shell.publish((self.on_change)(pct as f32 / 100.0));
-                }
-            }
+            self.publish_buffer(buffer, shell);
         }
         *state = State::Idle;
     }
