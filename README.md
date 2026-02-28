@@ -1,15 +1,12 @@
 <div align="center">
   <img src="assets/logo/banner.png" width="200" alt="bloom">
   <br><br>
-  <p>hardware-accelerated image viewer built with Rust</p>
+  <p><em>hardware-accelerated image viewer built with Rust</em></p>
 
-  ![Rust](https://img.shields.io/badge/rust-2024_edition-orange?style=flat-square&logo=rust&logoColor=white)
-  ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey?style=flat-square)
-  ![License](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)
-  ![Status](https://img.shields.io/badge/status-alpha-yellow?style=flat-square)
+  ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0077aa?style=for-the-badge)
+  ![License](https://img.shields.io/badge/license-GPL--3.0-0077aa?style=for-the-badge)
+  ![Status](https://img.shields.io/badge/status-alpha-0077aa?style=for-the-badge)
 </div>
-
-<br>
 
 <!-- <div align="center"><img src="assets/demo.gif" alt="demo" width="800"></div> -->
 
