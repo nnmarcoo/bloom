@@ -92,7 +92,7 @@ pub fn view<'a>(
     }
 
     if let Some((w, h)) = program.image_size() {
-        rows.push(row_item("Dimensions", format!("{} × {}", w, h)));
+        rows.push(row_item("Dimensions", format!("{} x {}", w, h)));
     }
 
     rows.push(row_item(
