@@ -83,22 +83,3 @@ cargo build --release
 
 Requires a GPU with WebGPU support. On Windows, DX12 is used by default.
 
-## Stack
-
-<table align="center">
-  <thead>
-    <tr><th>Crate</th><th>Role</th></tr>
-  </thead>
-  <tbody>
-    <tr><td><a href="https://github.com/iced-rs/iced">iced</a></td><td>GUI framework</td></tr>
-    <tr><td><a href="https://github.com/gfx-rs/wgpu">wgpu</a></td><td>GPU rendering</td></tr>
-    <tr><td><a href="https://github.com/image-rs/image">image</a></td><td>Core image decoding</td></tr>
-    <tr><td><a href="https://github.com/nicowillis/jxl-oxide">jxl-oxide</a></td><td>JPEG XL decoding</td></tr>
-    <tr><td><a href="https://github.com/dclong/jpeg2k">jpeg2k</a></td><td>JPEG 2000 decoding</td></tr>
-    <tr><td><a href="https://github.com/Ajordat/dicom-rs">dicom-rs</a></td><td>DICOM decoding</td></tr>
-    <tr><td><a href="https://github.com/image-rs/image-dds">dds</a></td><td>DDS / BC-compressed texture decoding</td></tr>
-    <tr><td><a href="https://github.com/BinomialLLC/basis_universal">basis-universal</a></td><td>KTX2 / Basis Universal texture decoding</td></tr>
-    <tr><td><a href="https://github.com/RazrFalcon/resvg">resvg</a></td><td>SVG rendering</td></tr>
-    <tr><td><a href="https://github.com/bitshifter/glam-rs">glam</a></td><td>Math</td></tr>
-  </tbody>
-</table>
