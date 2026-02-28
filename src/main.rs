@@ -10,7 +10,7 @@ mod widgets;
 use std::{env, path::PathBuf};
 
 use app::App;
-use iced::window;
+use iced::{Size, window};
 
 fn app_icon() -> Option<window::Icon> {
     #[cfg(target_os = "linux")]
@@ -27,6 +27,7 @@ fn main() -> iced::Result {
     iced::application(move || App::new(media.clone()), App::update, App::view)
         .title("bloom")
         .window(window::Settings {
+            min_size: Some(Size::new(220.0, 0.0)),
             icon: app_icon(),
             ..Default::default()
         })
