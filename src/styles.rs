@@ -44,24 +44,6 @@ pub fn svg_style(theme: &Theme, status: svg::Status) -> svg::Style {
     svg::Style { color: Some(color) }
 }
 
-pub fn icon_button_active_style(theme: &Theme, status: button::Status) -> button::Style {
-    let palette = theme.extended_palette();
-    let active_bg = darken(palette.primary.base.color, 0.8);
-
-    let background = match status {
-        button::Status::Hovered => Some(Background::Color(darken(active_bg, 1.15))),
-        button::Status::Pressed => Some(Background::Color(darken(active_bg, 0.85))),
-        _ => Some(Background::Color(active_bg)),
-    };
-
-    button::Style {
-        background,
-        border: iced::border::rounded(BUTTON_RADIUS),
-        text_color: palette.primary.base.text,
-        ..Default::default()
-    }
-}
-
 pub fn spinner_bg_style(theme: &Theme) -> container::Style {
     let palette = theme.extended_palette();
     container::Style {
