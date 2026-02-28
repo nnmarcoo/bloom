@@ -10,6 +10,7 @@ pub const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
 pub const BUTTON_SIZE: f32 = 20.0;
 pub const BAR_HEIGHT: f32 = 40.0;
 pub const WIDGET_RADIUS: f32 = 6.0;
+pub const BUTTON_RADIUS: f32 = 8.0;
 
 pub fn darken(color: Color, factor: f32) -> Color {
     Color {
@@ -55,7 +56,7 @@ pub fn icon_button_active_style(theme: &Theme, status: button::Status) -> button
 
     button::Style {
         background,
-        border: iced::border::rounded(10),
+        border: iced::border::rounded(BUTTON_RADIUS),
         text_color: palette.primary.base.text,
         ..Default::default()
     }
@@ -81,7 +82,7 @@ pub fn menu_container_style(theme: &Theme) -> container::Style {
         border: iced::Border {
             color: palette.background.strong.color.scale_alpha(0.5),
             width: 1.0,
-            radius: 8.0.into(),
+            radius: WIDGET_RADIUS.into(),
         },
         ..Default::default()
     }
@@ -109,7 +110,7 @@ pub fn icon_button_style(theme: &Theme, status: button::Status) -> button::Style
 
     button::Style {
         background,
-        border: iced::border::rounded(10),
+        border: iced::border::rounded(BUTTON_RADIUS),
         text_color: palette.background.base.text,
         ..Default::default()
     }
