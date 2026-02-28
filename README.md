@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="assets/logo/bloom.svg" width="160" alt="bloom">
-  <h1>bloom</h1>
+  <img src="assets/logo/banner.png" width="200" alt="bloom">
+  <br><br>
   <p>hardware-accelerated image viewer built with Rust</p>
 
   ![Rust](https://img.shields.io/badge/rust-2024_edition-orange?style=flat-square&logo=rust&logoColor=white)
