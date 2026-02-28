@@ -1089,6 +1089,7 @@ dependencies = [
  "flate2",
  "jpeg-decoder",
  "jpeg-encoder",
+ "jpeg2k",
  "jxl-oxide 0.10.2",
  "lazy_static",
  "tracing",
