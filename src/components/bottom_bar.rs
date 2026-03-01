@@ -103,6 +103,8 @@ pub fn view<'a>(
                     menu_item("Preferences", Message::TogglePreferences),
                     menu_separator(),
                     menu_item("Export", Message::Noop),
+                    menu_separator(),
+                    menu_item("About", Message::Noop),
                     menu_item("Exit", Message::Exit),
                 ]),
             )
