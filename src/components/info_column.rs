@@ -8,7 +8,7 @@ use iced::{Background, Element, Font, Length, border};
 
 use crate::app::Message;
 use crate::gallery::Gallery;
-use crate::styles::{PAD, TOOLTIP_DELAY, bar_style};
+use crate::styles::{PAD, TOOLTIP_DELAY, bar_style, radius};
 use crate::wgpu::view_program::ViewProgram;
 
 fn row_item<'a>(lbl: &'a str, val: impl ToString) -> Element<'a, Message> {
@@ -39,7 +39,7 @@ fn color_row<'a>(rgba: [u8; 4]) -> Element<'a, Message> {
         .height(Length::Fill)
         .style(move |_: &_| container::Style {
             background: Some(Background::Color(color)),
-            border: border::rounded(2),
+            border: border::rounded(radius()),
             ..Default::default()
         });
     let ch = |v: u8| {
