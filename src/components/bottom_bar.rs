@@ -58,6 +58,14 @@ pub fn view<'a>(
             "Fit to viewport",
             Position::Top,
         ),
+        with_tooltip(
+            svg_button_maybe(
+                include_bytes!("../../assets/icons/rotate.svg"),
+                Some(Message::Noop)
+            ),
+            "Rotate view",
+            Position::Top,
+        ),
     ]
     .align_y(Vertical::Center);
 
