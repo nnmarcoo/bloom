@@ -4,7 +4,7 @@ use iced::widget::{column, container, pick_list, row, rule, scrollable, text, to
 use iced::{Element, Length, Theme};
 
 use crate::app::Message;
-use crate::config::Config;
+use crate::config::{ALL_THEMES, Config};
 use crate::styles::{PAD, scrollbar_style, set_radius};
 use crate::ui::{svg_button_plain, with_tooltip};
 use crate::wgpu::view_program::ViewProgram;
@@ -50,31 +50,6 @@ pub fn update(
         }
     }
 }
-
-const ALL_THEMES: &[Theme] = &[
-    Theme::Light,
-    Theme::Dark,
-    Theme::Dracula,
-    Theme::Nord,
-    Theme::SolarizedLight,
-    Theme::SolarizedDark,
-    Theme::GruvboxLight,
-    Theme::GruvboxDark,
-    Theme::CatppuccinLatte,
-    Theme::CatppuccinFrappe,
-    Theme::CatppuccinMacchiato,
-    Theme::CatppuccinMocha,
-    Theme::TokyoNight,
-    Theme::TokyoNightStorm,
-    Theme::TokyoNightLight,
-    Theme::KanagawaWave,
-    Theme::KanagawaDragon,
-    Theme::KanagawaLotus,
-    Theme::Moonfly,
-    Theme::Nightfly,
-    Theme::Oxocarbon,
-    Theme::Ferra,
-];
 
 fn section<'a>(label: &'a str, theme: &Theme) -> Element<'a, Message> {
     let muted = theme

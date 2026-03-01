@@ -40,7 +40,7 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
-        let config = Config::default();
+        let config = Config::load();
         let mut program = ViewProgram::default();
         program.lanczos_enabled = config.lanczos;
         styles::set_radius(config.rounded);
@@ -229,18 +229,23 @@ impl App {
             }
             Message::ToggleInfoColumn => {
                 self.config.show_info = !self.config.show_info;
+                self.config.save();
             }
             Message::TogglePreferences => {
                 self.pending_config = self.config.clone();
                 self.show_preferences = true;
             }
             Message::Preference(msg) => {
+                let saving = matches!(msg, PreferenceMessage::Save);
                 self.show_preferences = preferences::update(
                     msg,
                     &mut self.config,
                     &mut self.pending_config,
                     &mut self.program,
                 );
+                if saving {
+                    self.config.save();
+                }
             }
             Message::ClipboardLoaded(media) => {
                 self.loading = None;
