@@ -4,6 +4,7 @@ use iced::{
     Center, Element, Length,
     widget::{column, container, row, shader, stack, text},
 };
+use iced_aw::ContextMenu;
 
 use crate::{
     app::Message,
@@ -11,7 +12,10 @@ use crate::{
     gallery::Gallery,
     styles::{PAD, spinner_bg_style},
     wgpu::view_program::ViewProgram,
-    widgets::loading_spinner::Circular,
+    widgets::{
+        loading_spinner::Circular,
+        menu::{menu_item, menu_separator, styled_menu},
+    },
 };
 
 pub fn view<'a>(
@@ -51,11 +55,20 @@ pub fn view<'a>(
         base.into()
     };
 
-    if show_info {
+    let content: Element<'a, Message> = if show_info {
         row![info_column::view(path, gallery, &program), viewer,]
             .height(Length::Fill)
             .into()
     } else {
         viewer
-    }
+    };
+
+    ContextMenu::new(content, || {
+        styled_menu(column![
+            menu_item("Copy Color", Message::CopyColor),
+            menu_separator(),
+            menu_item("Fit", Message::Fit),
+        ])
+    })
+    .into()
 }

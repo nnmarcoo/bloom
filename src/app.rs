@@ -82,6 +82,7 @@ pub enum Message {
     ClipboardLoaded(MediaData),
     CursorMoved(Vec2),
     CursorLeft,
+    CopyColor,
     Exit,
     Noop,
 }
@@ -251,6 +252,11 @@ impl App {
             }
             Message::CursorLeft => {
                 self.program.set_cursor_pos(None);
+            }
+            Message::CopyColor => {
+                if let Some((_, _, [r, g, b, _])) = self.program.cursor_info() {
+                    clipboard::write_text(&format!("#{r:02X}{g:02X}{b:02X}"));
+                }
             }
             Message::Exit => {
                 return window::oldest().then(|id| {

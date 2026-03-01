@@ -39,3 +39,9 @@ pub fn read() -> Option<ClipboardImage> {
 
     None
 }
+
+pub fn write_text(text: &str) {
+    if let Ok(mut ctx) = arboard::Clipboard::new() {
+        let _ = ctx.set_text(text);
+    }
+}
