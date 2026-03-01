@@ -18,7 +18,7 @@ pub struct ViewPrimitive {
     pub image: Option<Arc<ImageData>>,
     pub scale: f32,
     pub pan_ndc: Vec2,
-    pub rotation_angle: f32,
+    pub rotation: u8,
     pub bounds: Rectangle,
     pub lanczos_enabled: bool,
 }
@@ -50,7 +50,7 @@ impl Primitive for ViewPrimitive {
             &self.uniforms,
             vec2(self.bounds.width, self.bounds.height),
             self.pan_ndc,
-            self.rotation_angle,
+            self.rotation,
             self.lanczos_enabled,
         );
     }

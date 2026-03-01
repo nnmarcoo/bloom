@@ -326,6 +326,7 @@ impl App {
             bottom_bar::view(
                 self.mode,
                 self.program.scale(),
+                self.program.rotation(),
                 self.focus_scale,
                 self.config.show_info,
             ),

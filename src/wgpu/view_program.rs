@@ -173,6 +173,10 @@ impl ViewProgram {
         self.scale.value()
     }
 
+    pub fn rotation(&self) -> u8 {
+        self.rotation
+    }
+
     pub fn image_size(&self) -> Option<(u32, u32)> {
         if self.image_size == Vec2::ZERO {
             return None;
@@ -252,7 +256,7 @@ impl Program<Message> for ViewProgram {
             image: self.image.clone(),
             scale: s,
             pan_ndc,
-            rotation_angle: angle,
+            rotation: self.rotation,
             bounds,
             lanczos_enabled: self.lanczos_enabled,
         }

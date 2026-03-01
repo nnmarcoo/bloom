@@ -104,7 +104,7 @@ impl ViewPipeline {
         uniforms: &Uniforms,
         viewport: Vec2,
         pan_ndc: Vec2,
-        rotation_angle: f32,
+        rotation: u8,
         lanczos_enabled: bool,
     ) {
         if lanczos_enabled != self.lanczos_enabled {
@@ -149,19 +149,25 @@ impl ViewPipeline {
 
         let full_w = source.full_width as f32;
         let full_h = source.full_height as f32;
-        let inv_viewport = vec2(1.0 / viewport.x, 1.0 / viewport.y);
+        let angle = -(rotation as f32) * std::f32::consts::FRAC_PI_2;
+        // At 90/270 each image dimension divides the opposite viewport dimension.
+        let inv_tile_vp = if rotation % 2 == 0 {
+            vec2(1.0 / viewport.x, 1.0 / viewport.y)
+        } else {
+            vec2(1.0 / viewport.y, 1.0 / viewport.x)
+        };
 
         for tile in &mut source.tiles {
             let tw = tile.width as f32;
             let th = tile.height as f32;
             let tile_cx = (tile.x as f32 + tw * 0.5) - full_w * 0.5;
             let tile_cy = (full_h * 0.5) - (tile.y as f32 + th * 0.5);
-            let tile_offset = 2.0 * vec2(tile_cx, tile_cy) * inv_viewport;
-            let tile_aspect = vec2(tw, th) * inv_viewport;
+            let tile_offset = 2.0 * vec2(tile_cx, tile_cy) * inv_tile_vp;
+            let tile_aspect = vec2(tw, th) * inv_tile_vp;
 
             let transform = Mat4::from_scale(vec3(scale, scale, 1.0))
                 * Mat4::from_translation(vec3(pan_ndc.x, pan_ndc.y, 0.0))
-                * Mat4::from_rotation_z(rotation_angle)
+                * Mat4::from_rotation_z(angle)
                 * Mat4::from_translation(vec3(tile_offset.x, tile_offset.y, 0.0))
                 * Mat4::from_scale(vec3(tile_aspect.x, tile_aspect.y, 1.0));
 

@@ -15,6 +15,7 @@ use crate::widgets::scale_entry::ScaleEntry;
 pub fn view<'a>(
     mode: Mode,
     scale: f32,
+    rotation: u8,
     focus_scale: bool,
     show_info: bool,
 ) -> Element<'a, Message> {
@@ -63,7 +64,12 @@ pub fn view<'a>(
                 include_bytes!("../../assets/icons/rotate.svg"),
                 Some(Message::Rotate)
             ),
-            "Rotate view",
+            [
+                "Rotate view (0°)",
+                "Rotate view (90°)",
+                "Rotate view (180°)",
+                "Rotate view (270°)"
+            ][rotation as usize % 4],
             Position::Top,
         ),
     ]
