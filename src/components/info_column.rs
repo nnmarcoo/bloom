@@ -52,7 +52,7 @@ fn color_row<'a>(rgba: [u8; 4]) -> Element<'a, Message> {
             .size(12)
             .color([0.5, 0.5, 0.5])
             .font(Font::MONOSPACE),
-        Space::new().width(8),
+        Space::new().width(10),
         swatch,
         ch(r),
         ch(g),
