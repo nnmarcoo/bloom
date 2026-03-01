@@ -103,12 +103,16 @@ def blue_rounded_rect(w: int, h: int) -> Image.Image:
 
 def render_icon(svg_content: str, size: int) -> Image.Image:
     """Blue rounded-rect background with the SVG glyph composited on top."""
-    bg = blue_rounded_rect(size, size)
-    glyph_size = round(size * ICON_GLYPH_RATIO)
-    glyph = render_svg(svg_content, glyph_size * 4).resize((glyph_size, glyph_size), Image.LANCZOS)
-    offset = (size - glyph_size) // 2
-    bg.paste(glyph, (offset, offset), glyph)
-    return bg
+    SCALE = 4
+    hi_size = size * SCALE
+    hi_bg = blue_rounded_rect(hi_size, hi_size)
+
+    glyph_hi = round(size * ICON_GLYPH_RATIO) * SCALE
+    hi_glyph = render_svg(svg_content, glyph_hi)
+    hi_offset = (hi_size - glyph_hi) // 2
+    hi_bg.paste(hi_glyph, (hi_offset, hi_offset), hi_glyph)
+
+    return hi_bg.resize((size, size), Image.LANCZOS)
 
 
 def render_banner(svg_content: str, font: ImageFont.FreeTypeFont) -> Image.Image:
@@ -145,9 +149,9 @@ if __name__ == "__main__":
     images[0].save(ICO_PATH, format="ICO", append_images=images[1:])
     print(f"Written {ICO_PATH}")
 
-    # PNGs — render at 4x then downscale for best quality
+    # PNGs — render_icon internally upscales 4x then downscales for best quality
     for size in (32, 64):
-        render_icon(svg_content, size * 4).resize((size, size), Image.LANCZOS).save(
+        render_icon(svg_content, size).save(
             DIR / f"bloom{size}.png", format="PNG", optimize=True
         )
         print(f"Written {DIR / f'bloom{size}.png'}")
