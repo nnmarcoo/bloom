@@ -124,6 +124,21 @@ pub fn view<'a>(
     gallery: &Gallery,
     program: &ViewProgram,
 ) -> Element<'a, Message> {
+    if program.image_size().is_none() {
+        return container(
+            text("No image loaded")
+                .size(12)
+                .color([0.5, 0.5, 0.5])
+                .font(Font::MONOSPACE),
+        )
+        .style(bar_style)
+        .height(Length::Fill)
+        .width(Length::Fixed(220.0))
+        .align_x(Horizontal::Center)
+        .align_y(Vertical::Center)
+        .into();
+    }
+
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
 
     if let Some(p) = path {
