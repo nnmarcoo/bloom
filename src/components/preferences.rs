@@ -5,9 +5,10 @@ use iced::{Element, Length, Theme};
 
 use crate::app::Message;
 use crate::config::Config;
-use crate::styles::{PAD, set_radius};
+use crate::styles::{PAD, scrollbar_style, set_radius};
 use crate::ui::{svg_button_plain, with_tooltip};
 use crate::wgpu::view_program::ViewProgram;
+use iced::widget::scrollable::{Direction, Scrollbar};
 
 #[derive(Debug, Clone)]
 pub enum PreferenceMessage {
@@ -186,7 +187,13 @@ pub fn view<'a>(pending: &'a Config, theme: &Theme) -> Element<'a, Message> {
     .width(Length::Fill);
 
     iced::widget::stack![
-        scrollable(content).width(Length::Fill).height(Length::Fill),
+        scrollable(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .direction(Direction::Vertical(
+                Scrollbar::new().width(4).margin(4).scroller_width(4),
+            ))
+            .style(scrollbar_style),
         action_buttons,
     ]
     .width(Length::Fill)
