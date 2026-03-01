@@ -69,6 +69,8 @@ pub enum Message {
     ToggleFullscreen,
     ToggleInfoColumn,
     ClipboardLoaded(MediaData),
+    CursorMoved(Vec2),
+    CursorLeft,
     Noop,
 }
 
@@ -217,6 +219,14 @@ impl App {
                     MediaData::Animation(anim) => self.program.set_animation(anim),
                 }
                 self.program.fit();
+            }
+            Message::CursorMoved(pos) => {
+                if self.show_info {
+                    self.program.set_cursor_pos(Some(pos));
+                }
+            }
+            Message::CursorLeft => {
+                self.program.set_cursor_pos(None);
             }
             Message::Noop => {}
             Message::Event(event) => match event {

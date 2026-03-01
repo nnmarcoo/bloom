@@ -1,9 +1,10 @@
 use std::path::Path;
+use std::time::Duration;
 
-use iced::alignment::Horizontal;
+use iced::alignment::{Horizontal, Vertical};
 use iced::widget::tooltip::Position;
-use iced::widget::{column, container, row, scrollable, text, tooltip};
-use iced::{Element, Font, Length};
+use iced::widget::{Space, column, container, row, scrollable, text, tooltip};
+use iced::{Background, Element, Font, Length, border};
 
 use crate::app::Message;
 use crate::gallery::Gallery;
@@ -22,6 +23,43 @@ fn row_item<'a>(lbl: &'a str, val: impl ToString) -> Element<'a, Message> {
             .font(Font::MONOSPACE)
             .align_x(Horizontal::Right),
     ]
+    .into()
+}
+
+fn color_row<'a>(rgba: [u8; 4]) -> Element<'a, Message> {
+    let [r, g, b, a] = rgba;
+    let color = iced::Color {
+        r: r as f32 / 255.0,
+        g: g as f32 / 255.0,
+        b: b as f32 / 255.0,
+        a: a as f32 / 255.0,
+    };
+    let swatch = container(Space::new())
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(move |_: &_| container::Style {
+            background: Some(Background::Color(color)),
+            border: border::rounded(2),
+            ..Default::default()
+        });
+    let ch = |v: u8| {
+        container(text(format!("{v}")).size(12).font(Font::MONOSPACE))
+            .width(Length::Fixed(30.0))
+            .align_x(Horizontal::Right)
+    };
+    row![
+        text("RGBA")
+            .size(12)
+            .color([0.5, 0.5, 0.5])
+            .font(Font::MONOSPACE),
+        Space::new().width(8),
+        swatch,
+        ch(r),
+        ch(g),
+        ch(b),
+        ch(a),
+    ]
+    .align_y(Vertical::Center)
     .into()
 }
 
@@ -56,6 +94,31 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
+fn gcd(mut a: u32, mut b: u32) -> u32 {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+fn aspect_ratio_str(w: u32, h: u32) -> String {
+    let d = gcd(w, h);
+    format!("{}:{}", w / d, h / d)
+}
+
+fn format_duration(d: Duration) -> String {
+    let ms = d.as_millis();
+    let secs = ms / 1000;
+    let rem = ms % 1000;
+    if rem == 0 {
+        format!("{secs}s")
+    } else {
+        format!("{secs}.{rem:03}s")
+    }
+}
+
 pub fn view<'a>(
     path: Option<&'a Path>,
     gallery: &Gallery,
@@ -81,6 +144,10 @@ pub fn view<'a>(
             };
             rows.push(entry);
         }
+
+        if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+            rows.push(row_item("Format", ext.to_ascii_uppercase()));
+        }
     }
 
     let count = gallery.len();
@@ -93,6 +160,7 @@ pub fn view<'a>(
 
     if let Some((w, h)) = program.image_size() {
         rows.push(row_item("Dimensions", format!("{} x {}", w, h)));
+        rows.push(row_item("Aspect ratio", aspect_ratio_str(w, h)));
     }
 
     rows.push(row_item(
@@ -100,15 +168,25 @@ pub fn view<'a>(
         format!("{:.0}%", program.scale() * 100.0),
     ));
 
-    if let Some(size) = path
-        .and_then(|p| std::fs::metadata(p).ok())
-        .map(|m| m.len())
-    {
+    if let Some(size) = gallery.file_size() {
         rows.push(row_item("File size", format_size(size)));
+    }
+
+    if let Some(bytes) = program.decoded_size_bytes() {
+        rows.push(row_item("RAM usage", format_size(bytes as u64)));
     }
 
     if let Some((frame, total)) = program.animation_info() {
         rows.push(row_item("Frame", format!("{} / {}", frame + 1, total)));
+    }
+
+    if let Some(dur) = program.animation_duration() {
+        rows.push(row_item("Duration", format_duration(dur)));
+    }
+
+    if let Some((px, py, rgba)) = program.cursor_info() {
+        rows.push(color_row(rgba));
+        rows.push(row_item("Pixel", format!("({}, {})", px, py)));
     }
 
     let content = column(rows).spacing(6).padding(PAD * 2.0);

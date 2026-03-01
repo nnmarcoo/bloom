@@ -14,6 +14,7 @@ pub const SUPPORTED: &[&str] = &[
 pub struct Gallery {
     paths: Vec<PathBuf>,
     index: usize,
+    file_size: Option<u64>,
 }
 
 impl Gallery {
@@ -41,7 +42,12 @@ impl Gallery {
 
         let index = paths.iter().position(|p| p == file_path).unwrap_or(0);
 
-        Self { paths, index }
+        let file_size = std::fs::metadata(file_path).ok().map(|m| m.len());
+        Self {
+            paths,
+            index,
+            file_size,
+        }
     }
 
     pub fn filename(path: &Path) -> String {
@@ -50,18 +56,28 @@ impl Gallery {
             .unwrap_or_default()
     }
 
+    fn refresh_file_size(&mut self) {
+        self.file_size = self
+            .current()
+            .and_then(|p| std::fs::metadata(p).ok())
+            .map(|m| m.len());
+    }
+
     pub fn set(&mut self, file_path: PathBuf) -> Option<&PathBuf> {
         if let Some(index) = self.paths.iter().position(|p| p == &file_path) {
             self.index = index;
         } else {
             *self = Gallery::new(&file_path);
+            return self.current();
         }
+        self.refresh_file_size();
         self.current()
     }
 
     pub fn next(&mut self) -> Option<&PathBuf> {
         if !self.paths.is_empty() {
             self.index = (self.index + 1) % self.paths.len();
+            self.refresh_file_size();
         }
         self.current()
     }
@@ -69,8 +85,13 @@ impl Gallery {
     pub fn previous(&mut self) -> Option<&PathBuf> {
         if !self.paths.is_empty() {
             self.index = (self.index + self.paths.len() - 1) % self.paths.len();
+            self.refresh_file_size();
         }
         self.current()
+    }
+
+    pub fn file_size(&self) -> Option<u64> {
+        self.file_size
     }
 
     pub fn current(&self) -> Option<&PathBuf> {

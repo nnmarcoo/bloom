@@ -12,15 +12,18 @@ pub struct Frame {
 #[derive(Debug, Clone)]
 pub struct Animation {
     frames: Arc<Vec<Frame>>,
+    total_duration: Duration,
     current: usize,
     deadline: Instant,
 }
 
 impl Animation {
     pub fn new(frames: Vec<Frame>) -> Self {
+        let total_duration = frames.iter().map(|f| f.delay).sum();
         let deadline = Instant::now() + frames[0].delay;
         Self {
             frames: Arc::new(frames),
+            total_duration,
             current: 0,
             deadline,
         }
@@ -40,6 +43,10 @@ impl Animation {
 
     pub fn time_until_next_frame(&self) -> Duration {
         self.deadline.saturating_duration_since(Instant::now())
+    }
+
+    pub fn total_duration(&self) -> Duration {
+        self.total_duration
     }
 
     pub fn tick(&mut self, now: Instant) -> Option<Arc<ImageData>> {

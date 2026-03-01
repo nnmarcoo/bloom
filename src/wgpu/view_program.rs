@@ -36,6 +36,7 @@ pub struct ViewProgram {
     image: Option<Arc<ImageData>>,
     animation: Option<Animation>,
     pub lanczos_enabled: bool,
+    cursor_pos: Option<Vec2>,
 }
 
 impl Default for ViewProgram {
@@ -48,6 +49,7 @@ impl Default for ViewProgram {
             image: None,
             animation: None,
             lanczos_enabled: false,
+            cursor_pos: None,
         }
     }
 }
@@ -109,6 +111,7 @@ impl ViewProgram {
         self.image_size = vec2(data.width as f32, data.height as f32);
         self.image = Some(Arc::new(data));
         self.animation = None;
+        self.cursor_pos = None;
     }
 
     pub fn set_animation(&mut self, anim: Animation) {
@@ -116,6 +119,11 @@ impl ViewProgram {
         self.image_size = vec2(first.width as f32, first.height as f32);
         self.image = Some(first);
         self.animation = Some(anim);
+        self.cursor_pos = None;
+    }
+
+    pub fn set_cursor_pos(&mut self, pos: Option<Vec2>) {
+        self.cursor_pos = pos;
     }
 
     pub fn tick_animation(&mut self, now: Instant) {
@@ -145,6 +153,39 @@ impl ViewProgram {
         self.animation
             .as_ref()
             .map(|a| (a.current_index(), a.frame_count()))
+    }
+
+    pub fn animation_duration(&self) -> Option<Duration> {
+        self.animation.as_ref().map(|a| a.total_duration())
+    }
+
+    pub fn decoded_size_bytes(&self) -> Option<usize> {
+        self.image.as_ref().map(|img| img.size_bytes())
+    }
+
+    pub fn screen_to_image_pixel(&self, screen_pos: Vec2) -> Option<(u32, u32)> {
+        let viewport = vec2(self.bounds.width, self.bounds.height);
+        if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
+            return None;
+        }
+        // Invert the shader transform: ndc_out = scale * (aspect * ndc_in + offset/viewport)
+        let uv = (screen_pos / viewport * 2.0 - 1.0) * vec2(1.0, -1.0);
+        let img_ndc =
+            (uv / self.scale.value() - self.offset / viewport) / (self.image_size / viewport);
+        let img = (img_ndc + 1.0) * 0.5 * vec2(self.image_size.x, -self.image_size.y)
+            + vec2(0.0, self.image_size.y);
+        if img.x < 0.0 || img.y < 0.0 || img.x >= self.image_size.x || img.y >= self.image_size.y {
+            return None;
+        }
+        Some((img.x as u32, img.y as u32))
+    }
+
+    pub fn cursor_info(&self) -> Option<(u32, u32, [u8; 4])> {
+        let (px, py) = self.screen_to_image_pixel(self.cursor_pos?)?;
+        let image = self.image.as_ref()?;
+        let idx = (py as usize * image.width as usize + px as usize) * 4;
+        let p = image.pixels.get(idx..idx + 4)?;
+        Some((px, py, [p[0], p[1], p[2], p[3]]))
     }
 }
 
@@ -237,6 +278,16 @@ impl Program<Message> for ViewProgram {
                         *state = ViewProgramState::Panning(pos);
                         return Some(Action::capture());
                     }
+                }
+                if let Event::Mouse(mouse::Event::CursorMoved { .. }) = event {
+                    if let Some(pos) = cursor.position_in(bounds) {
+                        return Some(Action::publish(Message::CursorMoved(Vec2::new(
+                            pos.x, pos.y,
+                        ))));
+                    }
+                }
+                if let Event::Mouse(mouse::Event::CursorLeft) = event {
+                    return Some(Action::publish(Message::CursorLeft));
                 }
             }
             ViewProgramState::Panning(prev) => match event {
