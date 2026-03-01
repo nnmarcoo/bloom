@@ -66,6 +66,7 @@ pub fn view<'a>(
     ContextMenu::new(content, || {
         styled_menu(column![
             menu_item("Copy Color", Message::CopyColor),
+            menu_item("Copy File Path", Message::CopyPath),
             menu_separator(),
             menu_item("Fit", Message::Fit),
         ])

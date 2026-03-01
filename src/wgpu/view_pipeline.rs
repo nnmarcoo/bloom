@@ -104,6 +104,7 @@ impl ViewPipeline {
         uniforms: &Uniforms,
         viewport: Vec2,
         pan_ndc: Vec2,
+        rotation_angle: f32,
         lanczos_enabled: bool,
     ) {
         if lanczos_enabled != self.lanczos_enabled {
@@ -159,11 +160,9 @@ impl ViewPipeline {
             let tile_aspect = vec2(tw, th) * inv_viewport;
 
             let transform = Mat4::from_scale(vec3(scale, scale, 1.0))
-                * Mat4::from_translation(vec3(
-                    pan_ndc.x + tile_offset.x,
-                    pan_ndc.y + tile_offset.y,
-                    0.0,
-                ))
+                * Mat4::from_translation(vec3(pan_ndc.x, pan_ndc.y, 0.0))
+                * Mat4::from_rotation_z(rotation_angle)
+                * Mat4::from_translation(vec3(tile_offset.x, tile_offset.y, 0.0))
                 * Mat4::from_scale(vec3(tile_aspect.x, tile_aspect.y, 1.0));
 
             if tile.last_transform != Some(transform) {

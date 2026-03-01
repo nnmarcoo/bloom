@@ -83,6 +83,8 @@ pub enum Message {
     CursorMoved(Vec2),
     CursorLeft,
     CopyColor,
+    CopyPath,
+    Rotate,
     Exit,
     Noop,
 }
@@ -155,6 +157,9 @@ impl App {
             }
             Message::ScaleDown(cursor) => {
                 self.program.scale_down(cursor);
+            }
+            Message::Rotate => {
+                self.program.rotate();
             }
             Message::Fit => {
                 self.program.fit();
@@ -246,7 +251,7 @@ impl App {
                 self.program.fit();
             }
             Message::CursorMoved(pos) => {
-                if self.config.show_info && !self.show_preferences {
+                if !self.show_preferences {
                     self.program.set_cursor_pos(Some(pos));
                 }
             }
@@ -256,6 +261,11 @@ impl App {
             Message::CopyColor => {
                 if let Some((_, _, [r, g, b, _])) = self.program.cursor_info() {
                     clipboard::write_text(&format!("#{r:02X}{g:02X}{b:02X}"));
+                }
+            }
+            Message::CopyPath => {
+                if let Some(path) = self.gallery.current() {
+                    clipboard::write_text(&path.to_string_lossy());
                 }
             }
             Message::Exit => {

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use glam::{Mat4, Vec2, vec2, vec3};
+use glam::{Mat4, Vec2, vec2, vec3, vec4};
 use iced::{
     Event, Point, Rectangle,
     keyboard::{
@@ -37,6 +37,7 @@ pub struct ViewProgram {
     animation: Option<Animation>,
     pub lanczos_enabled: bool,
     cursor_pos: Option<Vec2>,
+    rotation: u8, // 0=0°, 1=90°CW, 2=180°, 3=270°CW
 }
 
 impl Default for ViewProgram {
@@ -50,6 +51,7 @@ impl Default for ViewProgram {
             animation: None,
             lanczos_enabled: false,
             cursor_pos: None,
+            rotation: 0,
         }
     }
 }
@@ -68,8 +70,18 @@ impl ViewProgram {
         if self.image_size == Vec2::ZERO {
             return;
         }
-        self.scale.fit(self.image_size, self.bounds);
+        let (fw, fh) = if self.rotation % 2 == 0 {
+            (self.image_size.x, self.image_size.y)
+        } else {
+            (self.image_size.y, self.image_size.x)
+        };
+        self.scale.fit_dims(fw, fh, self.bounds);
         self.offset = Vec2::ZERO;
+    }
+
+    pub fn rotate(&mut self) {
+        self.rotation = (self.rotation + 1) % 4;
+        self.fit();
     }
 
     pub fn pan(&mut self, delta: Vec2) {
@@ -110,11 +122,26 @@ impl ViewProgram {
         self.offset = self.offset.clamp(-self.image_size, self.image_size);
     }
 
+    // Returns aspect vec2 that maps the image quad to correct proportions given
+    // the current rotation. At 90/270 the image axes are swapped on screen,
+    // so each image dimension is divided by the opposite viewport dimension.
+    fn aspect(&self, viewport: Vec2) -> Vec2 {
+        if self.rotation % 2 == 0 {
+            self.image_size / viewport
+        } else {
+            vec2(
+                self.image_size.x / viewport.y,
+                self.image_size.y / viewport.x,
+            )
+        }
+    }
+
     pub fn set_image(&mut self, data: ImageData) {
         self.image_size = vec2(data.width as f32, data.height as f32);
         self.image = Some(Arc::new(data));
         self.animation = None;
         self.cursor_pos = None;
+        self.rotation = 0;
     }
 
     pub fn set_animation(&mut self, anim: Animation) {
@@ -123,6 +150,7 @@ impl ViewProgram {
         self.image = Some(first);
         self.animation = Some(anim);
         self.cursor_pos = None;
+        self.rotation = 0;
     }
 
     pub fn set_cursor_pos(&mut self, pos: Option<Vec2>) {
@@ -171,10 +199,21 @@ impl ViewProgram {
         if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
             return None;
         }
-        // Invert the shader transform: ndc_out = scale * (aspect * ndc_in + offset/viewport)
-        let uv = (screen_pos / viewport * 2.0 - 1.0) * vec2(1.0, -1.0);
-        let img_ndc =
-            (uv / self.scale.value() - self.offset / viewport) / (self.image_size / viewport);
+        let screen_ndc = vec2(
+            (screen_pos.x / viewport.x) * 2.0 - 1.0,
+            1.0 - (screen_pos.y / viewport.y) * 2.0,
+        );
+        let s = self.scale.value();
+        let aspect = self.aspect(viewport);
+        let pan_ndc = self.offset / viewport;
+        let angle = -(self.rotation as f32) * std::f32::consts::FRAC_PI_2;
+        let transform = Mat4::from_scale(vec3(s, s, 1.0))
+            * Mat4::from_translation(vec3(pan_ndc.x, pan_ndc.y, 0.0))
+            * Mat4::from_rotation_z(angle)
+            * Mat4::from_scale(vec3(aspect.x, aspect.y, 1.0));
+        let img_ndc = (transform.inverse() * vec4(screen_ndc.x, screen_ndc.y, 0.0, 1.0))
+            .truncate()
+            .truncate();
         let img = (img_ndc + 1.0) * 0.5 * vec2(self.image_size.x, -self.image_size.y)
             + vec2(0.0, self.image_size.y);
         if img.x < 0.0 || img.y < 0.0 || img.x >= self.image_size.x || img.y >= self.image_size.y {
@@ -199,11 +238,13 @@ impl Program<Message> for ViewProgram {
     fn draw(&self, _state: &Self::State, _cursor: Cursor, bounds: Rectangle) -> Self::Primitive {
         let viewport = vec2(bounds.width, bounds.height);
         let s = self.scale.value();
-        let aspect = self.image_size / viewport;
+        let aspect = self.aspect(viewport);
         let pan_ndc = self.offset / viewport;
+        let angle = -(self.rotation as f32) * std::f32::consts::FRAC_PI_2;
 
         let transform = Mat4::from_scale(vec3(s, s, 1.0))
             * Mat4::from_translation(vec3(pan_ndc.x, pan_ndc.y, 0.0))
+            * Mat4::from_rotation_z(angle)
             * Mat4::from_scale(vec3(aspect.x, aspect.y, 1.0));
 
         ViewPrimitive {
@@ -211,6 +252,7 @@ impl Program<Message> for ViewProgram {
             image: self.image.clone(),
             scale: s,
             pan_ndc,
+            rotation_angle: angle,
             bounds,
             lanczos_enabled: self.lanczos_enabled,
         }

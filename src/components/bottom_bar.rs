@@ -61,7 +61,7 @@ pub fn view<'a>(
         with_tooltip(
             svg_button_maybe(
                 include_bytes!("../../assets/icons/rotate.svg"),
-                Some(Message::Noop)
+                Some(Message::Rotate)
             ),
             "Rotate view",
             Position::Top,
@@ -92,6 +92,14 @@ pub fn view<'a>(
             Position::Top,
         ),
         with_tooltip(
+            svg_button_maybe(
+                include_bytes!("../../assets/icons/checkerboard.svg"),
+                Some(Message::Noop)
+            ),
+            "Checkerboard background",
+            Position::Top,
+        ),
+        with_tooltip(
             svg_button_maybe(fullscreen_icon, Some(Message::ToggleFullscreen)),
             fullscreen_tooltip,
             Position::Top,
@@ -110,6 +118,7 @@ pub fn view<'a>(
                 styled_menu(column![
                     menu_item("Preferences", Message::TogglePreferences),
                     menu_separator(),
+                    menu_item("Copy file path", Message::CopyPath),
                     menu_item("Export", Message::Noop),
                     menu_separator(),
                     menu_item("About", Message::Noop),

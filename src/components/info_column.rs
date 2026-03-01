@@ -8,7 +8,7 @@ use iced::{Background, Element, Font, Length, border};
 
 use crate::app::Message;
 use crate::gallery::Gallery;
-use crate::styles::{PAD, TOOLTIP_DELAY, bar_style, radius};
+use crate::styles::{PAD, bar_style, radius};
 use crate::wgpu::view_program::ViewProgram;
 
 fn row_item<'a>(lbl: &'a str, val: impl ToString) -> Element<'a, Message> {
@@ -152,7 +152,6 @@ pub fn view<'a>(
                         .style(container::rounded_box),
                     Position::Right,
                 )
-                .delay(TOOLTIP_DELAY)
                 .into()
             } else {
                 filename_row

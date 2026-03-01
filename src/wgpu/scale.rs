@@ -1,4 +1,3 @@
-use glam::Vec2;
 use iced::Rectangle;
 
 const STEPS: &[f32] = &[
@@ -53,8 +52,8 @@ impl Scale {
         prev
     }
 
-    pub fn fit(&mut self, image_size: Vec2, bounds: Rectangle) {
-        self.custom = Some((bounds.width / image_size.x).min(bounds.height / image_size.y));
+    pub fn fit_dims(&mut self, iw: f32, ih: f32, bounds: Rectangle) {
+        self.custom = Some((bounds.width / iw).min(bounds.height / ih));
     }
 
     pub fn custom(&mut self, scale: f32) {
