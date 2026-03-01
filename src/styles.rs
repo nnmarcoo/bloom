@@ -11,7 +11,7 @@ pub const PAD: f32 = 5.0;
 pub const TOOLTIP_DELAY: Duration = Duration::from_millis(400);
 pub const BUTTON_SIZE: f32 = 20.0;
 pub const BAR_HEIGHT: f32 = 40.0;
-pub const RADIUS: f32 = 8.0;
+pub const RADIUS: f32 = 6.0;
 
 static ACTIVE_RADIUS: OnceLock<AtomicU32> = OnceLock::new();
 
