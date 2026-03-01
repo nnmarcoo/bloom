@@ -71,6 +71,7 @@ pub enum Message {
     ClipboardLoaded(MediaData),
     CursorMoved(Vec2),
     CursorLeft,
+    Exit,
     Noop,
 }
 
@@ -228,6 +229,15 @@ impl App {
             Message::CursorLeft => {
                 self.program.set_cursor_pos(None);
             }
+            Message::Exit => {
+                return window::oldest().then(|id| {
+                    if let Some(id) = id {
+                        window::close(id)
+                    } else {
+                        Task::none()
+                    }
+                });
+            }
             Message::Noop => {}
             Message::Event(event) => match event {
                 Event::Window(window::Event::FileDropped(path)) => {
@@ -282,7 +292,7 @@ impl App {
                 self.mode,
                 self.program.scale(),
                 self.focus_scale,
-                self.show_info
+                self.show_info,
             ),
         ]
         .into()

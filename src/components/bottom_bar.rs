@@ -4,7 +4,6 @@ use iced::widget::tooltip::Position;
 use iced::widget::{button, column, container, row, svg, text, tooltip};
 use iced::window::Mode;
 use iced::{Element, Length};
-use iced_aw::ContextMenu;
 
 use crate::app::Message;
 use crate::styles::{
@@ -12,6 +11,7 @@ use crate::styles::{
     icon_button_style, svg_style,
 };
 use crate::widgets::menu::{menu_item, menu_separator, styled_menu};
+use crate::widgets::menu_button::{MenuAlign, MenuButton};
 use crate::widgets::scale_entry::ScaleEntry;
 
 fn bottom_bar_tooltip<'a>(
@@ -133,15 +133,23 @@ pub fn view<'a>(
             "Select media",
             Some(Message::SelectMedia)
         ),
-        icon_button(
-            include_bytes!("../../assets/icons/kebab.svg"),
+        bottom_bar_tooltip(
+            MenuButton::new(
+                include_bytes!("../../assets/icons/kebab.svg"),
+                styled_menu(column![
+                    menu_item("Settings", Message::Noop),
+                    menu_separator(),
+                    menu_item("Export", Message::Noop),
+                    menu_item("Exit", Message::Exit),
+                ]),
+            )
+            .align(MenuAlign::TopEnd),
             "More actions",
-            Some(Message::Noop)
         ),
     ]
     .align_y(Vertical::Center);
 
-    let bar = container(
+    container(
         row![
             left_buttons,
             iced::widget::Space::new().width(Length::Fill),
@@ -152,14 +160,6 @@ pub fn view<'a>(
         .align_y(Vertical::Center)
         .spacing(PAD),
     )
-    .style(bar_style);
-
-    ContextMenu::new(bar, || {
-        styled_menu(column![
-            menu_item("Hide Bar", Message::Noop),
-            menu_separator(),
-            menu_item("Copy Path", Message::Noop),
-        ])
-    })
+    .style(bar_style)
     .into()
 }

@@ -60,9 +60,9 @@ pub fn menu_container_style(theme: &Theme) -> container::Style {
     let palette = theme.extended_palette();
     container::Style {
         text_color: Some(palette.background.base.text),
-        background: Some(Background::Color(palette.background.base.color)),
+        background: Some(Background::Color(palette.background.weak.color)),
         border: iced::Border {
-            color: palette.background.strong.color.scale_alpha(0.5),
+            color: palette.background.strong.color,
             width: 1.0,
             radius: WIDGET_RADIUS.into(),
         },
@@ -73,9 +73,7 @@ pub fn menu_container_style(theme: &Theme) -> container::Style {
 pub fn menu_separator_style(theme: &Theme) -> container::Style {
     let palette = theme.extended_palette();
     container::Style {
-        background: Some(Background::Color(
-            palette.background.strong.color.scale_alpha(0.5),
-        )),
+        background: Some(Background::Color(palette.background.strong.color)),
         ..Default::default()
     }
 }
