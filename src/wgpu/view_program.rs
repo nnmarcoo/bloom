@@ -65,6 +65,9 @@ impl ViewProgram {
     }
 
     pub fn fit(&mut self) {
+        if self.image_size == Vec2::ZERO {
+            return;
+        }
         self.scale.fit(self.image_size, self.bounds);
         self.offset = Vec2::ZERO;
     }
