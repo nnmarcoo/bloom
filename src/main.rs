@@ -27,7 +27,7 @@ fn main() -> iced::Result {
     let media = env::args().nth(1).map(PathBuf::from);
 
     iced::application(move || App::new(media.clone()), App::update, App::view)
-        .title("bloom")
+        .title(App::title)
         .window(window::Settings {
             min_size: Some(Size::new(220.0, 0.0)),
             icon: app_icon(),

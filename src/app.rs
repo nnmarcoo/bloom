@@ -317,6 +317,14 @@ impl App {
         .into()
     }
 
+    pub fn title(&self) -> String {
+        if let Some(path) = self.gallery.current() {
+            path.to_string_lossy().to_string()
+        } else {
+            "bloom".to_string()
+        }
+    }
+
     pub fn theme(&self) -> Theme {
         self.config.theme.clone()
     }
