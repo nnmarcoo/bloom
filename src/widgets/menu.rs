@@ -8,7 +8,7 @@ use iced::widget::{Column, container, text};
 use iced::window;
 use iced::{Background, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme};
 
-use crate::styles::{darken, menu_container_style, menu_separator_style};
+use crate::styles::{menu_container_style, menu_item_hover_color, menu_separator_style, radius};
 
 const ITEM_HEIGHT: f32 = 28.0;
 const ITEM_PADDING_H: f32 = 8.0;
@@ -100,10 +100,10 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for MenuItem<'a, 
             renderer.fill_quad(
                 Quad {
                     bounds,
-                    border: iced::border::rounded(6),
+                    border: iced::border::rounded(radius()),
                     ..Default::default()
                 },
-                Background::Color(darken(palette.background.base.color, 1.15)),
+                Background::Color(menu_item_hover_color(theme)),
             );
         }
 

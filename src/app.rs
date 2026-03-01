@@ -3,9 +3,8 @@ use std::time::{Duration, Instant};
 
 use glam::Vec2;
 use iced::time::every;
-use iced::widget::row;
 use iced::{
-    Element, Event, Rectangle, Subscription, Task, event,
+    Element, Event, Rectangle, Subscription, Task, Theme, event,
     keyboard::{
         self,
         key::{self, Physical},
@@ -15,11 +14,12 @@ use iced::{
 };
 use rfd::AsyncFileDialog;
 
-use crate::components::info_column;
 use crate::{
     clipboard::{self, ClipboardImage},
-    components::{bottom_bar, viewer},
+    components::{bottom_bar, preferences, preferences::PreferenceMessage, viewer},
+    config::Config,
     gallery::{Gallery, SUPPORTED},
+    styles,
     wgpu::{
         media::image_data::{ImageData, MediaData},
         view_program::ViewProgram,
@@ -33,19 +33,28 @@ pub struct App {
     loading: Option<String>,
     load_generation: u64,
     focus_scale: bool,
-    show_info: bool,
+    show_preferences: bool,
+    config: Config,
+    pending_config: Config,
 }
 
 impl Default for App {
     fn default() -> Self {
+        let config = Config::default();
+        let mut program = ViewProgram::default();
+        program.lanczos_enabled = config.lanczos;
+        styles::set_radius(config.rounded);
+
         Self {
-            program: ViewProgram::default(),
+            program,
             gallery: Gallery::default(),
             mode: Mode::Windowed,
             loading: None,
             load_generation: 0,
             focus_scale: false,
-            show_info: false,
+            show_preferences: false,
+            pending_config: config.clone(),
+            config,
         }
     }
 }
@@ -68,6 +77,8 @@ pub enum Message {
     AnimationTick(Instant),
     ToggleFullscreen,
     ToggleInfoColumn,
+    TogglePreferences,
+    Preference(PreferenceMessage),
     ClipboardLoaded(MediaData),
     CursorMoved(Vec2),
     CursorLeft,
@@ -211,7 +222,19 @@ impl App {
                 return set_window_mode(self.mode);
             }
             Message::ToggleInfoColumn => {
-                self.show_info = !self.show_info;
+                self.config.show_info = !self.config.show_info;
+            }
+            Message::TogglePreferences => {
+                self.pending_config = self.config.clone();
+                self.show_preferences = true;
+            }
+            Message::Preference(msg) => {
+                self.show_preferences = preferences::update(
+                    msg,
+                    &mut self.config,
+                    &mut self.pending_config,
+                    &mut self.program,
+                );
             }
             Message::ClipboardLoaded(media) => {
                 self.loading = None;
@@ -222,7 +245,7 @@ impl App {
                 self.program.fit();
             }
             Message::CursorMoved(pos) => {
-                if self.show_info {
+                if self.config.show_info && !self.show_preferences {
                     self.program.set_cursor_pos(Some(pos));
                 }
             }
@@ -272,30 +295,30 @@ impl App {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let viewer = viewer::view(self.program.clone(), self.loading.as_deref());
-        let main_row = if self.show_info {
-            row![
-                info_column::view(
-                    self.gallery.current().map(|p| p.as_path()),
-                    &self.gallery,
-                    &self.program,
-                ),
-                viewer
-            ]
-        } else {
-            row![viewer]
-        };
+        if self.show_preferences {
+            return preferences::view(&self.pending_config, &self.config.theme);
+        }
 
         column![
-            main_row,
+            viewer::view(
+                self.program.clone(),
+                self.loading.as_deref(),
+                self.config.show_info,
+                self.gallery.current().map(|p| p.as_path()),
+                &self.gallery,
+            ),
             bottom_bar::view(
                 self.mode,
                 self.program.scale(),
                 self.focus_scale,
-                self.show_info,
+                self.config.show_info,
             ),
         ]
         .into()
+    }
+
+    pub fn theme(&self) -> Theme {
+        self.config.theme.clone()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {

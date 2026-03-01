@@ -11,7 +11,7 @@ use iced::{
     Size,
 };
 
-use crate::styles::WIDGET_RADIUS;
+use crate::styles::radius;
 
 pub struct ScaleEntry<Message> {
     value: f32,
@@ -198,7 +198,7 @@ where
                             Color::TRANSPARENT
                         },
                         width: 1.0,
-                        radius: WIDGET_RADIUS.into(),
+                        radius: radius().into(),
                     },
                     ..Quad::default()
                 },
@@ -224,7 +224,7 @@ where
                 Quad {
                     bounds,
                     border: Border {
-                        radius: WIDGET_RADIUS.into(),
+                        radius: radius().into(),
                         ..Border::default()
                     },
                     ..Quad::default()

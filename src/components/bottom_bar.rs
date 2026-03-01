@@ -1,69 +1,16 @@
 use iced::alignment::Vertical;
-use iced::widget::svg::Handle;
+use iced::widget::container;
 use iced::widget::tooltip::Position;
-use iced::widget::{button, column, container, row, svg, text, tooltip};
+use iced::widget::{column, row};
 use iced::window::Mode;
 use iced::{Element, Length};
 
 use crate::app::Message;
-use crate::styles::{
-    BAR_HEIGHT, BUTTON_SIZE, PAD, TOOLTIP_DELAY, bar_style, icon_button_active_style,
-    icon_button_style, svg_style,
-};
+use crate::styles::{BAR_HEIGHT, PAD, bar_style};
+use crate::ui::{svg_button, svg_button_active, svg_button_maybe, with_tooltip};
 use crate::widgets::menu::{menu_item, menu_separator, styled_menu};
 use crate::widgets::menu_button::{MenuAlign, MenuButton};
 use crate::widgets::scale_entry::ScaleEntry;
-
-fn bottom_bar_tooltip<'a>(
-    content: impl Into<Element<'a, Message>>,
-    tooltip_text: &'a str,
-) -> Element<'a, Message> {
-    tooltip(
-        content,
-        container(text(tooltip_text).size(12))
-            .padding(PAD)
-            .style(container::rounded_box),
-        Position::Top,
-    )
-    .delay(TOOLTIP_DELAY)
-    .into()
-}
-
-fn icon_button<'a>(
-    icon: &'static [u8],
-    tooltip_text: &'a str,
-    msg: Option<Message>,
-) -> Element<'a, Message> {
-    let button = button(
-        svg(Handle::from_memory(icon))
-            .style(svg_style)
-            .width(Length::Fixed(BUTTON_SIZE))
-            .height(Length::Fixed(BUTTON_SIZE)),
-    )
-    .padding(PAD)
-    .style(icon_button_style)
-    .on_press_maybe(msg);
-
-    bottom_bar_tooltip(button, tooltip_text)
-}
-
-fn icon_button_active<'a>(
-    icon: &'static [u8],
-    tooltip_text: &'a str,
-    msg: Option<Message>,
-) -> Element<'a, Message> {
-    let button = button(
-        svg(Handle::from_memory(icon))
-            .style(svg_style)
-            .width(Length::Fixed(BUTTON_SIZE))
-            .height(Length::Fixed(BUTTON_SIZE)),
-    )
-    .padding(PAD)
-    .style(icon_button_active_style)
-    .on_press_maybe(msg);
-
-    bottom_bar_tooltip(button, tooltip_text)
-}
 
 pub fn view<'a>(
     mode: Mode,
@@ -82,62 +29,78 @@ pub fn view<'a>(
     };
 
     let left_buttons = row![
-        icon_button(
-            include_bytes!("../../assets/icons/left.svg"),
+        with_tooltip(
+            svg_button_maybe(
+                include_bytes!("../../assets/icons/left.svg"),
+                Some(Message::Previous)
+            ),
             "Previous",
-            Some(Message::Previous)
+            Position::Top,
         ),
-        icon_button(
-            include_bytes!("../../assets/icons/right.svg"),
+        with_tooltip(
+            svg_button_maybe(
+                include_bytes!("../../assets/icons/right.svg"),
+                Some(Message::Next)
+            ),
             "Next",
-            Some(Message::Next)
+            Position::Top,
         ),
-        bottom_bar_tooltip(
+        with_tooltip(
             ScaleEntry::new(scale, Message::Scale).focused(focus_scale),
-            "Scale"
+            "Scale",
+            Position::Top,
         ),
-        icon_button(
-            include_bytes!("../../assets/icons/fit.svg"),
+        with_tooltip(
+            svg_button_maybe(
+                include_bytes!("../../assets/icons/fit.svg"),
+                Some(Message::Fit)
+            ),
             "Fit to viewport",
-            Some(Message::Fit)
+            Position::Top,
         ),
     ]
     .align_y(Vertical::Center);
 
+    let info_btn = if show_info {
+        svg_button_active(
+            include_bytes!("../../assets/icons/info.svg"),
+            Message::ToggleInfoColumn,
+        )
+    } else {
+        svg_button(
+            include_bytes!("../../assets/icons/info.svg"),
+            Message::ToggleInfoColumn,
+        )
+    };
+
     let right_buttons = row![
-        if show_info {
-            icon_button_active(
-                include_bytes!("../../assets/icons/info.svg"),
-                "Information",
-                Some(Message::ToggleInfoColumn),
-            )
-        } else {
-            icon_button(
-                include_bytes!("../../assets/icons/info.svg"),
-                "Information",
-                Some(Message::ToggleInfoColumn),
-            )
-        },
-        icon_button(
-            include_bytes!("../../assets/icons/edit.svg"),
+        with_tooltip(info_btn, "Information", Position::Top),
+        with_tooltip(
+            svg_button_maybe(
+                include_bytes!("../../assets/icons/edit.svg"),
+                Some(Message::Noop)
+            ),
             "Edit",
-            Some(Message::Noop)
+            Position::Top,
         ),
-        icon_button(
-            fullscreen_icon,
+        with_tooltip(
+            svg_button_maybe(fullscreen_icon, Some(Message::ToggleFullscreen)),
             fullscreen_tooltip,
-            Some(Message::ToggleFullscreen)
+            Position::Top,
         ),
-        icon_button(
-            include_bytes!("../../assets/icons/folder.svg"),
+        with_tooltip(
+            svg_button_maybe(
+                include_bytes!("../../assets/icons/folder.svg"),
+                Some(Message::SelectMedia)
+            ),
             "Select media",
-            Some(Message::SelectMedia)
+            Position::Top,
         ),
-        bottom_bar_tooltip(
+        with_tooltip(
             MenuButton::new(
                 include_bytes!("../../assets/icons/kebab.svg"),
                 styled_menu(column![
-                    menu_item("Settings", Message::Noop),
+                    menu_item("Preferences", Message::TogglePreferences),
                     menu_separator(),
                     menu_item("Export", Message::Noop),
                     menu_item("Exit", Message::Exit),
@@ -145,6 +108,7 @@ pub fn view<'a>(
             )
             .align(MenuAlign::TopEnd),
             "More actions",
+            Position::Top,
         ),
     ]
     .align_y(Vertical::Center);
@@ -160,6 +124,7 @@ pub fn view<'a>(
         .align_y(Vertical::Center)
         .spacing(PAD),
     )
+    .padding([0.0, PAD])
     .style(bar_style)
     .into()
 }

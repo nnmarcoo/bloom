@@ -3,8 +3,10 @@
 mod app;
 mod clipboard;
 mod components;
+mod config;
 mod gallery;
 mod styles;
+mod ui;
 mod wgpu;
 mod widgets;
 use std::{env, path::PathBuf};
@@ -32,6 +34,7 @@ fn main() -> iced::Result {
             ..Default::default()
         })
         .centered()
+        .theme(App::theme)
         .subscription(App::subscription)
         .run()
 }
