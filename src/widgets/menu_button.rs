@@ -312,6 +312,7 @@ impl<Message: Clone> Overlay<Message, iced::Theme, Renderer> for MenuOverlay<'_,
         }
 
         let viewport = layout.bounds();
+        let had_messages = !shell.is_empty();
         self.menu.as_widget_mut().update(
             self.menu_tree,
             event,
@@ -322,6 +323,9 @@ impl<Message: Clone> Overlay<Message, iced::Theme, Renderer> for MenuOverlay<'_,
             shell,
             &viewport,
         );
+        if !had_messages && !shell.is_empty() {
+            self.widget_state.downcast_mut::<State>().expanded = false;
+        }
     }
 
     fn mouse_interaction(
