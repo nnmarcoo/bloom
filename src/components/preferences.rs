@@ -27,7 +27,7 @@ pub enum PreferenceMessage {
     CancelCapture,
     SetKeybinding(Action, KeyBinding),
     ClearKeybinding(Action),
-    ResetKeybindings,
+    ResetAll,
     Save,
     Cancel,
 }
@@ -69,8 +69,9 @@ pub fn update(
             pending.keymap.remove(&action);
             true
         }
-        PreferenceMessage::ResetKeybindings => {
-            pending.keymap.reset_to_defaults();
+        PreferenceMessage::ResetAll => {
+            *pending = Config::default();
+            prefs_state.capturing = None;
             true
         }
         PreferenceMessage::Save => {
@@ -88,13 +89,8 @@ pub fn update(
 }
 
 fn section<'a>(label: &'a str, theme: &Theme) -> Element<'a, Message> {
-    let muted = theme
-        .extended_palette()
-        .background
-        .base
-        .text
-        .scale_alpha(0.5);
-    column![text(label).size(13).color(muted), rule::horizontal(1)]
+    let accent = theme.extended_palette().primary.base.color;
+    column![text(label).size(11).color(accent), rule::horizontal(1)]
         .spacing(PAD)
         .into()
 }
@@ -193,6 +189,11 @@ pub fn view<'a>(
 ) -> Element<'a, Message> {
     let action_buttons = container(
         row![
+            button(text("Reset to defaults").size(12))
+                .style(plain_icon_button_style)
+                .on_press(Message::Preference(PreferenceMessage::ResetAll))
+                .padding([4.0, 8.0]),
+            iced::widget::Space::new().width(Length::Fill),
             with_tooltip(
                 svg_button_plain(
                     include_bytes!("../../assets/icons/check.svg"),
@@ -210,20 +211,11 @@ pub fn view<'a>(
                 Position::Top,
             ),
         ]
+        .align_y(Vertical::Center)
         .spacing(PAD),
     )
     .width(Length::Fill)
-    .align_x(Horizontal::Right)
     .padding(PAD * 2.0);
-
-    let reset_btn = container(
-        button(text("Reset to defaults").size(12))
-            .style(plain_icon_button_style)
-            .on_press(Message::Preference(PreferenceMessage::ResetKeybindings))
-            .padding([4.0, 8.0]),
-    )
-    .width(Length::Fill)
-    .align_x(Horizontal::Right);
 
     let keybind_rows: Vec<Element<'a, Message>> = Action::all_visible()
         .iter()
@@ -268,8 +260,6 @@ pub fn view<'a>(
         ),
         iced::widget::Space::new().height(PAD * 2.0),
         section("Keybindings", theme),
-        iced::widget::Space::new().height(PAD),
-        reset_btn,
         iced::widget::Space::new().height(PAD),
     ]
     .extend(keybind_rows)

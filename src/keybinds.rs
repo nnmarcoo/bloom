@@ -357,10 +357,6 @@ impl Keymap {
     pub fn remove(&mut self, action: &Action) {
         self.bindings.remove(action);
     }
-
-    pub fn reset_to_defaults(&mut self) {
-        *self = Self::default();
-    }
 }
 
 #[derive(Serialize, Deserialize, Default)]
