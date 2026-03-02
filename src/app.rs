@@ -10,20 +10,17 @@ use iced::{
         key::{self, Physical},
     },
     widget::column,
-    window::{self, Mode},
+    window::Mode,
 };
-use rfd::AsyncFileDialog;
 
 use crate::{
-    clipboard::{self, ClipboardImage},
+    clipboard,
     components::{bottom_bar, preferences, preferences::PreferenceMessage, viewer},
     config::Config,
-    gallery::{Gallery, SUPPORTED},
-    styles,
-    wgpu::{
-        media::image_data::{ImageData, MediaData},
-        view_program::ViewProgram,
-    },
+    gallery::Gallery,
+    keybinds::{Action, KeyBinding},
+    styles, tasks,
+    wgpu::{media::image_data::MediaData, view_program::ViewProgram},
 };
 
 pub struct App {
@@ -36,6 +33,7 @@ pub struct App {
     show_preferences: bool,
     config: Config,
     pending_config: Config,
+    prefs_state: preferences::PrefsState,
 }
 
 impl Default for App {
@@ -44,7 +42,6 @@ impl Default for App {
         let mut program = ViewProgram::default();
         program.lanczos_enabled = config.lanczos;
         styles::set_radius(config.rounded);
-
         Self {
             program,
             gallery: Gallery::default(),
@@ -55,6 +52,7 @@ impl Default for App {
             show_preferences: false,
             pending_config: config.clone(),
             config,
+            prefs_state: preferences::PrefsState::default(),
         }
     }
 }
@@ -89,48 +87,6 @@ pub enum Message {
     Noop,
 }
 
-fn load_media(path: PathBuf, generation: u64) -> Task<Message> {
-    Task::future(async move {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-
-        std::thread::spawn(move || {
-            let _ = tx.send(ImageData::load_media(&path));
-        });
-
-        match rx.await {
-            Ok(Ok(media)) => Message::MediaLoaded(generation, media),
-            Ok(Err(e)) => Message::MediaFailed(generation, e.to_string()),
-            Err(_) => Message::MediaFailed(generation, "load thread panicked".to_string()),
-        }
-    })
-}
-
-fn load_from_clipboard() -> Task<Message> {
-    Task::future(async move {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(clipboard::read());
-        });
-        match rx.await {
-            Ok(Some(ClipboardImage::Pixels(data))) => {
-                Message::ClipboardLoaded(MediaData::Image(data))
-            }
-            Ok(Some(ClipboardImage::Path(path))) => Message::MediaSelected(path),
-            _ => Message::Noop,
-        }
-    })
-}
-
-fn set_window_mode(mode: Mode) -> Task<Message> {
-    window::oldest().then(move |id| {
-        if let Some(id) = id {
-            window::set_mode(id, mode)
-        } else {
-            Task::none()
-        }
-    })
-}
-
 impl App {
     pub fn new(path: Option<PathBuf>) -> (Self, Task<Message>) {
         if let Some(p) = path {
@@ -140,7 +96,7 @@ impl App {
                 load_generation: 1,
                 ..Self::default()
             };
-            return (app, load_media(p, 1));
+            return (app, tasks::load_media(p, 1));
         }
         (Self::default(), Task::none())
     }
@@ -149,24 +105,12 @@ impl App {
         self.focus_scale = false;
 
         match message {
-            Message::Pan(delta) => {
-                self.program.pan(delta);
-            }
-            Message::ScaleUp(cursor) => {
-                self.program.scale_up(cursor);
-            }
-            Message::ScaleDown(cursor) => {
-                self.program.scale_down(cursor);
-            }
-            Message::Rotate => {
-                self.program.rotate();
-            }
-            Message::Fit => {
-                self.program.fit();
-            }
-            Message::BoundsChanged(bounds) => {
-                self.program.set_bounds(bounds);
-            }
+            Message::Pan(delta) => self.program.pan(delta),
+            Message::ScaleUp(cursor) => self.program.scale_up(cursor),
+            Message::ScaleDown(cursor) => self.program.scale_down(cursor),
+            Message::Rotate => self.program.rotate(),
+            Message::Fit => self.program.fit(),
+            Message::BoundsChanged(bounds) => self.program.set_bounds(bounds),
             Message::Scale(scale) => {
                 let center = self.program.viewport_center();
                 self.program.set_scale(scale, center);
@@ -181,39 +125,25 @@ impl App {
                     return Task::done(Message::MediaSelected(p.clone()));
                 }
             }
-            Message::SelectMedia => {
-                return Task::future(async {
-                    let handle = AsyncFileDialog::new()
-                        .add_filter("Media", SUPPORTED)
-                        .pick_file()
-                        .await;
-                    if let Some(h) = handle {
-                        Message::MediaSelected(h.path().to_path_buf())
-                    } else {
-                        Message::Noop
-                    }
-                });
-            }
+            Message::SelectMedia => return tasks::select_media(),
             Message::MediaSelected(path) => {
                 if let Some(p) = self.gallery.set(path) {
                     self.loading = Some(Gallery::filename(p));
                     self.load_generation = self.load_generation.wrapping_add(1);
-                    return load_media(p.clone(), self.load_generation);
+                    return tasks::load_media(p.clone(), self.load_generation);
                 }
             }
             Message::MediaLoaded(generation, media) => {
                 if generation == self.load_generation {
                     self.loading = None;
-                    match media {
-                        MediaData::Image(data) => self.program.set_image(data),
-                        MediaData::Animation(anim) => self.program.set_animation(anim),
-                    }
-                    self.program.fit();
+                    self.apply_media(media);
                 }
             }
-            Message::AnimationTick(now) => {
-                self.program.tick_animation(now);
+            Message::ClipboardLoaded(media) => {
+                self.loading = None;
+                self.apply_media(media);
             }
+            Message::AnimationTick(now) => self.program.tick_animation(now),
             Message::MediaFailed(generation, err) => {
                 if generation == self.load_generation {
                     self.loading = None;
@@ -225,7 +155,7 @@ impl App {
                     Mode::Fullscreen => Mode::Windowed,
                     _ => Mode::Fullscreen,
                 };
-                return set_window_mode(self.mode);
+                return tasks::set_window_mode(self.mode);
             }
             Message::ToggleInfoColumn => {
                 self.config.show_info = !self.config.show_info;
@@ -233,6 +163,7 @@ impl App {
             }
             Message::TogglePreferences => {
                 self.pending_config = self.config.clone();
+                self.prefs_state = preferences::PrefsState::default();
                 self.show_preferences = true;
             }
             Message::Preference(msg) => {
@@ -242,27 +173,18 @@ impl App {
                     &mut self.config,
                     &mut self.pending_config,
                     &mut self.program,
+                    &mut self.prefs_state,
                 );
                 if saving {
                     self.config.save();
                 }
-            }
-            Message::ClipboardLoaded(media) => {
-                self.loading = None;
-                match media {
-                    MediaData::Image(data) => self.program.set_image(data),
-                    MediaData::Animation(anim) => self.program.set_animation(anim),
-                }
-                self.program.fit();
             }
             Message::CursorMoved(pos) => {
                 if !self.show_preferences {
                     self.program.set_cursor_pos(Some(pos));
                 }
             }
-            Message::CursorLeft => {
-                self.program.set_cursor_pos(None);
-            }
+            Message::CursorLeft => self.program.set_cursor_pos(None),
             Message::CopyColor => {
                 if let Some((_, _, [r, g, b, _])) = self.program.cursor_info() {
                     clipboard::write_text(&format!("#{r:02X}{g:02X}{b:02X}"));
@@ -273,53 +195,96 @@ impl App {
                     clipboard::write_text(&path.to_string_lossy());
                 }
             }
-            Message::Exit => {
-                return window::oldest().then(|id| {
-                    if let Some(id) = id {
-                        window::close(id)
-                    } else {
-                        Task::none()
-                    }
-                });
-            }
+            Message::Exit => return tasks::close_window(),
             Message::Noop => {}
-            Message::Event(event) => match event {
-                Event::Window(window::Event::FileDropped(path)) => {
-                    return Task::done(Message::MediaSelected(path));
-                }
-                Event::Keyboard(keyboard::Event::KeyPressed {
-                    physical_key,
-                    modifiers,
-                    ..
-                }) => match physical_key {
-                    Physical::Code(key::Code::ArrowRight) => {
-                        return Task::done(Message::Next);
-                    }
-                    Physical::Code(key::Code::ArrowLeft) => {
-                        return Task::done(Message::Previous);
-                    }
-                    Physical::Code(key::Code::KeyF) => {
-                        return Task::done(Message::ToggleFullscreen);
-                    }
-                    Physical::Code(key::Code::KeyZ) if !modifiers.control() => {
-                        self.focus_scale = true;
-                    }
-                    Physical::Code(key::Code::KeyV) if modifiers.control() => {
-                        return load_from_clipboard();
-                    }
-                    _ => {}
-                },
-                _ => {}
-            },
+            Message::Event(event) => return self.handle_event(event),
         }
         Task::none()
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    fn apply_media(&mut self, media: MediaData) {
+        match media {
+            MediaData::Image(data) => self.program.set_image(data),
+            MediaData::Animation(anim) => self.program.set_animation(anim),
+        }
+        self.program.fit();
+    }
+
+    fn handle_event(&mut self, event: Event) -> Task<Message> {
+        match event {
+            Event::Window(iced::window::Event::FileDropped(path)) => {
+                Task::done(Message::MediaSelected(path))
+            }
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                physical_key,
+                modifiers,
+                ..
+            }) => self.handle_key(physical_key, modifiers),
+            _ => Task::none(),
+        }
+    }
+
+    fn handle_key(
+        &mut self,
+        physical_key: Physical,
+        modifiers: keyboard::Modifiers,
+    ) -> Task<Message> {
         if self.show_preferences {
-            return preferences::view(&self.pending_config, &self.config.theme);
+            if let Some(action) = self.prefs_state.capturing {
+                if let Physical::Code(code) = physical_key {
+                    let is_modifier = matches!(
+                        code,
+                        key::Code::ControlLeft
+                            | key::Code::ControlRight
+                            | key::Code::ShiftLeft
+                            | key::Code::ShiftRight
+                            | key::Code::AltLeft
+                            | key::Code::AltRight
+                            | key::Code::SuperLeft
+                            | key::Code::SuperRight
+                    );
+                    if !is_modifier {
+                        if code == key::Code::Escape {
+                            return Task::done(Message::Preference(
+                                PreferenceMessage::CancelCapture,
+                            ));
+                        }
+                        let kb = KeyBinding {
+                            ctrl: modifiers.control(),
+                            shift: modifiers.shift(),
+                            alt: modifiers.alt(),
+                            code,
+                        };
+                        return Task::done(Message::Preference(PreferenceMessage::SetKeybinding(
+                            action, kb,
+                        )));
+                    }
+                }
+            }
+            return Task::none();
         }
 
+        match self.config.keymap.resolve(&physical_key, &modifiers) {
+            Some(Action::Next) => Task::done(Message::Next),
+            Some(Action::Previous) => Task::done(Message::Previous),
+            Some(Action::ToggleFullscreen) => Task::done(Message::ToggleFullscreen),
+            Some(Action::FocusScale) => {
+                self.focus_scale = true;
+                Task::none()
+            }
+            Some(Action::PasteFromClipboard) => tasks::load_from_clipboard(),
+            Some(Action::ZoomIn) => Task::done(Message::ScaleUp(self.program.viewport_center())),
+            Some(Action::ZoomOut) => Task::done(Message::ScaleDown(self.program.viewport_center())),
+            Some(Action::ZoomFit) => Task::done(Message::Fit),
+            Some(Action::ZoomPreset(n)) => Task::done(Message::Scale(n as f32)),
+            None => Task::none(),
+        }
+    }
+
+    pub fn view(&self) -> Element<'_, Message> {
+        if self.show_preferences {
+            return preferences::view(&self.pending_config, &self.config.theme, &self.prefs_state);
+        }
         column![
             viewer::view(
                 self.program.clone(),
@@ -340,11 +305,10 @@ impl App {
     }
 
     pub fn title(&self) -> String {
-        if let Some(path) = self.gallery.current() {
-            path.to_string_lossy().to_string()
-        } else {
-            "bloom".to_string()
-        }
+        self.gallery
+            .current()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "bloom".into())
     }
 
     pub fn theme(&self) -> Theme {
@@ -353,7 +317,6 @@ impl App {
 
     pub fn subscription(&self) -> Subscription<Message> {
         let events = event::listen().map(Message::Event);
-
         if let Some(delay) = self.program.time_until_next_frame() {
             let delay = delay.max(Duration::from_millis(1));
             Subscription::batch([events, every(delay).map(Message::AnimationTick)])

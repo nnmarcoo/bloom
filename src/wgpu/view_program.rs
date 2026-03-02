@@ -4,10 +4,6 @@ use std::time::{Duration, Instant};
 use glam::{Mat4, Vec2, vec2, vec3, vec4};
 use iced::{
     Event, Point, Rectangle,
-    keyboard::{
-        self,
-        key::{self, Physical},
-    },
     mouse::{self, Button, Cursor, Interaction},
     widget::{Action, shader::Program},
 };
@@ -271,37 +267,6 @@ impl Program<Message> for ViewProgram {
     ) -> Option<Action<Message>> {
         if self.bounds != bounds {
             return Some(Action::publish(Message::BoundsChanged(bounds)));
-        }
-
-        if let Event::Keyboard(keyboard::Event::KeyPressed {
-            physical_key,
-            modifiers,
-            ..
-        }) = event
-        {
-            if modifiers.control() {
-                if let Physical::Code(code) = physical_key {
-                    let center = vec2(bounds.width * 0.5, bounds.height * 0.5);
-                    let msg = match code {
-                        key::Code::Equal => Some(Message::ScaleUp(center)),
-                        key::Code::Minus => Some(Message::ScaleDown(center)),
-                        key::Code::Digit0 => Some(Message::Fit),
-                        key::Code::Digit1 => Some(Message::Scale(1.0)),
-                        key::Code::Digit2 => Some(Message::Scale(2.0)),
-                        key::Code::Digit3 => Some(Message::Scale(3.0)),
-                        key::Code::Digit4 => Some(Message::Scale(4.0)),
-                        key::Code::Digit5 => Some(Message::Scale(5.0)),
-                        key::Code::Digit6 => Some(Message::Scale(6.0)),
-                        key::Code::Digit7 => Some(Message::Scale(7.0)),
-                        key::Code::Digit8 => Some(Message::Scale(8.0)),
-                        key::Code::Digit9 => Some(Message::Scale(9.0)),
-                        _ => None,
-                    };
-                    if let Some(msg) = msg {
-                        return Some(Action::publish(msg).and_capture());
-                    }
-                }
-            }
         }
 
         if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {

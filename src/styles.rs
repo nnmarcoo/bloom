@@ -181,6 +181,44 @@ pub fn plain_icon_button_style(theme: &Theme, status: button::Status) -> button:
     }
 }
 
+pub fn key_chip_style(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = theme.extended_palette();
+    let background = match status {
+        button::Status::Hovered => Some(Background::Color(palette.background.strong.color)),
+        button::Status::Pressed => Some(Background::Color(darken(
+            palette.background.strong.color,
+            0.9,
+        ))),
+        _ => Some(Background::Color(palette.background.weak.color)),
+    };
+    button::Style {
+        background,
+        border: iced::Border {
+            color: palette.background.strong.color,
+            width: 1.0,
+            radius: radius().into(),
+        },
+        text_color: palette.background.base.text,
+        ..Default::default()
+    }
+}
+
+pub fn capturing_chip_style(theme: &Theme, _status: button::Status) -> button::Style {
+    let palette = theme.extended_palette();
+    button::Style {
+        background: Some(Background::Color(
+            palette.primary.weak.color.scale_alpha(0.3),
+        )),
+        border: iced::Border {
+            color: palette.primary.base.color,
+            width: 1.0,
+            radius: radius().into(),
+        },
+        text_color: palette.background.base.text.scale_alpha(0.7),
+        ..Default::default()
+    }
+}
+
 pub fn icon_button_active_style(theme: &Theme, status: button::Status) -> button::Style {
     let palette = theme.extended_palette();
     let active_bg = palette.primary.weak.color;

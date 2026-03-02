@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use iced::Theme;
 use serde::{Deserialize, Serialize};
 
+use crate::keybinds::{Keymap, KeymapFile};
+
 pub const ALL_THEMES: &[Theme] = &[
     Theme::Light,
     Theme::Dark,
@@ -34,6 +36,7 @@ pub struct Config {
     pub lanczos: bool,
     pub show_info: bool,
     pub rounded: bool,
+    pub keymap: Keymap,
 }
 
 impl Default for Config {
@@ -43,6 +46,7 @@ impl Default for Config {
             lanczos: false,
             show_info: false,
             rounded: true,
+            keymap: Keymap::default(),
         }
     }
 }
@@ -53,6 +57,8 @@ struct ConfigFile {
     lanczos: bool,
     show_info: bool,
     rounded: bool,
+    #[serde(default)]
+    keybinds: KeymapFile,
 }
 
 impl From<&Config> for ConfigFile {
@@ -62,6 +68,7 @@ impl From<&Config> for ConfigFile {
             lanczos: c.lanczos,
             show_info: c.show_info,
             rounded: c.rounded,
+            keybinds: KeymapFile::from(&c.keymap),
         }
     }
 }
@@ -73,6 +80,7 @@ impl From<ConfigFile> for Config {
             lanczos: f.lanczos,
             show_info: f.show_info,
             rounded: f.rounded,
+            keymap: Keymap::from(f.keybinds),
         }
     }
 }
