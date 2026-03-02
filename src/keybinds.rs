@@ -386,7 +386,7 @@ pub(crate) struct KeymapFile {
 
 impl From<&Keymap> for KeymapFile {
     fn from(km: &Keymap) -> Self {
-        let bind = |a: Action| km.bindings.get(&a).map(|kb| kb.display());
+        let bind = |a: Action| Some(km.bindings.get(&a).map(|kb| kb.display()).unwrap_or_default());
         Self {
             next: bind(Action::Next),
             previous: bind(Action::Previous),
