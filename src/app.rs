@@ -292,6 +292,7 @@ impl App {
                 self.config.show_info,
                 self.gallery.current().map(|p| p.as_path()),
                 &self.gallery,
+                &self.config.theme,
             ),
             bottom_bar::view(
                 self.mode,

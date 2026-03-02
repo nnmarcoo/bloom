@@ -4,18 +4,18 @@ use std::time::Duration;
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::tooltip::Position;
 use iced::widget::{Space, column, container, row, scrollable, text, tooltip};
-use iced::{Background, Element, Font, Length, border};
+use iced::{Background, Color, Element, Font, Length, Theme, border};
 
 use crate::app::Message;
 use crate::gallery::Gallery;
 use crate::styles::{PAD, bar_style, radius};
 use crate::wgpu::view_program::ViewProgram;
 
-fn row_item<'a>(lbl: &'a str, val: impl ToString) -> Element<'a, Message> {
+fn row_item<'a>(lbl: &'a str, val: impl ToString, muted: Color) -> Element<'a, Message> {
     row![
         text(lbl)
             .size(12)
-            .color([0.5, 0.5, 0.5])
+            .color(muted)
             .font(Font::MONOSPACE)
             .width(Length::Fill),
         text(val.to_string())
@@ -26,7 +26,7 @@ fn row_item<'a>(lbl: &'a str, val: impl ToString) -> Element<'a, Message> {
     .into()
 }
 
-fn color_row<'a>(rgba: [u8; 4]) -> Element<'a, Message> {
+fn color_row<'a>(rgba: [u8; 4], muted: Color) -> Element<'a, Message> {
     let [r, g, b, a] = rgba;
     let color = iced::Color {
         r: r as f32 / 255.0,
@@ -48,10 +48,7 @@ fn color_row<'a>(rgba: [u8; 4]) -> Element<'a, Message> {
             .align_x(Horizontal::Right)
     };
     row![
-        text("RGBA")
-            .size(12)
-            .color([0.5, 0.5, 0.5])
-            .font(Font::MONOSPACE),
+        text("RGBA").size(12).color(muted).font(Font::MONOSPACE),
         Space::new().width(10),
         swatch,
         ch(r),
@@ -123,12 +120,20 @@ pub fn view<'a>(
     path: Option<&'a Path>,
     gallery: &Gallery,
     program: &ViewProgram,
+    theme: &Theme,
 ) -> Element<'a, Message> {
+    let muted = theme
+        .extended_palette()
+        .background
+        .base
+        .text
+        .scale_alpha(0.5);
+
     if program.image_size().is_none() {
         return container(
             text("No image loaded")
                 .size(12)
-                .color([0.5, 0.5, 0.5])
+                .color(muted)
                 .font(Font::MONOSPACE),
         )
         .style(bar_style)
@@ -143,7 +148,7 @@ pub fn view<'a>(
 
     if let Some(p) = path {
         if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-            let filename_row = row_item("Filename", truncate_filename(name, 18));
+            let filename_row = row_item("Filename", truncate_filename(name, 18), muted);
             let entry = if let Some(path_str) = p.to_str() {
                 tooltip(
                     filename_row,
@@ -160,7 +165,7 @@ pub fn view<'a>(
         }
 
         if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-            rows.push(row_item("Format", ext.to_ascii_uppercase()));
+            rows.push(row_item("Format", ext.to_ascii_uppercase(), muted));
         }
     }
 
@@ -169,38 +174,44 @@ pub fn view<'a>(
         rows.push(row_item(
             "In folder",
             format!("{} / {}", gallery.position() + 1, count),
+            muted,
         ));
     }
 
     if let Some((w, h)) = program.image_size() {
-        rows.push(row_item("Dimensions", format!("{} x {}", w, h)));
-        rows.push(row_item("Aspect ratio", aspect_ratio_str(w, h)));
+        rows.push(row_item("Dimensions", format!("{} x {}", w, h), muted));
+        rows.push(row_item("Aspect ratio", aspect_ratio_str(w, h), muted));
     }
 
     rows.push(row_item(
         "Scale",
         format!("{:.0}%", program.scale() * 100.0),
+        muted,
     ));
 
     if let Some(size) = gallery.file_size() {
-        rows.push(row_item("File size", format_size(size)));
+        rows.push(row_item("File size", format_size(size), muted));
     }
 
     if let Some(bytes) = program.decoded_size_bytes() {
-        rows.push(row_item("RAM usage", format_size(bytes as u64)));
+        rows.push(row_item("RAM usage", format_size(bytes as u64), muted));
     }
 
     if let Some((frame, total)) = program.animation_info() {
-        rows.push(row_item("Frame", format!("{} / {}", frame + 1, total)));
+        rows.push(row_item(
+            "Frame",
+            format!("{} / {}", frame + 1, total),
+            muted,
+        ));
     }
 
     if let Some(dur) = program.animation_duration() {
-        rows.push(row_item("Duration", format_duration(dur)));
+        rows.push(row_item("Duration", format_duration(dur), muted));
     }
 
     if let Some((px, py, rgba)) = program.cursor_info() {
-        rows.push(color_row(rgba));
-        rows.push(row_item("Pixel", format!("({}, {})", px, py)));
+        rows.push(color_row(rgba, muted));
+        rows.push(row_item("Pixel", format!("({}, {})", px, py), muted));
     }
 
     let content = column(rows).spacing(6).padding(PAD * 2.0);

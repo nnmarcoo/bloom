@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use iced::{
-    Center, Element, Length,
+    Center, Element, Length, Theme,
     widget::{column, container, row, shader, stack, text},
 };
 use iced_aw::ContextMenu;
@@ -24,6 +24,7 @@ pub fn view<'a>(
     show_info: bool,
     path: Option<&'a Path>,
     gallery: &'a Gallery,
+    theme: &'a Theme,
 ) -> Element<'a, Message> {
     let base = shader(program.clone())
         .height(Length::Fill)
@@ -56,7 +57,7 @@ pub fn view<'a>(
     };
 
     let content: Element<'a, Message> = if show_info {
-        row![info_column::view(path, gallery, &program), viewer,]
+        row![info_column::view(path, gallery, &program, theme), viewer,]
             .height(Length::Fill)
             .into()
     } else {

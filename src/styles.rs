@@ -134,7 +134,7 @@ pub fn scrollbar_style(theme: &Theme, _status: scrollable::Status) -> scrollable
 }
 
 pub fn menu_item_hover_color(theme: &Theme) -> Color {
-    darken(theme.extended_palette().background.base.color, 1.15)
+    theme.extended_palette().background.strong.color
 }
 
 pub fn menu_separator_style(theme: &Theme) -> container::Style {
@@ -147,11 +147,10 @@ pub fn menu_separator_style(theme: &Theme) -> container::Style {
 
 pub fn icon_button_style(theme: &Theme, status: button::Status) -> button::Style {
     let palette = theme.extended_palette();
-    let bar_bg = darken(palette.background.base.color, 0.85);
 
     let background = match status {
-        button::Status::Hovered => Some(Background::Color(darken(bar_bg, 1.15))),
-        button::Status::Pressed => Some(Background::Color(darken(bar_bg, 0.85))),
+        button::Status::Hovered => Some(Background::Color(palette.background.base.color)),
+        button::Status::Pressed => Some(Background::Color(palette.background.weak.color)),
         _ => None,
     };
 
@@ -165,11 +164,10 @@ pub fn icon_button_style(theme: &Theme, status: button::Status) -> button::Style
 
 pub fn plain_icon_button_style(theme: &Theme, status: button::Status) -> button::Style {
     let palette = theme.extended_palette();
-    let bg = palette.background.base.color;
 
     let background = match status {
-        button::Status::Hovered => Some(Background::Color(darken(bg, 0.88))),
-        button::Status::Pressed => Some(Background::Color(darken(bg, 0.78))),
+        button::Status::Hovered => Some(Background::Color(palette.background.weak.color)),
+        button::Status::Pressed => Some(Background::Color(palette.background.strong.color)),
         _ => None,
     };
 
@@ -221,12 +219,11 @@ pub fn capturing_chip_style(theme: &Theme, _status: button::Status) -> button::S
 
 pub fn icon_button_active_style(theme: &Theme, status: button::Status) -> button::Style {
     let palette = theme.extended_palette();
-    let active_bg = palette.primary.weak.color;
 
     let background = match status {
-        button::Status::Hovered => Some(Background::Color(darken(active_bg, 1.1))),
-        button::Status::Pressed => Some(Background::Color(darken(active_bg, 0.85))),
-        _ => Some(Background::Color(active_bg)),
+        button::Status::Hovered => Some(Background::Color(palette.primary.base.color)),
+        button::Status::Pressed => Some(Background::Color(palette.primary.strong.color)),
+        _ => Some(Background::Color(palette.primary.weak.color)),
     };
 
     button::Style {
