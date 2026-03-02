@@ -30,22 +30,11 @@ pub fn radius() -> f32 {
     )
 }
 
-pub fn darken(color: Color, factor: f32) -> Color {
-    Color {
-        r: (color.r * factor).clamp(0.0, 1.0),
-        g: (color.g * factor).clamp(0.0, 1.0),
-        b: (color.b * factor).clamp(0.0, 1.0),
-        a: color.a,
-    }
-}
-
 pub fn bar_style(theme: &Theme) -> container::Style {
     let palette = theme.extended_palette();
-    let bar_bg = darken(palette.background.base.color, 0.85);
-
     container::Style {
         text_color: Some(palette.background.base.text),
-        background: Some(Background::Color(bar_bg)),
+        background: Some(Background::Color(palette.background.strong.color)),
         ..Default::default()
     }
 }
@@ -182,11 +171,9 @@ pub fn plain_icon_button_style(theme: &Theme, status: button::Status) -> button:
 pub fn key_chip_style(theme: &Theme, status: button::Status) -> button::Style {
     let palette = theme.extended_palette();
     let background = match status {
-        button::Status::Hovered => Some(Background::Color(palette.background.strong.color)),
-        button::Status::Pressed => Some(Background::Color(darken(
-            palette.background.strong.color,
-            0.9,
-        ))),
+        button::Status::Hovered | button::Status::Pressed => {
+            Some(Background::Color(palette.background.strong.color))
+        }
         _ => Some(Background::Color(palette.background.weak.color)),
     };
     button::Style {
@@ -221,9 +208,10 @@ pub fn icon_button_active_style(theme: &Theme, status: button::Status) -> button
     let palette = theme.extended_palette();
 
     let background = match status {
-        button::Status::Hovered => Some(Background::Color(palette.primary.base.color)),
-        button::Status::Pressed => Some(Background::Color(palette.primary.strong.color)),
-        _ => Some(Background::Color(palette.primary.weak.color)),
+        button::Status::Hovered | button::Status::Pressed => {
+            Some(Background::Color(palette.primary.strong.color))
+        }
+        _ => Some(Background::Color(palette.primary.base.color)),
     };
 
     button::Style {
