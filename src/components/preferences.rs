@@ -213,10 +213,8 @@ pub fn view<'a>(
         .spacing(PAD),
     )
     .width(Length::Fill)
-    .height(Length::Fill)
     .align_x(Horizontal::Right)
-    .align_y(Vertical::Bottom)
-    .padding(PAD * 3.0);
+    .padding(PAD * 2.0);
 
     let reset_btn = container(
         button(text("Reset to defaults").size(12))
@@ -279,7 +277,7 @@ pub fn view<'a>(
     .padding(PAD * 3.0)
     .width(Length::Fill);
 
-    iced::widget::stack![
+    column![
         scrollable(content)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -287,6 +285,7 @@ pub fn view<'a>(
                 Scrollbar::new().width(4).margin(4).scroller_width(4),
             ))
             .style(scrollbar_style),
+        rule::horizontal(1),
         action_buttons,
     ]
     .width(Length::Fill)
