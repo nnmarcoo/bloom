@@ -27,6 +27,9 @@ pub enum PreferenceMessage {
     CancelCapture,
     SetKeybinding(Action, KeyBinding),
     ClearKeybinding(Action),
+    ResetAppearance,
+    ResetRendering,
+    ResetKeybindings,
     ResetAll,
     Save,
     Cancel,
@@ -69,6 +72,21 @@ pub fn update(
             pending.keymap.remove(&action);
             true
         }
+        PreferenceMessage::ResetAppearance => {
+            let d = Config::default();
+            pending.theme = d.theme;
+            pending.rounded = d.rounded;
+            true
+        }
+        PreferenceMessage::ResetRendering => {
+            pending.lanczos = Config::default().lanczos;
+            true
+        }
+        PreferenceMessage::ResetKeybindings => {
+            pending.keymap = Keymap::default();
+            prefs_state.capturing = None;
+            true
+        }
         PreferenceMessage::ResetAll => {
             *pending = Config::default();
             prefs_state.capturing = None;
@@ -88,11 +106,31 @@ pub fn update(
     }
 }
 
-fn section<'a>(label: &'a str, theme: &Theme) -> Element<'a, Message> {
+fn section<'a>(
+    label: &'a str,
+    tooltip: &'a str,
+    on_reset: PreferenceMessage,
+    theme: &Theme,
+) -> Element<'a, Message> {
     let accent = theme.extended_palette().primary.base.color;
-    column![text(label).size(11).color(accent), rule::horizontal(1)]
-        .spacing(PAD)
-        .into()
+    column![
+        row![
+            text(label).size(11).color(accent),
+            iced::widget::Space::new().width(Length::Fill),
+            with_tooltip(
+                button(text("Reset").size(11))
+                    .style(plain_icon_button_style)
+                    .on_press(Message::Preference(on_reset))
+                    .padding([2.0, 6.0]),
+                tooltip,
+                Position::Top,
+            ),
+        ]
+        .align_y(Vertical::Center),
+        rule::horizontal(1),
+    ]
+    .spacing(PAD)
+    .into()
 }
 
 fn setting<'a>(
@@ -189,10 +227,14 @@ pub fn view<'a>(
 ) -> Element<'a, Message> {
     let action_buttons = container(
         row![
-            button(text("Reset to defaults").size(12))
-                .style(plain_icon_button_style)
-                .on_press(Message::Preference(PreferenceMessage::ResetAll))
-                .padding([4.0, 8.0]),
+            with_tooltip(
+                button(text("Reset").size(12))
+                    .style(plain_icon_button_style)
+                    .on_press(Message::Preference(PreferenceMessage::ResetAll))
+                    .padding([4.0, 8.0]),
+                "Reset all settings to defaults",
+                Position::Top,
+            ),
             iced::widget::Space::new().width(Length::Fill),
             with_tooltip(
                 svg_button_plain(
@@ -227,7 +269,12 @@ pub fn view<'a>(
             .width(Length::Fill)
             .align_x(Horizontal::Center),
         iced::widget::Space::new().height(PAD * 2.0),
-        section("Appearance", theme),
+        section(
+            "Appearance",
+            "Reset appearance to defaults",
+            PreferenceMessage::ResetAppearance,
+            theme
+        ),
         iced::widget::Space::new().height(PAD),
         setting(
             "Theme",
@@ -248,7 +295,12 @@ pub fn view<'a>(
             theme,
         ),
         iced::widget::Space::new().height(PAD * 2.0),
-        section("Rendering", theme),
+        section(
+            "Rendering",
+            "Reset rendering to defaults",
+            PreferenceMessage::ResetRendering,
+            theme
+        ),
         iced::widget::Space::new().height(PAD),
         setting(
             "Lanczos filtering",
@@ -259,7 +311,12 @@ pub fn view<'a>(
             theme,
         ),
         iced::widget::Space::new().height(PAD * 2.0),
-        section("Keybindings", theme),
+        section(
+            "Keybindings",
+            "Reset keybindings to defaults",
+            PreferenceMessage::ResetKeybindings,
+            theme
+        ),
         iced::widget::Space::new().height(PAD),
     ]
     .extend(keybind_rows)
