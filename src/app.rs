@@ -172,6 +172,7 @@ impl App {
             Message::Preference(msg) => {
                 let saving = matches!(msg, PreferenceMessage::Save);
                 let decorations_before = saving.then_some(self.config.decorations);
+                let always_on_top_before = saving.then_some(self.config.always_on_top);
                 self.show_preferences = preferences::update(
                     msg,
                     &mut self.config,
@@ -181,8 +182,13 @@ impl App {
                 );
                 if saving {
                     self.config.save();
-                    if decorations_before != Some(self.config.decorations) {
-                        return tasks::toggle_decorations();
+                    let dec = decorations_before != Some(self.config.decorations);
+                    let aot = always_on_top_before != Some(self.config.always_on_top);
+                    if dec || aot {
+                        return Task::batch([
+                            if dec { tasks::toggle_decorations() } else { Task::none() },
+                            if aot { tasks::set_always_on_top(self.config.always_on_top) } else { Task::none() },
+                        ]);
                     }
                 }
             }

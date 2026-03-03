@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use iced::window::{self, Mode};
+use iced::window::{self, Level, Mode};
 
 use crate::app::Message;
 use crate::{
@@ -62,6 +62,14 @@ pub fn set_window_mode(mode: Mode) -> iced::Task<Message> {
 pub fn toggle_decorations() -> iced::Task<Message> {
     window::oldest().then(|id| match id {
         Some(id) => window::toggle_decorations(id),
+        None => iced::Task::none(),
+    })
+}
+
+pub fn set_always_on_top(v: bool) -> iced::Task<Message> {
+    let level = if v { Level::AlwaysOnTop } else { Level::Normal };
+    window::oldest().then(move |id| match id {
+        Some(id) => window::set_level(id, level),
         None => iced::Task::none(),
     })
 }

@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::tooltip::Position;
@@ -13,6 +15,11 @@ use crate::styles::{
 use crate::ui::{svg_button_plain, with_tooltip};
 use crate::wgpu::view_program::ViewProgram;
 
+fn on_wayland() -> bool {
+    static ON_WAYLAND: OnceLock<bool> = OnceLock::new();
+    *ON_WAYLAND.get_or_init(|| std::env::var_os("WAYLAND_DISPLAY").is_some())
+}
+
 #[derive(Default)]
 pub struct PrefsState {
     pub capturing: Option<Action>,
@@ -24,6 +31,7 @@ pub enum PreferenceMessage {
     SetLanczos(bool),
     SetRounded(bool),
     SetDecorations(bool),
+    SetAlwaysOnTop(bool),
     StartCapture(Action),
     CancelCapture,
     SetKeybinding(Action, KeyBinding),
@@ -60,6 +68,10 @@ pub fn update(
             pending.decorations = v;
             true
         }
+        PreferenceMessage::SetAlwaysOnTop(v) => {
+            pending.always_on_top = v;
+            true
+        }
         PreferenceMessage::StartCapture(action) => {
             prefs_state.capturing = Some(action);
             true
@@ -82,6 +94,7 @@ pub fn update(
             pending.theme = d.theme;
             pending.rounded = d.rounded;
             pending.decorations = d.decorations;
+            pending.always_on_top = d.always_on_top;
             true
         }
         PreferenceMessage::ResetRendering => {
@@ -307,6 +320,16 @@ pub fn view<'a>(
             toggler(pending.decorations)
                 .on_toggle(|v| Message::Preference(PreferenceMessage::SetDecorations(v)))
                 .into(),
+            theme,
+        ),
+        iced::widget::Space::new().height(PAD),
+        setting(
+            "Always on top",
+            if on_wayland() { "Not supported on Wayland" } else { "Always show Bloom above other windows" },
+            {
+                let t = toggler(pending.always_on_top);
+                if on_wayland() { t } else { t.on_toggle(|v| Message::Preference(PreferenceMessage::SetAlwaysOnTop(v))) }
+            }.into(),
             theme,
         ),
         iced::widget::Space::new().height(PAD * 2.0),

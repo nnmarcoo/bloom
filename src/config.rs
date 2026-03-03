@@ -37,6 +37,7 @@ pub struct Config {
     pub show_info: bool,
     pub rounded: bool,
     pub decorations: bool,
+    pub always_on_top: bool,
     pub keymap: Keymap,
 }
 
@@ -48,6 +49,7 @@ impl Default for Config {
             show_info: false,
             rounded: true,
             decorations: true,
+            always_on_top: false,
             keymap: Keymap::default(),
         }
     }
@@ -61,6 +63,8 @@ struct ConfigFile {
     rounded: bool,
     #[serde(default = "default_true")]
     decorations: bool,
+    #[serde(default)]
+    always_on_top: bool,
     #[serde(default)]
     keybinds: KeymapFile,
 }
@@ -77,6 +81,7 @@ impl From<&Config> for ConfigFile {
             show_info: c.show_info,
             rounded: c.rounded,
             decorations: c.decorations,
+            always_on_top: c.always_on_top,
             keybinds: KeymapFile::from(&c.keymap),
         }
     }
@@ -90,6 +95,7 @@ impl From<ConfigFile> for Config {
             show_info: f.show_info,
             rounded: f.rounded,
             decorations: f.decorations,
+            always_on_top: f.always_on_top,
             keymap: Keymap::from(f.keybinds),
         }
     }

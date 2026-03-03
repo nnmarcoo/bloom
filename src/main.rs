@@ -27,13 +27,19 @@ fn app_icon() -> Option<window::Icon> {
 
 fn main() -> iced::Result {
     let media = env::args().nth(1).map(PathBuf::from);
-    let decorations = config::Config::load().decorations;
+    let config = config::Config::load();
+    let level = if config.always_on_top {
+        window::Level::AlwaysOnTop
+    } else {
+        window::Level::Normal
+    };
 
     iced::application(move || App::new(media.clone()), App::update, App::view)
         .title(App::title)
         .window(window::Settings {
             min_size: Some(Size::new(220.0, 0.0)),
-            decorations,
+            decorations: config.decorations,
+            level,
             icon: app_icon(),
             ..Default::default()
         })
