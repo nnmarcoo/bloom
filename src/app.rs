@@ -34,6 +34,7 @@ pub struct App {
     config: Config,
     pending_config: Config,
     prefs_state: preferences::PrefsState,
+    context_menu_pos: Option<Vec2>,
 }
 
 impl Default for App {
@@ -53,6 +54,7 @@ impl Default for App {
             pending_config: config.clone(),
             config,
             prefs_state: preferences::PrefsState::default(),
+            context_menu_pos: None,
         }
     }
 }
@@ -80,6 +82,7 @@ pub enum Message {
     ClipboardLoaded(MediaData),
     CursorMoved(Vec2),
     CursorLeft,
+    ContextMenuOpened(Vec2),
     CopyColor,
     CopyPath,
     Rotate,
@@ -185,9 +188,12 @@ impl App {
                 }
             }
             Message::CursorLeft => self.program.set_cursor_pos(None),
+            Message::ContextMenuOpened(pos) => self.context_menu_pos = Some(pos),
             Message::CopyColor => {
-                if let Some((_, _, [r, g, b, _])) = self.program.cursor_info() {
-                    clipboard::write_text(&format!("#{r:02X}{g:02X}{b:02X}"));
+                if let Some(pos) = self.context_menu_pos {
+                    if let Some((_, _, [r, g, b, _])) = self.program.color_at(pos) {
+                        clipboard::write_text(&format!("#{r:02X}{g:02X}{b:02X}"));
+                    }
                 }
             }
             Message::CopyPath => {

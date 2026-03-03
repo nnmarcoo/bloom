@@ -223,7 +223,11 @@ impl ViewProgram {
     }
 
     pub fn cursor_info(&self) -> Option<(u32, u32, [u8; 4])> {
-        let (px, py) = self.screen_to_image_pixel(self.cursor_pos?)?;
+        self.color_at(self.cursor_pos?)
+    }
+
+    pub fn color_at(&self, pos: Vec2) -> Option<(u32, u32, [u8; 4])> {
+        let (px, py) = self.screen_to_image_pixel(pos)?;
         let image = self.image.as_ref()?;
         let idx = (py as usize * image.width as usize + px as usize) * 4;
         let p = image.pixels.get(idx..idx + 4)?;
@@ -287,6 +291,13 @@ impl Program<Message> for ViewProgram {
 
         match state {
             ViewProgramState::Idle => {
+                if let Event::Mouse(mouse::Event::ButtonPressed(Button::Right)) = event {
+                    if let Some(pos) = cursor.position_in(bounds) {
+                        return Some(Action::publish(Message::ContextMenuOpened(Vec2::new(
+                            pos.x, pos.y,
+                        ))));
+                    }
+                }
                 if let Event::Mouse(mouse::Event::ButtonPressed(Button::Left)) = event {
                     if let Some(pos) = cursor.position_over(bounds) {
                         *state = ViewProgramState::Panning(pos);
