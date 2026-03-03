@@ -171,6 +171,7 @@ impl App {
             }
             Message::Preference(msg) => {
                 let saving = matches!(msg, PreferenceMessage::Save);
+                let decorations_before = saving.then_some(self.config.decorations);
                 self.show_preferences = preferences::update(
                     msg,
                     &mut self.config,
@@ -180,6 +181,9 @@ impl App {
                 );
                 if saving {
                     self.config.save();
+                    if decorations_before != Some(self.config.decorations) {
+                        return tasks::toggle_decorations();
+                    }
                 }
             }
             Message::CursorMoved(pos) => {

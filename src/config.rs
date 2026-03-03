@@ -36,6 +36,7 @@ pub struct Config {
     pub lanczos: bool,
     pub show_info: bool,
     pub rounded: bool,
+    pub decorations: bool,
     pub keymap: Keymap,
 }
 
@@ -46,6 +47,7 @@ impl Default for Config {
             lanczos: false,
             show_info: false,
             rounded: true,
+            decorations: true,
             keymap: Keymap::default(),
         }
     }
@@ -57,8 +59,14 @@ struct ConfigFile {
     lanczos: bool,
     show_info: bool,
     rounded: bool,
+    #[serde(default = "default_true")]
+    decorations: bool,
     #[serde(default)]
     keybinds: KeymapFile,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl From<&Config> for ConfigFile {
@@ -68,6 +76,7 @@ impl From<&Config> for ConfigFile {
             lanczos: c.lanczos,
             show_info: c.show_info,
             rounded: c.rounded,
+            decorations: c.decorations,
             keybinds: KeymapFile::from(&c.keymap),
         }
     }
@@ -80,6 +89,7 @@ impl From<ConfigFile> for Config {
             lanczos: f.lanczos,
             show_info: f.show_info,
             rounded: f.rounded,
+            decorations: f.decorations,
             keymap: Keymap::from(f.keybinds),
         }
     }

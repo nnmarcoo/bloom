@@ -23,6 +23,7 @@ pub enum PreferenceMessage {
     SetTheme(Theme),
     SetLanczos(bool),
     SetRounded(bool),
+    SetDecorations(bool),
     StartCapture(Action),
     CancelCapture,
     SetKeybinding(Action, KeyBinding),
@@ -55,6 +56,10 @@ pub fn update(
             pending.rounded = v;
             true
         }
+        PreferenceMessage::SetDecorations(v) => {
+            pending.decorations = v;
+            true
+        }
         PreferenceMessage::StartCapture(action) => {
             prefs_state.capturing = Some(action);
             true
@@ -76,6 +81,7 @@ pub fn update(
             let d = Config::default();
             pending.theme = d.theme;
             pending.rounded = d.rounded;
+            pending.decorations = d.decorations;
             true
         }
         PreferenceMessage::ResetRendering => {
@@ -291,6 +297,15 @@ pub fn view<'a>(
             "Use rounded corners on UI elements",
             toggler(pending.rounded)
                 .on_toggle(|v| Message::Preference(PreferenceMessage::SetRounded(v)))
+                .into(),
+            theme,
+        ),
+        iced::widget::Space::new().height(PAD),
+        setting(
+            "Window decorations",
+            "Show the native title bar and window border",
+            toggler(pending.decorations)
+                .on_toggle(|v| Message::Preference(PreferenceMessage::SetDecorations(v)))
                 .into(),
             theme,
         ),

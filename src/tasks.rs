@@ -59,6 +59,13 @@ pub fn set_window_mode(mode: Mode) -> iced::Task<Message> {
     })
 }
 
+pub fn toggle_decorations() -> iced::Task<Message> {
+    window::oldest().then(|id| match id {
+        Some(id) => window::toggle_decorations(id),
+        None => iced::Task::none(),
+    })
+}
+
 pub fn close_window() -> iced::Task<Message> {
     window::oldest().then(|id| match id {
         Some(id) => window::close(id),
