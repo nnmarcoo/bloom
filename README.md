@@ -30,30 +30,30 @@
     <tr><th>Format</th><th>Extension</th><th>Notes</th></tr>
   </thead>
   <tbody>
-    <tr><td>JPEG</td><td><code>.jpg</code> <code>.jpeg</code></td><td></td></tr>
-    <tr><td>PNG</td><td><code>.png</code></td><td></td></tr>
     <tr><td>Animated PNG</td><td><code>.apng</code></td><td>Animated</td></tr>
-    <tr><td>GIF</td><td><code>.gif</code></td><td>Animated</td></tr>
-    <tr><td>WebP</td><td><code>.webp</code></td><td>Static and animated</td></tr>
-    <tr><td>TIFF</td><td><code>.tif</code> <code>.tiff</code></td><td>No 64-bit float</td></tr>
-    <tr><td>BMP</td><td><code>.bmp</code></td><td></td></tr>
-    <tr><td>ICO</td><td><code>.ico</code></td><td>Largest available size</td></tr>
-    <tr><td>QOI</td><td><code>.qoi</code></td><td></td></tr>
-    <tr><td>Portable bitmap</td><td><code>.pbm</code> <code>.pgm</code> <code>.ppm</code></td><td></td></tr>
-    <tr><td>TGA</td><td><code>.tga</code></td><td></td></tr>
-    <tr><td>DDS</td><td><code>.dds</code></td><td>BC1–BC7 and uncompressed</td></tr>
-    <tr><td>Farbfeld</td><td><code>.ff</code></td><td></td></tr>
-    <tr><td>AVIF</td><td><code>.avif</code></td><td></td></tr>
-    <tr><td>SVG</td><td><code>.svg</code> <code>.svgz</code></td><td>Rasterized at native size</td></tr>
-    <tr><td>HDR (Radiance)</td><td><code>.hdr</code></td><td>Tonemapped (Reinhard)</td></tr>
-    <tr><td>OpenEXR</td><td><code>.exr</code></td><td>Tonemapped (Reinhard)</td></tr>
-    <tr><td>JPEG XL</td><td><code>.jxl</code></td><td></td></tr>
-    <tr><td>JPEG 2000</td><td><code>.jp2</code> <code>.j2k</code> <code>.j2c</code> <code>.jpx</code></td><td></td></tr>
-    <tr><td>Photoshop</td><td><code>.psd</code></td><td>Merged composite, no layers</td></tr>
-    <tr><td>Krita</td><td><code>.kra</code></td><td>Merged composite, no layers</td></tr>
     <tr><td>Apple Icon</td><td><code>.icns</code></td><td>Largest available size</td></tr>
+    <tr><td>AVIF</td><td><code>.avif</code></td><td></td></tr>
+    <tr><td>BMP</td><td><code>.bmp</code></td><td></td></tr>
+    <tr><td>DDS</td><td><code>.dds</code></td><td>BC1–BC7 and uncompressed</td></tr>
     <tr><td>DICOM</td><td><code>.dcm</code> <code>.dicom</code></td><td>Medical imaging, first frame</td></tr>
+    <tr><td>Farbfeld</td><td><code>.ff</code></td><td></td></tr>
+    <tr><td>GIF</td><td><code>.gif</code></td><td>Animated</td></tr>
+    <tr><td>HDR (Radiance)</td><td><code>.hdr</code></td><td>Tonemapped (Reinhard)</td></tr>
+    <tr><td>ICO</td><td><code>.ico</code></td><td>Largest available size</td></tr>
+    <tr><td>JPEG</td><td><code>.jpg</code> <code>.jpeg</code></td><td></td></tr>
+    <tr><td>JPEG 2000</td><td><code>.jp2</code> <code>.j2k</code> <code>.j2c</code> <code>.jpx</code></td><td></td></tr>
+    <tr><td>JPEG XL</td><td><code>.jxl</code></td><td></td></tr>
+    <tr><td>Krita</td><td><code>.kra</code></td><td>Merged composite, no layers</td></tr>
     <tr><td>KTX2</td><td><code>.ktx2</code></td><td>Basis Universal and uncompressed</td></tr>
+    <tr><td>OpenEXR</td><td><code>.exr</code></td><td>Tonemapped (Reinhard)</td></tr>
+    <tr><td>Photoshop</td><td><code>.psd</code></td><td>Merged composite, no layers</td></tr>
+    <tr><td>PNG</td><td><code>.png</code></td><td></td></tr>
+    <tr><td>Portable bitmap</td><td><code>.pbm</code> <code>.pgm</code> <code>.ppm</code></td><td></td></tr>
+    <tr><td>QOI</td><td><code>.qoi</code></td><td></td></tr>
+    <tr><td>SVG</td><td><code>.svg</code> <code>.svgz</code></td><td>Rasterized at native size</td></tr>
+    <tr><td>TGA</td><td><code>.tga</code></td><td></td></tr>
+    <tr><td>TIFF</td><td><code>.tif</code> <code>.tiff</code></td><td>No 64-bit float</td></tr>
+    <tr><td>WebP</td><td><code>.webp</code></td><td>Static and animated</td></tr>
   </tbody>
 </table>
 
