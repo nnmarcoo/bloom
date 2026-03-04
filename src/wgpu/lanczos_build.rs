@@ -1,8 +1,7 @@
 use glam::vec2;
 use iced::wgpu::{
-    BindGroup, Color, CommandEncoderDescriptor, Device, LoadOp, Operations, Queue,
-    RenderPassColorAttachment, RenderPassDescriptor, Sampler, StoreOp, Texture, TextureFormat,
-    TextureUsages, TextureView,
+    Color, CommandEncoderDescriptor, Device, LoadOp, Operations, Queue, RenderPassColorAttachment,
+    RenderPassDescriptor, Sampler, StoreOp, TextureFormat, TextureUsages, TextureView,
 };
 
 use crate::wgpu::{
@@ -34,27 +33,21 @@ pub fn compute_lanczos_mip_count(w: u32, h: u32) -> u32 {
     count
 }
 
-// Per-tile result kept until all tiles are done, then flushed into `TiledSource`.
-struct TileResult {
-    texture: Texture,
-    bind_group: BindGroup,
-}
-
 pub struct LanczosBuildState {
-    results: Vec<Option<TileResult>>,
+    tile_count: usize,
     next_tile: usize,
 }
 
 impl LanczosBuildState {
     pub fn new(tile_count: usize) -> Self {
         Self {
-            results: (0..tile_count).map(|_| None).collect(),
+            tile_count,
             next_tile: 0,
         }
     }
 
     pub fn is_done(&self) -> bool {
-        self.next_tile >= self.results.len()
+        self.next_tile >= self.tile_count
     }
 
     // Process one tile per call. Returns `true` when all tiles are done,
@@ -250,23 +243,12 @@ impl LanczosBuildState {
             Some(&format!("{label}:lanczos-bg")),
         );
 
-        self.results[tile_idx] = Some(TileResult {
-            texture: mip_texture,
-            bind_group,
-        });
+        let tile = &mut source.tiles[tile_idx];
+        tile._lanczos_texture = Some(mip_texture);
+        tile.lanczos_bind_group = Some(bind_group);
         self.next_tile += 1;
 
-        // If fully done, flush results into tiles.
-        if self.is_done() {
-            for (i, tile) in source.tiles.iter_mut().enumerate() {
-                let result = self.results[i].take().unwrap();
-                tile._lanczos_texture = Some(result.texture);
-                tile.lanczos_bind_group = Some(result.bind_group);
-            }
-            return true;
-        }
-
-        false
+        self.is_done()
     }
 }
 
