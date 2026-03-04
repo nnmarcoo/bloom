@@ -21,7 +21,7 @@ fn on_wayland() -> bool {
 }
 
 #[derive(Default)]
-pub struct PrefsState {
+pub struct PreferenceState {
     pub capturing: Option<Action>,
 }
 
@@ -44,50 +44,55 @@ pub enum PreferenceMessage {
     Cancel,
 }
 
+pub enum PreferenceOutcome {
+    Open,
+    Save,
+    Cancel,
+}
+
 pub fn update(
     msg: PreferenceMessage,
-    config: &mut Config,
     pending: &mut Config,
     program: &mut ViewProgram,
-    prefs_state: &mut PrefsState,
-) -> bool {
+    preference_state: &mut PreferenceState,
+) -> PreferenceOutcome {
     match msg {
         PreferenceMessage::SetTheme(t) => {
             pending.theme = t;
-            true
+            PreferenceOutcome::Open
         }
         PreferenceMessage::SetLanczos(v) => {
             pending.lanczos = v;
-            true
+            PreferenceOutcome::Open
         }
         PreferenceMessage::SetRounded(v) => {
             pending.rounded = v;
-            true
+            PreferenceOutcome::Open
         }
         PreferenceMessage::SetDecorations(v) => {
             pending.decorations = v;
-            true
+            PreferenceOutcome::Open
         }
         PreferenceMessage::SetAlwaysOnTop(v) => {
             pending.always_on_top = v;
-            true
+            PreferenceOutcome::Open
         }
         PreferenceMessage::StartCapture(action) => {
-            prefs_state.capturing = Some(action);
-            true
+            preference_state.capturing = Some(action);
+            PreferenceOutcome::Open
         }
         PreferenceMessage::CancelCapture => {
-            prefs_state.capturing = None;
-            true
+            preference_state.capturing = None;
+            PreferenceOutcome::Open
         }
         PreferenceMessage::SetKeybinding(action, kb) => {
             pending.keymap.set(action, kb);
-            prefs_state.capturing = None;
-            true
+            preference_state.capturing = None;
+            PreferenceOutcome::Open
         }
         PreferenceMessage::ClearKeybinding(action) => {
             pending.keymap.remove(&action);
-            true
+            PreferenceOutcome::Open
         }
         PreferenceMessage::ResetAppearance => {
             let d = Config::default();
@@ -95,32 +100,30 @@ pub fn update(
             pending.rounded = d.rounded;
             pending.decorations = d.decorations;
             pending.always_on_top = d.always_on_top;
-            true
+            PreferenceOutcome::Open
         }
         PreferenceMessage::ResetRendering => {
             pending.lanczos = Config::default().lanczos;
-            true
+            PreferenceOutcome::Open
         }
         PreferenceMessage::ResetKeybindings => {
             pending.keymap = Keymap::default();
-            prefs_state.capturing = None;
-            true
+            preference_state.capturing = None;
+            PreferenceOutcome::Open
         }
         PreferenceMessage::ResetAll => {
             *pending = Config::default();
-            prefs_state.capturing = None;
-            true
+            preference_state.capturing = None;
+            PreferenceOutcome::Open
         }
         PreferenceMessage::Save => {
-            *config = pending.clone();
-            program.lanczos_enabled = config.lanczos;
-            set_radius(config.rounded);
-            false
+            program.lanczos_enabled = pending.lanczos;
+            set_radius(pending.rounded);
+            PreferenceOutcome::Save
         }
         PreferenceMessage::Cancel => {
-            *pending = config.clone();
-            prefs_state.capturing = None;
-            false
+            preference_state.capturing = None;
+            PreferenceOutcome::Cancel
         }
     }
 }
@@ -242,7 +245,7 @@ fn keybind_row<'a>(
 pub fn view<'a>(
     pending: &'a Config,
     theme: &Theme,
-    prefs_state: &'a PrefsState,
+    preference_state: &'a PreferenceState,
 ) -> Element<'a, Message> {
     let action_buttons = container(
         row![
@@ -280,7 +283,7 @@ pub fn view<'a>(
 
     let keybind_rows: Vec<Element<'a, Message>> = Action::all_visible()
         .iter()
-        .map(|&action| keybind_row(action, &pending.keymap, prefs_state.capturing, theme))
+        .map(|&action| keybind_row(action, &pending.keymap, preference_state.capturing, theme))
         .collect();
 
     let content = column![

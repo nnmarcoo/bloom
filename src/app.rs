@@ -15,7 +15,11 @@ use iced::{
 
 use crate::{
     clipboard,
-    components::{bottom_bar, preferences, preferences::PreferenceMessage, viewer},
+    components::{
+        bottom_bar, preferences,
+        preferences::{PreferenceMessage, PreferenceOutcome},
+        viewer,
+    },
     config::Config,
     gallery::Gallery,
     keybinds::{Action, KeyBinding},
@@ -30,10 +34,9 @@ pub struct App {
     loading: Option<String>,
     load_generation: u64,
     focus_scale: bool,
-    show_preferences: bool,
     config: Config,
-    pending_config: Config,
-    prefs_state: preferences::PrefsState,
+    editing_config: Option<Config>,
+    preference_state: preferences::PreferenceState,
     context_menu_pos: Option<Vec2>,
 }
 
@@ -50,10 +53,9 @@ impl Default for App {
             loading: None,
             load_generation: 0,
             focus_scale: false,
-            show_preferences: false,
-            pending_config: config.clone(),
             config,
-            prefs_state: preferences::PrefsState::default(),
+            editing_config: None,
+            preference_state: preferences::PreferenceState::default(),
             context_menu_pos: None,
         }
     }
@@ -165,43 +167,49 @@ impl App {
                 self.config.save();
             }
             Message::TogglePreferences => {
-                self.pending_config = self.config.clone();
-                self.prefs_state = preferences::PrefsState::default();
-                self.show_preferences = true;
+                self.editing_config = Some(self.config.clone());
+                self.preference_state = preferences::PreferenceState::default();
             }
             Message::Preference(msg) => {
-                let saving = matches!(msg, PreferenceMessage::Save);
-                let decorations_before = saving.then_some(self.config.decorations);
-                let always_on_top_before = saving.then_some(self.config.always_on_top);
-                self.show_preferences = preferences::update(
+                let Some(pending) = self.editing_config.as_mut() else {
+                    return Task::none();
+                };
+                let outcome = preferences::update(
                     msg,
-                    &mut self.config,
-                    &mut self.pending_config,
+                    pending,
                     &mut self.program,
-                    &mut self.prefs_state,
+                    &mut self.preference_state,
                 );
-                if saving {
-                    self.config.save();
-                    let dec = decorations_before != Some(self.config.decorations);
-                    let aot = always_on_top_before != Some(self.config.always_on_top);
-                    if dec || aot {
-                        return Task::batch([
-                            if dec {
-                                tasks::toggle_decorations()
-                            } else {
-                                Task::none()
-                            },
-                            if aot {
-                                tasks::set_always_on_top(self.config.always_on_top)
-                            } else {
-                                Task::none()
-                            },
-                        ]);
+                match outcome {
+                    PreferenceOutcome::Open => {}
+                    PreferenceOutcome::Save => {
+                        let pending = self.editing_config.take().unwrap();
+                        let dec = self.config.decorations != pending.decorations;
+                        let aot = self.config.always_on_top != pending.always_on_top;
+                        self.config = pending;
+                        self.config.save();
+                        if dec || aot {
+                            return Task::batch([
+                                if dec {
+                                    tasks::toggle_decorations()
+                                } else {
+                                    Task::none()
+                                },
+                                if aot {
+                                    tasks::set_always_on_top(self.config.always_on_top)
+                                } else {
+                                    Task::none()
+                                },
+                            ]);
+                        }
+                    }
+                    PreferenceOutcome::Cancel => {
+                        self.editing_config = None;
                     }
                 }
             }
             Message::CursorMoved(pos) => {
-                if !self.show_preferences {
+                if self.editing_config.is_none() {
                     self.program.set_cursor_pos(Some(pos));
                 }
             }
@@ -253,8 +261,8 @@ impl App {
         physical_key: Physical,
         modifiers: keyboard::Modifiers,
     ) -> Task<Message> {
-        if self.show_preferences {
-            if let Some(action) = self.prefs_state.capturing {
+        if self.editing_config.is_some() {
+            if let Some(action) = self.preference_state.capturing {
                 if let Physical::Code(code) = physical_key {
                     let is_modifier = matches!(
                         code,
@@ -306,8 +314,8 @@ impl App {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        if self.show_preferences {
-            return preferences::view(&self.pending_config, &self.config.theme, &self.prefs_state);
+        if let Some(pending) = &self.editing_config {
+            return preferences::view(pending, &self.config.theme, &self.preference_state);
         }
         column![
             viewer::view(
