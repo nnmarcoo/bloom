@@ -186,8 +186,16 @@ impl App {
                     let aot = always_on_top_before != Some(self.config.always_on_top);
                     if dec || aot {
                         return Task::batch([
-                            if dec { tasks::toggle_decorations() } else { Task::none() },
-                            if aot { tasks::set_always_on_top(self.config.always_on_top) } else { Task::none() },
+                            if dec {
+                                tasks::toggle_decorations()
+                            } else {
+                                Task::none()
+                            },
+                            if aot {
+                                tasks::set_always_on_top(self.config.always_on_top)
+                            } else {
+                                Task::none()
+                            },
                         ]);
                     }
                 }
@@ -325,7 +333,7 @@ impl App {
         self.gallery
             .current()
             .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "bloom".into())
+            .unwrap_or_else(|| "Bloom".into())
     }
 
     pub fn theme(&self) -> Theme {

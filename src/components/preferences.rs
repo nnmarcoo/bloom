@@ -325,11 +325,20 @@ pub fn view<'a>(
         iced::widget::Space::new().height(PAD),
         setting(
             "Always on top",
-            if on_wayland() { "Not supported on Wayland" } else { "Always show Bloom above other windows" },
+            if on_wayland() {
+                "Not supported on Wayland"
+            } else {
+                "Always show Bloom above other windows"
+            },
             {
                 let t = toggler(pending.always_on_top);
-                if on_wayland() { t } else { t.on_toggle(|v| Message::Preference(PreferenceMessage::SetAlwaysOnTop(v))) }
-            }.into(),
+                if on_wayland() {
+                    t
+                } else {
+                    t.on_toggle(|v| Message::Preference(PreferenceMessage::SetAlwaysOnTop(v)))
+                }
+            }
+            .into(),
             theme,
         ),
         iced::widget::Space::new().height(PAD * 2.0),
