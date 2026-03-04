@@ -517,4 +517,18 @@ impl ImageData {
             _ => Ok(MediaData::Image(Self::load(path)?)),
         }
     }
+
+    pub fn rgb_histogram(&self) -> ([u32; 256], [u32; 256], [u32; 256]) {
+        let mut r = [0u32; 256];
+        let mut g = [0u32; 256];
+        let mut b = [0u32; 256];
+
+        for px in self.pixels.chunks_exact(4) {
+            r[px[0] as usize] += 1;
+            g[px[1] as usize] += 1;
+            b[px[2] as usize] += 1;
+        }
+
+        (r, g, b)
+    }
 }

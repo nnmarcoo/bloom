@@ -34,6 +34,7 @@ pub struct ViewProgram {
     pub lanczos_enabled: bool,
     cursor_pos: Option<Vec2>,
     rotation: u8, // 0=0°, 1=90°CW, 2=180°, 3=270°CW
+    histogram: Option<([u32; 256], [u32; 256], [u32; 256])>,
 }
 
 impl Default for ViewProgram {
@@ -48,6 +49,7 @@ impl Default for ViewProgram {
             lanczos_enabled: false,
             cursor_pos: None,
             rotation: 0,
+            histogram: None,
         }
     }
 }
@@ -134,10 +136,15 @@ impl ViewProgram {
 
     pub fn set_image(&mut self, data: ImageData) {
         self.image_size = vec2(data.width as f32, data.height as f32);
+        self.histogram = Some(data.rgb_histogram());
         self.image = Some(Arc::new(data));
         self.animation = None;
         self.cursor_pos = None;
         self.rotation = 0;
+    }
+
+    pub fn histogram(&self) -> Option<&([u32; 256], [u32; 256], [u32; 256])> {
+        self.histogram.as_ref()
     }
 
     pub fn set_animation(&mut self, anim: Animation) {
