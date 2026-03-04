@@ -15,17 +15,14 @@ enum Direction {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Scale {
-    index: usize,
-    custom: Option<f32>,
+pub enum Scale {
+    Stepped(usize),
+    Custom(f32),
 }
 
 impl Default for Scale {
     fn default() -> Self {
-        Self {
-            index: DEFAULT_INDEX,
-            custom: None,
-        }
+        Self::Stepped(DEFAULT_INDEX)
     }
 }
 
@@ -33,40 +30,40 @@ impl Scale {
     #[must_use]
     pub fn up(&mut self) -> f32 {
         let prev = self.value();
-        if let Some(custom) = self.custom.take() {
-            self.index = Self::snap_index(custom, Direction::Up);
-        } else if self.index + 1 < STEPS.len() {
-            self.index += 1;
-        }
+        *self = match *self {
+            Scale::Custom(v) => Scale::Stepped(Self::snap_index(v, Direction::Up)),
+            Scale::Stepped(i) => Scale::Stepped((i + 1).min(STEPS.len() - 1)),
+        };
         prev
     }
 
     #[must_use]
     pub fn down(&mut self) -> f32 {
         let prev = self.value();
-        if let Some(custom) = self.custom.take() {
-            self.index = Self::snap_index(custom, Direction::Down);
-        } else if self.index > 0 {
-            self.index -= 1;
-        }
+        *self = match *self {
+            Scale::Custom(v) => Scale::Stepped(Self::snap_index(v, Direction::Down)),
+            Scale::Stepped(i) => Scale::Stepped(i.saturating_sub(1)),
+        };
         prev
     }
 
     pub fn fit_dims(&mut self, iw: f32, ih: f32, bounds: Rectangle) {
-        self.custom = Some((bounds.width / iw).min(bounds.height / ih));
+        *self = Scale::Custom((bounds.width / iw).min(bounds.height / ih));
     }
 
     pub fn custom(&mut self, scale: f32) {
-        if let Some(index) = STEPS.iter().position(|&s| (s - scale).abs() < EPS) {
-            self.index = index;
-            self.custom = None;
+        *self = if let Some(index) = STEPS.iter().position(|&s| (s - scale).abs() < EPS) {
+            Scale::Stepped(index)
         } else {
-            self.custom = Some(scale);
-        }
+            Scale::Custom(scale)
+        };
     }
 
     pub fn value(&self) -> f32 {
-        self.custom.unwrap_or(STEPS[self.index])
+        match *self {
+            Scale::Stepped(i) => STEPS[i],
+            Scale::Custom(v) => v,
+        }
     }
 
     fn snap_index(scale: f32, dir: Direction) -> usize {
