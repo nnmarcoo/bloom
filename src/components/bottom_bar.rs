@@ -7,7 +7,7 @@ use iced::{Element, Length};
 
 use crate::app::Message;
 use crate::styles::{BAR_HEIGHT, PAD, bar_style};
-use crate::ui::{svg_button, svg_button_active, svg_button_maybe, with_tooltip};
+use crate::ui::{svg_button, svg_button_active, svg_button_maybe, svg_button_rotate, with_tooltip};
 use crate::widgets::menu::{menu_item, menu_separator, styled_menu};
 use crate::widgets::menu_button::{MenuAlign, MenuButton};
 use crate::widgets::scale_entry::ScaleEntry;
@@ -28,6 +28,8 @@ pub fn view<'a>(
             "Fullscreen",
         )
     };
+
+    let rotation = rotation as usize % 4;
 
     let left_buttons = row![
         with_tooltip(
@@ -60,16 +62,13 @@ pub fn view<'a>(
             Position::Top,
         ),
         with_tooltip(
-            svg_button_maybe(
-                include_bytes!("../../assets/icons/rotate.svg"),
-                Some(Message::Rotate)
-            ),
+            svg_button_rotate(rotation),
             [
                 "Rotate view (0°)",
                 "Rotate view (90°)",
                 "Rotate view (180°)",
                 "Rotate view (270°)"
-            ][rotation as usize % 4],
+            ][rotation],
             Position::Top,
         ),
     ]
