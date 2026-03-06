@@ -10,6 +10,7 @@ use crate::app::Message;
 use crate::gallery::Gallery;
 use crate::styles::{PAD, bar_style, radius};
 use crate::wgpu::view_program::ViewProgram;
+use crate::widgets::histogram::Histogram;
 
 fn row_item<'a>(lbl: &'a str, val: impl ToString, muted: Color) -> Element<'a, Message> {
     row![
@@ -212,6 +213,14 @@ pub fn view<'a>(
     if let Some((px, py, rgba)) = program.cursor_info() {
         rows.push(color_row(rgba, muted));
         rows.push(row_item("Pixel", format!("({}, {})", px, py), muted));
+    }
+
+    if let Some(histogram) = program.histogram() {
+        rows.push(
+            Histogram::new(histogram.0, histogram.1, histogram.2)
+                .height(120.0)
+                .into(),
+        );
     }
 
     let content = column(rows).spacing(6).padding(PAD * 2.0);

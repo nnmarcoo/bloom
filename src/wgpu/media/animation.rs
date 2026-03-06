@@ -12,6 +12,7 @@ pub struct Frame {
 #[derive(Debug, Clone)]
 pub struct Animation {
     frames: Arc<Vec<Frame>>,
+    histograms: Arc<Vec<([u32; 256], [u32; 256], [u32; 256])>>,
     total_duration: Duration,
     current: usize,
     deadline: Instant,
@@ -21,8 +22,10 @@ impl Animation {
     pub fn new(frames: Vec<Frame>) -> Self {
         let total_duration = frames.iter().map(|f| f.delay).sum();
         let deadline = Instant::now() + frames[0].delay;
+        let histograms = frames.iter().map(|f| f.data.rgb_histogram()).collect();
         Self {
             frames: Arc::new(frames),
+            histograms: Arc::new(histograms),
             total_duration,
             current: 0,
             deadline,
@@ -31,6 +34,10 @@ impl Animation {
 
     pub fn current_image(&self) -> &Arc<ImageData> {
         &self.frames[self.current].data
+    }
+
+    pub fn current_histogram(&self) -> &([u32; 256], [u32; 256], [u32; 256]) {
+        &self.histograms[self.current]
     }
 
     pub fn frame_count(&self) -> usize {
