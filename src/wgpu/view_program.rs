@@ -150,6 +150,7 @@ impl ViewProgram {
     pub fn set_animation(&mut self, anim: Animation) {
         let first = Arc::clone(anim.current_image());
         self.image_size = vec2(first.width as f32, first.height as f32);
+        self.histogram = Some(anim.current_histogram().clone());
         self.image = Some(first);
         self.animation = Some(anim);
         self.cursor_pos = None;
@@ -163,6 +164,7 @@ impl ViewProgram {
     pub fn tick_animation(&mut self, now: Instant) {
         if let Some(ref mut anim) = self.animation {
             if let Some(frame) = anim.tick(now) {
+                self.histogram = Some(anim.current_histogram().clone());
                 self.image = Some(frame);
             }
         }

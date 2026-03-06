@@ -13,31 +13,18 @@ pub struct Histogram {
     g: [u32; 256],
     b: [u32; 256],
     height: f32,
+    max: u32,
 }
 
 impl Histogram {
     pub fn new(r: [u32; 256], g: [u32; 256], b: [u32; 256]) -> Self {
-        Self {
-            r,
-            g,
-            b,
-            height: DEFAULT_HEIGHT,
-        }
+        let max = r.iter().chain(g.iter()).chain(b.iter()).copied().max().unwrap_or(1);
+        Self { r, g, b, height: DEFAULT_HEIGHT, max }
     }
 
     pub fn height(mut self, height: f32) -> Self {
         self.height = height;
         self
-    }
-
-    fn max_value(&self) -> u32 {
-        self.r
-            .iter()
-            .chain(self.g.iter())
-            .chain(self.b.iter())
-            .copied()
-            .max()
-            .unwrap_or(1)
     }
 }
 
@@ -93,7 +80,7 @@ impl<Message> Widget<Message, Theme, Renderer> for Histogram {
         use advanced::Renderer as _;
 
         let bounds = layout.bounds();
-        let max = self.max_value() as f32;
+        let max = self.max as f32;
 
         if max <= 0.0 {
             return;
@@ -120,33 +107,9 @@ impl<Message> Widget<Message, Theme, Renderer> for Histogram {
             let g_h = (self.g[i] as f32 / max) * bounds.height;
             let b_h = (self.b[i] as f32 / max) * bounds.height;
 
-            // Draw stacked RGB with alpha blending look
-            draw_bar(
-                renderer,
-                x,
-                bounds.y + bounds.height - r_h,
-                bin_width,
-                r_h,
-                Color::from_rgba(1.0, 0.0, 0.0, 0.5),
-            );
-
-            draw_bar(
-                renderer,
-                x,
-                bounds.y + bounds.height - g_h,
-                bin_width,
-                g_h,
-                Color::from_rgba(0.0, 1.0, 0.0, 0.5),
-            );
-
-            draw_bar(
-                renderer,
-                x,
-                bounds.y + bounds.height - b_h,
-                bin_width,
-                b_h,
-                Color::from_rgba(0.0, 0.4, 1.0, 0.5),
-            );
+            draw_bar(renderer, x, bounds.y + bounds.height - r_h, bin_width, r_h, Color::from_rgba(1.0, 0.0, 0.0, 0.5));
+            draw_bar(renderer, x, bounds.y + bounds.height - g_h, bin_width, g_h, Color::from_rgba(0.0, 1.0, 0.0, 0.5));
+            draw_bar(renderer, x, bounds.y + bounds.height - b_h, bin_width, b_h, Color::from_rgba(0.0, 0.4, 1.0, 0.5));
         }
     }
 
