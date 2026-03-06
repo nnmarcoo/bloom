@@ -30,7 +30,7 @@ pub fn view<'a>(
         .height(Length::Fill)
         .width(Length::Fill);
 
-    let viewer = if let Some(filename) = loading {
+    let viewer: Element<'a, Message> = if let Some(filename) = loading {
         let overlay = container(
             container(
                 column![
@@ -56,15 +56,7 @@ pub fn view<'a>(
         base.into()
     };
 
-    let content: Element<'a, Message> = if show_info {
-        row![info_column::view(path, gallery, &program, theme), viewer,]
-            .height(Length::Fill)
-            .into()
-    } else {
-        viewer
-    };
-
-    ContextMenu::new(content, || {
+    let viewer_with_menu: Element<'a, Message> = ContextMenu::new(viewer, || {
         styled_menu(column![
             menu_item("Copy Color", Message::CopyColor),
             menu_item("Copy File Path", Message::CopyPath),
@@ -72,5 +64,16 @@ pub fn view<'a>(
             menu_item("Fit", Message::Fit),
         ])
     })
-    .into()
+    .into();
+
+    if show_info {
+        row![
+            info_column::view(path, gallery, &program, theme),
+            viewer_with_menu
+        ]
+        .height(Length::Fill)
+        .into()
+    } else {
+        viewer_with_menu
+    }
 }

@@ -215,17 +215,21 @@ pub fn view<'a>(
         rows.push(row_item("Pixel", format!("({}, {})", px, py), muted));
     }
 
+    let content = column(rows).spacing(6).padding(PAD * 2.0);
+
+    let mut col = column![
+        scrollable(content).width(Length::Fill),
+        Space::new().height(Length::Fill),
+    ];
+
     if let Some(histogram) = program.histogram() {
-        rows.push(
-            Histogram::new(histogram.0, histogram.1, histogram.2)
-                .height(120.0)
-                .into(),
+        col = col.push(
+            container(Histogram::new(histogram.0, histogram.1, histogram.2).height(142.0))
+                .padding([PAD, PAD * 2.0]),
         );
     }
 
-    let content = column(rows).spacing(6).padding(PAD * 2.0);
-
-    container(scrollable(content).width(Length::Fill))
+    container(col)
         .style(bar_style)
         .height(Length::Fill)
         .width(Length::Fixed(220.0))
