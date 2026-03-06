@@ -210,6 +210,33 @@ pub fn view<'a>(
         rows.push(row_item("Duration", format_duration(dur), muted));
     }
 
+    if let Some(exif) = program.exif() {
+        if let Some(ref v) = exif.make {
+            rows.push(row_item("Make", v, muted));
+        }
+        if let Some(ref v) = exif.model {
+            rows.push(row_item("Model", v, muted));
+        }
+        if let Some(ref v) = exif.datetime {
+            rows.push(row_item("Date", v, muted));
+        }
+        if let Some(ref v) = exif.exposure_time {
+            rows.push(row_item("Exposure", v, muted));
+        }
+        if let Some(ref v) = exif.f_number {
+            rows.push(row_item("Aperture", v, muted));
+        }
+        if let Some(ref v) = exif.iso {
+            rows.push(row_item("ISO", v, muted));
+        }
+        if let Some(ref v) = exif.focal_length {
+            rows.push(row_item("Focal len", v, muted));
+        }
+        if let Some(ref v) = exif.gps {
+            rows.push(row_item("GPS", v, muted));
+        }
+    }
+
     if let Some((px, py, rgba)) = program.cursor_info() {
         rows.push(color_row(rgba, muted));
         rows.push(row_item("Pixel", format!("({}, {})", px, py), muted));

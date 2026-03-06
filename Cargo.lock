@@ -535,6 +535,7 @@ dependencies = [
  "image-webp",
  "jpeg2k",
  "jxl-oxide 0.12.5",
+ "kamadak-exif",
  "ktx2",
  "psd",
  "rayon",

@@ -11,8 +11,8 @@ use iced::{
 use crate::{
     app::Message,
     wgpu::{
-        media::animation::Animation, media::image_data::ImageData, scale::Scale,
-        view_pipeline::Uniforms, view_primitive::ViewPrimitive,
+        media::animation::Animation, media::exif_data::ExifData, media::image_data::ImageData,
+        scale::Scale, view_pipeline::Uniforms, view_primitive::ViewPrimitive,
     },
 };
 
@@ -145,6 +145,10 @@ impl ViewProgram {
             return Some(anim.current_histogram());
         }
         self.image.as_deref().map(|d| &d.histogram)
+    }
+
+    pub fn exif(&self) -> Option<&ExifData> {
+        self.image.as_deref().map(|d| &d.exif)
     }
 
     pub fn set_animation(&mut self, anim: Animation) {

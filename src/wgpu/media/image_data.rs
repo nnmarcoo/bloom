@@ -29,6 +29,7 @@ use usvg::Options as SvgOptions;
 use zip::ZipArchive;
 
 use super::animation::{Animation, Frame};
+use super::exif_data::ExifData;
 
 #[derive(Debug, Clone)]
 pub enum MediaData {
@@ -48,6 +49,7 @@ pub struct ImageData {
     pub height: u32,
     pub id: ImageId,
     pub histogram: ([u32; 256], [u32; 256], [u32; 256]),
+    pub exif: ExifData,
 }
 
 impl ImageData {
@@ -64,6 +66,7 @@ impl ImageData {
             height,
             id,
             histogram,
+            exif: ExifData::default(),
         }
     }
 
@@ -523,32 +526,42 @@ impl ImageData {
 
     pub fn load_media(path: &Path) -> Result<MediaData, ImageError> {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        match ext.to_ascii_lowercase().as_str() {
-            "gif" => Ok(MediaData::Animation(Self::load_gif(path)?)),
-            "hdr" => Ok(MediaData::Image(Self::load_hdr(path)?)),
-            "exr" => Ok(MediaData::Image(Self::load_exr(path)?)),
-            "jxl" => Ok(MediaData::Image(Self::load_jxl(path)?)),
-            "psd" => Ok(MediaData::Image(Self::load_psd(path)?)),
-            "icns" => Ok(MediaData::Image(Self::load_icns(path)?)),
-            "kra" => Ok(MediaData::Image(Self::load_kra(path)?)),
-            "svg" | "svgz" => Ok(MediaData::Image(Self::load_svg(path)?)),
-            "avif" => Ok(MediaData::Image(Self::load(path)?)),
-            "jp2" | "j2k" | "j2c" | "jpx" => Ok(MediaData::Image(Self::load_jp2(path)?)),
-            "dcm" | "dicom" => Ok(MediaData::Image(Self::load_dicom(path)?)),
-            "dds" => Ok(MediaData::Image(Self::load_dds(path)?)),
-            "ktx2" => Ok(MediaData::Image(Self::load_ktx2(path)?)),
-            "apng" => Ok(MediaData::Animation(Self::load_apng(path)?)),
+        let media = match ext.to_ascii_lowercase().as_str() {
+            "gif" => MediaData::Animation(Self::load_gif(path)?),
+            "hdr" => MediaData::Image(Self::load_hdr(path)?),
+            "exr" => MediaData::Image(Self::load_exr(path)?),
+            "jxl" => MediaData::Image(Self::load_jxl(path)?),
+            "psd" => MediaData::Image(Self::load_psd(path)?),
+            "icns" => MediaData::Image(Self::load_icns(path)?),
+            "kra" => MediaData::Image(Self::load_kra(path)?),
+            "svg" | "svgz" => MediaData::Image(Self::load_svg(path)?),
+            "avif" => MediaData::Image(Self::load(path)?),
+            "jp2" | "j2k" | "j2c" | "jpx" => MediaData::Image(Self::load_jp2(path)?),
+            "dcm" | "dicom" => MediaData::Image(Self::load_dicom(path)?),
+            "dds" => MediaData::Image(Self::load_dds(path)?),
+            "ktx2" => MediaData::Image(Self::load_ktx2(path)?),
+            "apng" => MediaData::Animation(Self::load_apng(path)?),
             "webp" => {
                 let file = File::open(path).map_err(ImageError::IoError)?;
                 let decoder = image_webp::WebPDecoder::new(BufReader::new(file))
                     .map_err(|e| ImageError::IoError(Error::other(e)))?;
                 if decoder.is_animated() {
-                    Ok(MediaData::Animation(Self::load_webp_animated(path)?))
+                    MediaData::Animation(Self::load_webp_animated(path)?)
                 } else {
-                    Ok(MediaData::Image(Self::load(path)?))
+                    MediaData::Image(Self::load(path)?)
                 }
             }
-            _ => Ok(MediaData::Image(Self::load(path)?)),
+            _ => MediaData::Image(Self::load(path)?),
+        };
+        Ok(Self::attach_exif(path, media))
+    }
+
+    fn attach_exif(path: &Path, media: MediaData) -> MediaData {
+        if let MediaData::Image(mut img) = media {
+            img.exif = ExifData::read(path);
+            MediaData::Image(img)
+        } else {
+            media
         }
     }
 }
