@@ -2,15 +2,38 @@ use std::path::Path;
 use std::time::Duration;
 
 use iced::alignment::{Horizontal, Vertical};
+use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::tooltip::Position;
 use iced::widget::{Space, column, container, row, scrollable, text, tooltip};
-use iced::{Background, Color, Element, Font, Length, Theme, border};
+use iced::{Background, Border, Color, Element, Font, Length, Theme, border};
 
 use crate::app::Message;
 use crate::gallery::Gallery;
 use crate::styles::{PAD, bar_style, radius};
 use crate::wgpu::view_program::ViewProgram;
 use crate::widgets::histogram::Histogram;
+
+fn section_header<'a>(label: &'a str, header_color: Color, bg: Color) -> Element<'a, Message> {
+    container(
+        text(label)
+            .size(11)
+            .color(header_color)
+            .font(Font::MONOSPACE),
+    )
+    .padding([2, 5])
+    .width(Length::Fill)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .style(move |_: &_| container::Style {
+        background: Some(Background::Color(bg)),
+        border: Border {
+            radius: radius().into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .into()
+}
 
 fn row_item<'a>(lbl: &'a str, val: impl ToString, muted: Color) -> Element<'a, Message> {
     row![
@@ -123,12 +146,8 @@ pub fn view<'a>(
     program: &ViewProgram,
     theme: &Theme,
 ) -> Element<'a, Message> {
-    let muted = theme
-        .extended_palette()
-        .background
-        .base
-        .text
-        .scale_alpha(0.5);
+    let palette = theme.extended_palette();
+    let muted = palette.background.base.text.scale_alpha(0.5);
 
     if program.image_size().is_none() {
         return container(
@@ -145,12 +164,31 @@ pub fn view<'a>(
         .into();
     }
 
+    let header_color = palette.background.base.text.scale_alpha(0.75);
+    let header_bg = palette.background.base.color;
+
+    let mut first_section = true;
+    let mut push_section = |rows: &mut Vec<Element<'a, Message>>,
+                            label: &'a str,
+                            section: Vec<Element<'a, Message>>| {
+        if !section.is_empty() {
+            if !first_section {
+                rows.push(Space::new().height(PAD * 2.0).into());
+            }
+            first_section = false;
+            let mut block = vec![section_header(label, header_color, header_bg)];
+            block.extend(section);
+            rows.push(column(block).spacing(6).width(Length::Fill).into());
+        }
+    };
+
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
 
+    let mut file_rows: Vec<Element<'a, Message>> = Vec::new();
     if let Some(p) = path {
         if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
             let filename_row = row_item("Filename", truncate_filename(name, 18), muted);
-            let entry = if let Some(path_str) = p.to_str() {
+            file_rows.push(if let Some(path_str) = p.to_str() {
                 tooltip(
                     filename_row,
                     container(text(path_str).size(11).font(Font::MONOSPACE))
@@ -161,91 +199,87 @@ pub fn view<'a>(
                 .into()
             } else {
                 filename_row
-            };
-            rows.push(entry);
+            });
         }
-
         if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-            rows.push(row_item("Format", ext.to_ascii_uppercase(), muted));
+            file_rows.push(row_item("Format", ext.to_ascii_uppercase(), muted));
         }
     }
-
     let count = gallery.len();
     if count > 0 {
-        rows.push(row_item(
+        file_rows.push(row_item(
             "In folder",
             format!("{} / {}", gallery.position() + 1, count),
             muted,
         ));
     }
+    push_section(&mut rows, "FILE", file_rows);
 
+    let mut image_rows: Vec<Element<'a, Message>> = Vec::new();
     if let Some((w, h)) = program.image_size() {
-        rows.push(row_item("Dimensions", format!("{} x {}", w, h), muted));
-        rows.push(row_item("Aspect ratio", aspect_ratio_str(w, h), muted));
+        image_rows.push(row_item("Dimensions", format!("{} x {}", w, h), muted));
+        image_rows.push(row_item("Aspect ratio", aspect_ratio_str(w, h), muted));
     }
-
-    rows.push(row_item(
+    image_rows.push(row_item(
         "Scale",
         format!("{:.0}%", program.scale() * 100.0),
         muted,
     ));
-
     if let Some(size) = gallery.file_size() {
-        rows.push(row_item("File size", format_size(size), muted));
+        image_rows.push(row_item("File size", format_size(size), muted));
     }
-
     if let Some(bytes) = program.decoded_size_bytes() {
-        rows.push(row_item("RAM usage", format_size(bytes as u64), muted));
+        image_rows.push(row_item("RAM usage", format_size(bytes as u64), muted));
     }
+    push_section(&mut rows, "IMAGE", image_rows);
 
+    let mut anim_rows: Vec<Element<'a, Message>> = Vec::new();
     if let Some((frame, total)) = program.animation_info() {
-        rows.push(row_item(
+        anim_rows.push(row_item(
             "Frame",
             format!("{} / {}", frame + 1, total),
             muted,
         ));
     }
-
     if let Some(dur) = program.animation_duration() {
-        rows.push(row_item("Duration", format_duration(dur), muted));
+        anim_rows.push(row_item("Duration", format_duration(dur), muted));
     }
+    push_section(&mut rows, "ANIMATION", anim_rows);
 
+    let mut camera_rows: Vec<Element<'a, Message>> = Vec::new();
     if let Some(exif) = program.exif() {
-        if let Some(ref v) = exif.make {
-            rows.push(row_item("Make", v, muted));
-        }
-        if let Some(ref v) = exif.model {
-            rows.push(row_item("Model", v, muted));
-        }
-        if let Some(ref v) = exif.datetime {
-            rows.push(row_item("Date", v, muted));
-        }
-        if let Some(ref v) = exif.exposure_time {
-            rows.push(row_item("Exposure", v, muted));
-        }
-        if let Some(ref v) = exif.f_number {
-            rows.push(row_item("Aperture", v, muted));
-        }
-        if let Some(ref v) = exif.iso {
-            rows.push(row_item("ISO", v, muted));
-        }
-        if let Some(ref v) = exif.focal_length {
-            rows.push(row_item("Focal len", v, muted));
-        }
-        if let Some(ref v) = exif.gps {
-            rows.push(row_item("GPS", v, muted));
+        for (label, value) in [
+            ("Make", &exif.make),
+            ("Model", &exif.model),
+            ("Date", &exif.datetime),
+            ("Exposure", &exif.exposure_time),
+            ("Aperture", &exif.f_number),
+            ("ISO", &exif.iso),
+            ("Focal len", &exif.focal_length),
+            ("GPS", &exif.gps),
+        ] {
+            if let Some(v) = value {
+                camera_rows.push(row_item(label, v, muted));
+            }
         }
     }
+    push_section(&mut rows, "EXIF", camera_rows);
 
+    let mut cursor_rows: Vec<Element<'a, Message>> = Vec::new();
     if let Some((px, py, rgba)) = program.cursor_info() {
-        rows.push(color_row(rgba, muted));
-        rows.push(row_item("Pixel", format!("({}, {})", px, py), muted));
+        cursor_rows.push(color_row(rgba, muted));
+        cursor_rows.push(row_item("Pixel", format!("({}, {})", px, py), muted));
     }
+    push_section(&mut rows, "CURSOR", cursor_rows);
 
-    let content = column(rows).spacing(6).padding(PAD * 2.0);
+    let content = column(rows).padding(PAD * 2.0);
 
     let mut col = column![
-        scrollable(content).width(Length::Fill),
+        scrollable(content)
+            .width(Length::Fill)
+            .direction(Direction::Vertical(
+                Scrollbar::new().width(4).scroller_width(4),
+            )),
         Space::new().height(Length::Fill),
     ];
 

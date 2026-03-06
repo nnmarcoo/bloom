@@ -91,37 +91,6 @@ pub fn tooltip_style(theme: &Theme) -> container::Style {
     }
 }
 
-pub fn scrollbar_style(theme: &Theme, _status: scrollable::Status) -> scrollable::Style {
-    let palette = theme.extended_palette();
-    let scroller_color = palette.background.strong.color;
-    scrollable::Style {
-        container: container::Style::default(),
-        vertical_rail: scrollable::Rail {
-            background: None,
-            border: Border::default(),
-            scroller: scrollable::Scroller {
-                background: Background::Color(scroller_color),
-                border: iced::border::rounded(radius()),
-            },
-        },
-        horizontal_rail: scrollable::Rail {
-            background: None,
-            border: Border::default(),
-            scroller: scrollable::Scroller {
-                background: Background::Color(scroller_color),
-                border: iced::border::rounded(radius()),
-            },
-        },
-        gap: None,
-        auto_scroll: scrollable::AutoScroll {
-            background: Background::Color(palette.background.weak.color),
-            border: Border::default(),
-            shadow: iced::Shadow::default(),
-            icon: palette.background.base.text,
-        },
-    }
-}
-
 pub fn menu_item_hover_color(theme: &Theme) -> Color {
     theme.extended_palette().background.strong.color
 }

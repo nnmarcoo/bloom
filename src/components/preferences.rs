@@ -10,7 +10,7 @@ use crate::app::Message;
 use crate::config::{ALL_THEMES, Config};
 use crate::keybinds::{Action, KeyBinding, Keymap};
 use crate::styles::{
-    PAD, capturing_chip_style, key_chip_style, plain_icon_button_style, scrollbar_style, set_radius,
+    PAD, capturing_chip_style, key_chip_style, plain_icon_button_style, set_radius,
 };
 use crate::ui::{svg_button_plain, with_tooltip};
 use crate::wgpu::view_program::ViewProgram;
@@ -379,9 +379,8 @@ pub fn view<'a>(
             .width(Length::Fill)
             .height(Length::Fill)
             .direction(Direction::Vertical(
-                Scrollbar::new().width(4).margin(4).scroller_width(4),
-            ))
-            .style(scrollbar_style),
+                Scrollbar::new().width(4).scroller_width(4),
+            )),
         rule::horizontal(1),
         action_buttons,
     ]
