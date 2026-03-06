@@ -34,7 +34,6 @@ pub struct ViewProgram {
     pub lanczos_enabled: bool,
     cursor_pos: Option<Vec2>,
     rotation: u8, // 0=0°, 1=90°CW, 2=180°, 3=270°CW
-    histogram: Option<([u32; 256], [u32; 256], [u32; 256])>,
 }
 
 impl Default for ViewProgram {
@@ -49,7 +48,6 @@ impl Default for ViewProgram {
             lanczos_enabled: false,
             cursor_pos: None,
             rotation: 0,
-            histogram: None,
         }
     }
 }
@@ -136,7 +134,6 @@ impl ViewProgram {
 
     pub fn set_image(&mut self, data: ImageData) {
         self.image_size = vec2(data.width as f32, data.height as f32);
-        self.histogram = Some(data.rgb_histogram());
         self.image = Some(Arc::new(data));
         self.animation = None;
         self.cursor_pos = None;
@@ -144,13 +141,15 @@ impl ViewProgram {
     }
 
     pub fn histogram(&self) -> Option<&([u32; 256], [u32; 256], [u32; 256])> {
-        self.histogram.as_ref()
+        if let Some(anim) = &self.animation {
+            return Some(anim.current_histogram());
+        }
+        self.image.as_deref().map(|d| &d.histogram)
     }
 
     pub fn set_animation(&mut self, anim: Animation) {
         let first = Arc::clone(anim.current_image());
         self.image_size = vec2(first.width as f32, first.height as f32);
-        self.histogram = Some(anim.current_histogram().clone());
         self.image = Some(first);
         self.animation = Some(anim);
         self.cursor_pos = None;
@@ -164,7 +163,6 @@ impl ViewProgram {
     pub fn tick_animation(&mut self, now: Instant) {
         if let Some(ref mut anim) = self.animation {
             if let Some(frame) = anim.tick(now) {
-                self.histogram = Some(anim.current_histogram().clone());
                 self.image = Some(frame);
             }
         }

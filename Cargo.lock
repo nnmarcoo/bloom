@@ -537,6 +537,7 @@ dependencies = [
  "jxl-oxide 0.12.5",
  "ktx2",
  "psd",
+ "rayon",
  "resvg",
  "rfd",
  "serde",

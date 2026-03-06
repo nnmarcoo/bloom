@@ -5,6 +5,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use rayon::prelude::*;
+
 use basis_universal::transcoding::{
     DecodeFlags, TranscodeParameters, Transcoder, TranscoderTextureFormat,
 };
@@ -45,6 +47,7 @@ pub struct ImageData {
     pub width: u32,
     pub height: u32,
     pub id: ImageId,
+    pub histogram: ([u32; 256], [u32; 256], [u32; 256]),
 }
 
 impl ImageData {
@@ -54,12 +57,43 @@ impl ImageData {
 
     pub fn new(pixels: Vec<u8>, width: u32, height: u32) -> Self {
         let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
+        let histogram = Self::compute_histogram(&pixels);
         Self {
             pixels,
             width,
             height,
             id,
+            histogram,
         }
+    }
+
+    fn compute_histogram(pixels: &[u8]) -> ([u32; 256], [u32; 256], [u32; 256]) {
+        const CHUNK: usize = 65536 * 4;
+        let (r, g, b) = pixels
+            .par_chunks(CHUNK)
+            .map(|chunk| {
+                let mut r = [0u32; 256];
+                let mut g = [0u32; 256];
+                let mut b = [0u32; 256];
+                for px in chunk.chunks_exact(4) {
+                    r[px[0] as usize] += 1;
+                    g[px[1] as usize] += 1;
+                    b[px[2] as usize] += 1;
+                }
+                (r, g, b)
+            })
+            .reduce(
+                || ([0u32; 256], [0u32; 256], [0u32; 256]),
+                |(mut ra, mut ga, mut ba), (rb, gb, bb)| {
+                    for i in 0..256 {
+                        ra[i] += rb[i];
+                        ga[i] += gb[i];
+                        ba[i] += bb[i];
+                    }
+                    (ra, ga, ba)
+                },
+            );
+        (r, g, b)
     }
 
     pub fn load(path: &Path) -> Result<Self, ImageError> {
@@ -516,19 +550,5 @@ impl ImageData {
             }
             _ => Ok(MediaData::Image(Self::load(path)?)),
         }
-    }
-
-    pub fn rgb_histogram(&self) -> ([u32; 256], [u32; 256], [u32; 256]) {
-        let mut r = [0u32; 256];
-        let mut g = [0u32; 256];
-        let mut b = [0u32; 256];
-
-        for px in self.pixels.chunks_exact(4) {
-            r[px[0] as usize] += 1;
-            g[px[1] as usize] += 1;
-            b[px[2] as usize] += 1;
-        }
-
-        (r, g, b)
     }
 }
