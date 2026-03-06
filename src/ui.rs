@@ -5,8 +5,8 @@ use iced::{Element, Length};
 
 use crate::app::Message;
 use crate::styles::{
-    BUTTON_SIZE, PAD, icon_button_active_style, icon_button_rotate_style, icon_button_style,
-    plain_icon_button_style, svg_style, tooltip_style,
+    BUTTON_SIZE, PAD, icon_button_active_style, icon_button_style, plain_icon_button_style,
+    svg_style, tooltip_style,
 };
 
 pub fn svg_button<'a>(icon: &'static [u8], msg: Message) -> Element<'a, Message> {
@@ -32,21 +32,6 @@ pub fn svg_button_active<'a>(icon: &'static [u8], msg: Message) -> Element<'a, M
     .padding(PAD)
     .style(icon_button_active_style)
     .on_press(msg)
-    .into()
-}
-
-pub fn svg_button_rotate<'a>(rotation: usize) -> Element<'a, Message> {
-    button(
-        svg(Handle::from_memory(include_bytes!(
-            "../assets/icons/rotate.svg"
-        )))
-        .style(svg_style)
-        .width(Length::Fixed(BUTTON_SIZE))
-        .height(Length::Fixed(BUTTON_SIZE)),
-    )
-    .padding(PAD)
-    .style(icon_button_rotate_style(rotation))
-    .on_press(Message::Rotate)
     .into()
 }
 

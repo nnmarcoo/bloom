@@ -7,7 +7,7 @@ use iced::{Element, Length};
 
 use crate::app::Message;
 use crate::styles::{BAR_HEIGHT, PAD, bar_style};
-use crate::ui::{svg_button, svg_button_active, svg_button_maybe, svg_button_rotate, with_tooltip};
+use crate::ui::{svg_button, svg_button_active, svg_button_maybe, with_tooltip};
 use crate::widgets::menu::{menu_item, menu_separator, styled_menu};
 use crate::widgets::menu_button::{MenuAlign, MenuButton};
 use crate::widgets::scale_entry::ScaleEntry;
@@ -18,6 +18,7 @@ pub fn view<'a>(
     rotation: u8,
     focus_scale: bool,
     show_info: bool,
+    has_image: bool,
 ) -> Element<'a, Message> {
     let is_fullscreen = matches!(mode, Mode::Fullscreen);
     let (fullscreen_icon, fullscreen_tooltip): (&'static [u8], &str) = if is_fullscreen {
@@ -27,6 +28,18 @@ pub fn view<'a>(
             include_bytes!("../../assets/icons/fullscreen.svg"),
             "Fullscreen",
         )
+    };
+
+    let rotation_icon: &'static [u8] = if !has_image {
+        include_bytes!("../../assets/icons/rotate.svg")
+    } else if rotation == 0 {
+        include_bytes!("../../assets/icons/rotate0.svg")
+    } else if rotation == 1 {
+        include_bytes!("../../assets/icons/rotate90.svg")
+    } else if rotation == 2 {
+        include_bytes!("../../assets/icons/rotate180.svg")
+    } else {
+        include_bytes!("../../assets/icons/rotate270.svg")
     };
 
     let rotation = rotation as usize % 4;
@@ -62,7 +75,7 @@ pub fn view<'a>(
             Position::Top,
         ),
         with_tooltip(
-            svg_button_rotate(rotation),
+            svg_button_maybe(rotation_icon, Some(Message::Rotate)),
             [
                 "Rotate view (0°)",
                 "Rotate view (90°)",

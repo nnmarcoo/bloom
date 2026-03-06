@@ -113,7 +113,11 @@ impl App {
             Message::Pan(delta) => self.program.pan(delta),
             Message::ScaleUp(cursor) => self.program.scale_up(cursor),
             Message::ScaleDown(cursor) => self.program.scale_down(cursor),
-            Message::Rotate => self.program.rotate(),
+            Message::Rotate => {
+                if self.gallery.current().is_some() {
+                    self.program.rotate();
+                }
+            }
             Message::Fit => self.program.fit(),
             Message::BoundsChanged(bounds) => self.program.set_bounds(bounds),
             Message::Scale(scale) => {
@@ -332,6 +336,7 @@ impl App {
                 self.program.rotation(),
                 self.focus_scale,
                 self.config.show_info,
+                self.gallery.current().is_some(),
             ),
         ]
         .into()
