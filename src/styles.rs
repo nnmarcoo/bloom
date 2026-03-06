@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use iced::{
-    Background, Border, Color, Theme,
-    widget::{button, container, scrollable, svg},
+    Background, Color, Theme,
+    widget::{button, container, svg},
 };
 
 pub const PAD: f32 = 5.0;
