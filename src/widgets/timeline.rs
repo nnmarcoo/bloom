@@ -8,6 +8,8 @@ use iced::mouse;
 use iced::window;
 use iced::{Background, Border, Element, Event, Length, Rectangle, Renderer, Size};
 
+use crate::styles::radius;
+
 pub struct Timeline<Message> {
     timing: Option<(Instant, Duration, Duration)>,
     position: f32,
@@ -32,7 +34,7 @@ impl<Message> Timeline<Message> {
             on_seek: Box::new(on_seek),
             on_drag_start: None,
             on_drag_end: None,
-            height: 20.0,
+            height: 28.0,
         }
     }
 
@@ -169,11 +171,21 @@ where
         let state = tree.state.downcast_ref::<State>();
         let bounds = layout.bounds();
         let palette = theme.extended_palette();
-        let is_active = cursor.is_over(bounds) || state.drag_x.is_some();
 
-        let track_h = if is_active { 6.0_f32 } else { 4.0_f32 };
+        renderer.fill_quad(
+            Quad {
+                bounds,
+                border: Border {
+                    radius: radius().into(),
+                    ..Border::default()
+                },
+                ..Quad::default()
+            },
+            Background::Color(palette.background.base.color),
+        );
+
+        let track_h = 4.0_f32;
         let track_y = bounds.center_y() - track_h / 2.0;
-        let track_radius = track_h / 2.0;
 
         renderer.fill_quad(
             Quad {
@@ -183,10 +195,7 @@ where
                     width: bounds.width,
                     height: track_h,
                 },
-                border: Border {
-                    radius: track_radius.into(),
-                    ..Border::default()
-                },
+                border: Border::default(),
                 ..Quad::default()
             },
             Background::Color(palette.background.strong.color),
@@ -207,36 +216,67 @@ where
                         width: bounds.width * progress,
                         height: track_h,
                     },
-                    border: Border {
-                        radius: track_radius.into(),
-                        ..Border::default()
-                    },
+                    border: Border::default(),
                     ..Quad::default()
                 },
                 Background::Color(palette.primary.base.color),
             );
         }
 
-        if is_active {
-            let thumb_r = 7.0_f32;
-            let thumb_cx = bounds.x + bounds.width * progress;
-            renderer.fill_quad(
-                Quad {
-                    bounds: Rectangle {
-                        x: thumb_cx - thumb_r,
-                        y: bounds.center_y() - thumb_r,
-                        width: thumb_r * 2.0,
-                        height: thumb_r * 2.0,
+        if self.total > 1 {
+            let max_ticks = (bounds.width / 4.0) as usize;
+            let step = ((self.total - 1) / max_ticks.max(1)).max(1);
+            let tick_h_major = 5.0_f32;
+            let tick_h_minor = 3.0_f32;
+            let tick_w = 1.0_f32;
+            let tick_top = track_y - tick_h_major - 1.0;
+            let color_minor = palette.background.base.text.scale_alpha(0.25);
+            let color_major = palette.background.base.text.scale_alpha(0.45);
+
+            for i in (step..self.total.saturating_sub(step)).step_by(step) {
+                let t = i as f32 / (self.total - 1) as f32;
+                let x = (bounds.x + bounds.width * t).round();
+                let is_major = i % (step * 5) == 0;
+                let tick_h = if is_major { tick_h_major } else { tick_h_minor };
+                renderer.fill_quad(
+                    Quad {
+                        bounds: Rectangle {
+                            x: x - tick_w / 2.0,
+                            y: tick_top + (tick_h_major - tick_h),
+                            width: tick_w,
+                            height: tick_h,
+                        },
+                        border: Border::default(),
+                        ..Quad::default()
                     },
-                    border: Border {
-                        radius: thumb_r.into(),
-                        ..Border::default()
-                    },
-                    ..Quad::default()
-                },
-                Background::Color(palette.primary.strong.color),
-            );
+                    Background::Color(if is_major { color_major } else { color_minor }),
+                );
+            }
         }
+
+        let thumb_w = 4.0_f32;
+        let thumb_cx = (bounds.x + bounds.width * progress)
+            .clamp(
+                bounds.x + thumb_w / 2.0,
+                bounds.x + bounds.width - thumb_w / 2.0,
+            )
+            .round();
+        renderer.fill_quad(
+            Quad {
+                bounds: Rectangle {
+                    x: thumb_cx - thumb_w / 2.0,
+                    y: bounds.y,
+                    width: thumb_w,
+                    height: bounds.height,
+                },
+                border: Border {
+                    radius: radius().into(),
+                    ..Border::default()
+                },
+                ..Quad::default()
+            },
+            Background::Color(palette.primary.strong.color),
+        );
     }
 
     fn mouse_interaction(

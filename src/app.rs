@@ -403,13 +403,7 @@ impl App {
             } else {
                 0.0
             };
-            col = col.push(timeline_bar::view(
-                frame,
-                total,
-                timing,
-                position,
-                !self.paused,
-            ));
+            col = col.push(timeline_bar::view(total, timing, position, !self.paused));
         }
 
         col.push(bottom_bar::view(

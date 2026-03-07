@@ -2,8 +2,8 @@ use std::time::{Duration, Instant};
 
 use iced::alignment::Vertical;
 use iced::widget::container;
+use iced::widget::row;
 use iced::widget::tooltip::Position;
-use iced::widget::{row, text};
 use iced::{Element, Length};
 
 use crate::app::Message;
@@ -12,7 +12,6 @@ use crate::ui::{svg_button, with_tooltip};
 use crate::widgets::timeline::Timeline;
 
 pub fn view<'a>(
-    frame: usize,
     total_frames: usize,
     timing: Option<(Instant, Duration, Duration)>,
     position: f32,
@@ -72,7 +71,6 @@ pub fn view<'a>(
             Timeline::new(timing, position, total_frames, Message::FrameSeek)
                 .on_drag_start(Message::TimelineScrubStart)
                 .on_drag_end(Message::TimelineScrubEnd),
-            text(format!("{} / {}", frame + 1, total_frames)).size(12),
         ]
         .height(Length::Fixed(BAR_HEIGHT))
         .width(Length::Fill)
