@@ -88,12 +88,14 @@ const CHANNEL_COLORS: [ChannelPair; 4] = [
 #[derive(Debug, Clone)]
 struct State {
     channels: [bool; 4],
+    hovered: Option<usize>,
 }
 
 impl Default for State {
     fn default() -> Self {
         Self {
             channels: [true, true, true, true],
+            hovered: None,
         }
     }
 }
@@ -184,17 +186,35 @@ impl<Message> Widget<Message, Theme, Renderer> for Histogram {
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) {
-        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
-            if let Some(pos) = cursor.position() {
-                let bounds = layout.bounds();
-                for (i, rect) in Self::label_rects(&bounds).iter().enumerate() {
-                    if rect.contains(pos) {
-                        tree.state.downcast_mut::<State>().channels[i] ^= true;
-                        shell.request_redraw();
-                        return;
-                    }
+        let Event::Mouse(mouse_event) = event else {
+            return;
+        };
+        let state = tree.state.downcast_mut::<State>();
+
+        match mouse_event {
+            mouse::Event::CursorLeft => {
+                if state.hovered.is_some() {
+                    state.hovered = None;
+                    shell.request_redraw();
                 }
             }
+            mouse::Event::ButtonPressed(mouse::Button::Left) | mouse::Event::CursorMoved { .. } => {
+                let label_rects = Self::label_rects(&layout.bounds());
+                let new_hovered = cursor
+                    .position()
+                    .and_then(|pos| label_rects.iter().position(|r| r.contains(pos)));
+
+                if matches!(mouse_event, mouse::Event::ButtonPressed(_)) {
+                    if let Some(i) = new_hovered {
+                        state.channels[i] ^= true;
+                        shell.request_redraw();
+                    }
+                } else if new_hovered != state.hovered {
+                    state.hovered = new_hovered;
+                    shell.request_redraw();
+                }
+            }
+            _ => {}
         }
     }
 
@@ -215,7 +235,7 @@ impl<Message> Widget<Message, Theme, Renderer> for Histogram {
 
         let palette = theme.extended_palette();
         let bg = palette.background.weak.color;
-        let is_dark = 0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b < 0.5;
+        let is_dark = palette.is_dark;
 
         renderer.fill_quad(
             Quad {
@@ -262,32 +282,52 @@ impl<Message> Widget<Message, Theme, Renderer> for Histogram {
         let chip_bg_active = palette.background.base.color;
         let chip_border = palette.background.strong.color;
         let r = radius();
+        let channel_colors: [Color; 4] = std::array::from_fn(|i| {
+            if is_dark {
+                CHANNEL_COLORS[i].dark
+            } else {
+                CHANNEL_COLORS[i].light
+            }
+        });
 
         for (i, rect) in label_rects.iter().enumerate() {
             let active = state.channels[i];
+            let hovered = state.hovered == Some(i);
             let chip = Rectangle {
                 x: rect.x + CHIP_GAP * 0.5,
                 y: rect.y,
                 width: rect.width - CHIP_GAP,
                 height: rect.height,
             };
-            let channel_color = if is_dark {
-                CHANNEL_COLORS[i].dark
+            let channel_color = channel_colors[i];
+
+            let border_color = if active {
+                channel_color
+            } else if hovered {
+                palette.background.base.text.scale_alpha(0.4)
             } else {
-                CHANNEL_COLORS[i].light
+                chip_border
+            };
+
+            let chip_bg = if hovered {
+                palette.background.strong.color
+            } else if active {
+                chip_bg_active
+            } else {
+                bg
             };
 
             renderer.fill_quad(
                 Quad {
                     bounds: chip,
                     border: iced::Border {
-                        color: if active { channel_color } else { chip_border },
+                        color: border_color,
                         width: 1.0,
                         radius: r.into(),
                     },
                     ..Default::default()
                 },
-                Background::Color(if active { chip_bg_active } else { bg }),
+                Background::Color(chip_bg),
             );
 
             renderer.fill_text(

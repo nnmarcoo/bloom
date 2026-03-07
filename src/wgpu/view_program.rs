@@ -304,7 +304,11 @@ impl Program<Message> for ViewProgram {
             if let Some(pos) = cursor.position_in(bounds) {
                 let pos = Vec2::new(pos.x, pos.y);
                 let scale_msg = |y: f32| {
-                    if y > 0.0 { Message::ScaleUp(pos) } else { Message::ScaleDown(pos) }
+                    if y > 0.0 {
+                        Message::ScaleUp(pos)
+                    } else {
+                        Message::ScaleDown(pos)
+                    }
                 };
                 let msg = match delta {
                     mouse::ScrollDelta::Lines { y, .. } if *y != 0.0 => {
@@ -313,7 +317,10 @@ impl Program<Message> for ViewProgram {
                     }
                     mouse::ScrollDelta::Pixels { y, .. } if *y != 0.0 => {
                         let now = Instant::now();
-                        if state.last_scale.map_or(true, |t| now.duration_since(t) >= SCALE_COOLDOWN) {
+                        if state
+                            .last_scale
+                            .map_or(true, |t| now.duration_since(t) >= SCALE_COOLDOWN)
+                        {
                             state.last_scale = Some(now);
                             Some(scale_msg(*y))
                         } else {

@@ -1,20 +1,21 @@
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::tooltip::Position;
-use iced::widget::{Space, column, container, row, scrollable, text, tooltip};
-use iced::{Background, Border, Color, Element, Font, Length, Theme, border};
+use iced::widget::{Space, button, column, container, row, scrollable, text, tooltip};
+use iced::{Background, Color, Element, Font, Length, Theme, border};
 
 use crate::app::Message;
 use crate::gallery::Gallery;
-use crate::styles::{PAD, bar_style, radius};
+use crate::styles::{PAD, bar_style, info_section_header_style, radius};
 use crate::wgpu::view_program::ViewProgram;
 use crate::widgets::histogram::Histogram;
 
-fn section_header<'a>(label: &'a str, header_color: Color, bg: Color) -> Element<'a, Message> {
-    container(
+fn section_header(label: &'static str, header_color: Color) -> Element<'static, Message> {
+    let content = container(
         text(label)
             .size(11)
             .color(header_color)
@@ -23,16 +24,14 @@ fn section_header<'a>(label: &'a str, header_color: Color, bg: Color) -> Element
     .padding([2, 5])
     .width(Length::Fill)
     .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .style(move |_: &_| container::Style {
-        background: Some(Background::Color(bg)),
-        border: Border {
-            radius: radius().into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    })
-    .into()
+    .align_y(Vertical::Center);
+
+    button(content)
+        .on_press(Message::ToggleInfoSection(label))
+        .padding(0)
+        .style(info_section_header_style)
+        .width(Length::Fill)
+        .into()
 }
 
 fn row_item<'a>(lbl: &'a str, val: impl ToString, muted: Color) -> Element<'a, Message> {
@@ -145,6 +144,7 @@ pub fn view<'a>(
     gallery: &Gallery,
     program: &ViewProgram,
     theme: &Theme,
+    info_collapsed: &HashSet<String>,
 ) -> Element<'a, Message> {
     let palette = theme.extended_palette();
     let muted = palette.background.base.text.scale_alpha(0.5);
@@ -165,19 +165,21 @@ pub fn view<'a>(
     }
 
     let header_color = palette.background.base.text.scale_alpha(0.75);
-    let header_bg = palette.background.base.color;
 
     let mut first_section = true;
     let mut push_section = |rows: &mut Vec<Element<'a, Message>>,
-                            label: &'a str,
+                            label: &'static str,
                             section: Vec<Element<'a, Message>>| {
         if !section.is_empty() {
             if !first_section {
                 rows.push(Space::new().height(PAD * 2.0).into());
             }
             first_section = false;
-            let mut block = vec![section_header(label, header_color, header_bg)];
-            block.extend(section);
+            let collapsed = info_collapsed.contains(label);
+            let mut block = vec![section_header(label, header_color)];
+            if !collapsed {
+                block.extend(section);
+            }
             rows.push(column(block).spacing(6).width(Length::Fill).into());
         }
     };

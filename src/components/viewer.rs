@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use iced::{
@@ -25,6 +26,7 @@ pub fn view<'a>(
     path: Option<&'a Path>,
     gallery: &'a Gallery,
     theme: &'a Theme,
+    info_collapsed: &'a HashSet<String>,
 ) -> Element<'a, Message> {
     let base = shader(program.clone())
         .height(Length::Fill)
@@ -68,7 +70,7 @@ pub fn view<'a>(
 
     if show_info {
         row![
-            info_column::view(path, gallery, &program, theme),
+            info_column::view(path, gallery, &program, theme, info_collapsed),
             viewer_with_menu
         ]
         .height(Length::Fill)

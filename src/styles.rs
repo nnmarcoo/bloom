@@ -173,6 +173,31 @@ pub fn capturing_chip_style(theme: &Theme, _status: button::Status) -> button::S
     }
 }
 
+pub fn info_section_header_style(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = theme.extended_palette();
+    let (background, border_color) = match status {
+        button::Status::Hovered => (
+            palette.background.strong.color,
+            palette.background.base.text.scale_alpha(0.2),
+        ),
+        button::Status::Pressed => (
+            palette.background.weak.color,
+            palette.background.base.text.scale_alpha(0.3),
+        ),
+        _ => (palette.background.base.color, Color::TRANSPARENT),
+    };
+    button::Style {
+        background: Some(Background::Color(background)),
+        border: iced::Border {
+            color: border_color,
+            width: 1.0,
+            radius: radius().into(),
+        },
+        text_color: palette.background.base.text,
+        ..Default::default()
+    }
+}
+
 pub fn icon_button_active_style(theme: &Theme, status: button::Status) -> button::Style {
     let palette = theme.extended_palette();
 

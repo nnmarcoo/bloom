@@ -79,6 +79,7 @@ pub enum Message {
     AnimationTick(Instant),
     ToggleFullscreen,
     ToggleInfoColumn,
+    ToggleInfoSection(&'static str),
     TogglePreferences,
     Preference(PreferenceMessage),
     ClipboardLoaded(MediaData),
@@ -168,6 +169,12 @@ impl App {
             }
             Message::ToggleInfoColumn => {
                 self.config.show_info = !self.config.show_info;
+                self.config.save();
+            }
+            Message::ToggleInfoSection(label) => {
+                if !self.config.info_collapsed.remove(label) {
+                    self.config.info_collapsed.insert(label.to_string());
+                }
                 self.config.save();
             }
             Message::TogglePreferences => {
@@ -329,6 +336,7 @@ impl App {
                 self.gallery.current().map(|p| p.as_path()),
                 &self.gallery,
                 &self.config.theme,
+                &self.config.info_collapsed,
             ),
             bottom_bar::view(
                 self.mode,
