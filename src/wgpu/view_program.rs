@@ -16,7 +16,7 @@ use crate::{
     },
 };
 
-const SCALE_COOLDOWN: Duration = Duration::from_millis(10);
+const SCALE_COOLDOWN: Duration = Duration::from_millis(30);
 
 pub struct ViewProgramState {
     pub drag: ViewDragState,
@@ -303,21 +303,26 @@ impl Program<Message> for ViewProgram {
         if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
             if let Some(pos) = cursor.position_in(bounds) {
                 let pos = Vec2::new(pos.x, pos.y);
-                let y = match delta {
-                    mouse::ScrollDelta::Lines { y, .. } => *y,
-                    mouse::ScrollDelta::Pixels { y, .. } => *y,
+                let scale_msg = |y: f32| {
+                    if y > 0.0 { Message::ScaleUp(pos) } else { Message::ScaleDown(pos) }
                 };
-                let now = Instant::now();
-                let ready = state
-                    .last_scale
-                    .map_or(true, |t| now.duration_since(t) >= SCALE_COOLDOWN);
-                if ready && y != 0.0 {
-                    state.last_scale = Some(now);
-                    let msg = if y > 0.0 {
-                        Message::ScaleUp(pos)
-                    } else {
-                        Message::ScaleDown(pos)
-                    };
+                let msg = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } if *y != 0.0 => {
+                        state.last_scale = None;
+                        Some(scale_msg(*y))
+                    }
+                    mouse::ScrollDelta::Pixels { y, .. } if *y != 0.0 => {
+                        let now = Instant::now();
+                        if state.last_scale.map_or(true, |t| now.duration_since(t) >= SCALE_COOLDOWN) {
+                            state.last_scale = Some(now);
+                            Some(scale_msg(*y))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(msg) = msg {
                     return Some(Action::publish(msg).and_capture());
                 }
                 return Some(Action::capture());
