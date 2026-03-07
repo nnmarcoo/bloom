@@ -9,11 +9,7 @@ use crate::styles::{BAR_HEIGHT, PAD, bar_style};
 use crate::ui::{svg_button, with_tooltip};
 use crate::widgets::timeline::Timeline;
 
-pub fn view<'a>(
-    total_frames: usize,
-    position: f32,
-    playing: bool,
-) -> Element<'a, Message> {
+pub fn view<'a>(total_frames: usize, position: f32, playing: bool) -> Element<'a, Message> {
     let (play_pause_icon, play_pause_tooltip): (&'static [u8], &str) = if playing {
         (include_bytes!("../../assets/icons/pause.svg"), "Pause")
     } else {
