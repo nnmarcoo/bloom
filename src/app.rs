@@ -395,15 +395,12 @@ impl App {
         )];
 
         if let Some((frame, total)) = self.program.animation_info() {
-            let timing = (!self.paused && !self.scrubbing)
-                .then(|| self.program.animation_timing())
-                .flatten();
             let position = if total > 1 {
                 frame as f32 / (total - 1) as f32
             } else {
                 0.0
             };
-            col = col.push(timeline_bar::view(total, timing, position, !self.paused));
+            col = col.push(timeline_bar::view(total, position, !self.paused));
         }
 
         col.push(bottom_bar::view(

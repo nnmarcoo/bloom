@@ -219,10 +219,6 @@ impl ViewProgram {
         Some((self.image_size.x as u32, self.image_size.y as u32))
     }
 
-    pub fn animation_timing(&self) -> Option<(Instant, Duration, Duration)> {
-        self.animation.as_ref().map(|a| a.timing())
-    }
-
     pub fn animation_info(&self) -> Option<(usize, usize)> {
         self.animation
             .as_ref()

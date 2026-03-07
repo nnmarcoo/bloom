@@ -1,5 +1,3 @@
-use std::time::{Duration, Instant};
-
 use iced::alignment::Vertical;
 use iced::widget::container;
 use iced::widget::row;
@@ -13,7 +11,6 @@ use crate::widgets::timeline::Timeline;
 
 pub fn view<'a>(
     total_frames: usize,
-    timing: Option<(Instant, Duration, Duration)>,
     position: f32,
     playing: bool,
 ) -> Element<'a, Message> {
@@ -68,7 +65,7 @@ pub fn view<'a>(
     container(
         row![
             controls,
-            Timeline::new(timing, position, total_frames, Message::FrameSeek)
+            Timeline::new(playing, position, total_frames, Message::FrameSeek)
                 .on_drag_start(Message::TimelineScrubStart)
                 .on_drag_end(Message::TimelineScrubEnd),
         ]

@@ -1,5 +1,3 @@
-use std::time::{Duration, Instant};
-
 use iced::advanced::layout;
 use iced::advanced::renderer::Quad;
 use iced::advanced::widget::tree::{self, Tree};
@@ -11,7 +9,7 @@ use iced::{Background, Border, Element, Event, Length, Rectangle, Renderer, Size
 use crate::styles::radius;
 
 pub struct Timeline<Message> {
-    timing: Option<(Instant, Duration, Duration)>,
+    playing: bool,
     position: f32,
     total: usize,
     on_seek: Box<dyn Fn(usize) -> Message>,
@@ -22,13 +20,13 @@ pub struct Timeline<Message> {
 
 impl<Message> Timeline<Message> {
     pub fn new(
-        timing: Option<(Instant, Duration, Duration)>,
+        playing: bool,
         position: f32,
         total: usize,
         on_seek: impl Fn(usize) -> Message + 'static,
     ) -> Self {
         Self {
-            timing,
+            playing,
             position,
             total,
             on_seek: Box::new(on_seek),
@@ -46,18 +44,6 @@ impl<Message> Timeline<Message> {
     pub fn on_drag_end(mut self, msg: Message) -> Self {
         self.on_drag_end = Some(msg);
         self
-    }
-
-    fn live_position(&self) -> f32 {
-        if let Some((frame_began_at, frame_start_elapsed, total_duration)) = self.timing {
-            if total_duration.is_zero() {
-                return 0.0;
-            }
-            let elapsed = frame_start_elapsed + frame_began_at.elapsed();
-            (elapsed.as_secs_f32() / total_duration.as_secs_f32()).clamp(0.0, 1.0)
-        } else {
-            self.position
-        }
     }
 }
 
@@ -108,7 +94,7 @@ where
         let state = tree.state.downcast_mut::<State>();
 
         if let Event::Window(window::Event::RedrawRequested(_)) = event {
-            if self.timing.is_some() && state.drag_x.is_none() {
+            if self.playing && state.drag_x.is_none() {
                 shell.request_redraw();
             }
             return;
@@ -163,7 +149,7 @@ where
         theme: &iced::Theme,
         _style: &iced::advanced::renderer::Style,
         layout: Layout<'_>,
-        cursor: mouse::Cursor,
+        _cursor: mouse::Cursor,
         _viewport: &Rectangle,
     ) {
         use advanced::Renderer as _;
@@ -204,7 +190,7 @@ where
         let progress = if let Some(x) = state.drag_x {
             ((x - bounds.x) / bounds.width).clamp(0.0, 1.0)
         } else {
-            self.live_position()
+            self.position
         };
 
         if progress > 0.0 {
