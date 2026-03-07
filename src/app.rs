@@ -18,7 +18,7 @@ use crate::{
     components::{
         bottom_bar, preferences,
         preferences::{PreferenceMessage, PreferenceOutcome},
-        viewer,
+        timeline_bar, viewer,
     },
     config::Config,
     gallery::Gallery,
@@ -338,6 +338,7 @@ impl App {
                 &self.config.theme,
                 &self.config.info_collapsed,
             ),
+            timeline_bar::view(4, 24, false),
             bottom_bar::view(
                 self.mode,
                 self.program.scale(),
