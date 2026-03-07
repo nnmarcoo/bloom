@@ -16,8 +16,24 @@ use crate::{
     },
 };
 
+const SCALE_COOLDOWN: Duration = Duration::from_millis(30);
+
+pub struct ViewProgramState {
+    pub drag: ViewDragState,
+    pub last_scale: Option<Instant>,
+}
+
+impl Default for ViewProgramState {
+    fn default() -> Self {
+        Self {
+            drag: ViewDragState::Idle,
+            last_scale: None,
+        }
+    }
+}
+
 #[derive(Default)]
-pub enum ViewProgramState {
+pub enum ViewDragState {
     #[default]
     Idle,
     Panning(Point),
@@ -287,21 +303,34 @@ impl Program<Message> for ViewProgram {
         if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
             if let Some(pos) = cursor.position_in(bounds) {
                 let pos = Vec2::new(pos.x, pos.y);
-                let delta = match delta {
-                    mouse::ScrollDelta::Lines { y, .. } => *y,
-                    mouse::ScrollDelta::Pixels { y, .. } => *y,
+                let scale_msg = |y: f32| {
+                    if y > 0.0 { Message::ScaleUp(pos) } else { Message::ScaleDown(pos) }
                 };
-                let msg = if delta > 0.0 {
-                    Message::ScaleUp(pos)
-                } else {
-                    Message::ScaleDown(pos)
+                let msg = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } if *y != 0.0 => {
+                        state.last_scale = None;
+                        Some(scale_msg(*y))
+                    }
+                    mouse::ScrollDelta::Pixels { y, .. } if *y != 0.0 => {
+                        let now = Instant::now();
+                        if state.last_scale.map_or(true, |t| now.duration_since(t) >= SCALE_COOLDOWN) {
+                            state.last_scale = Some(now);
+                            Some(scale_msg(*y))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
                 };
-                return Some(Action::publish(msg).and_capture());
+                if let Some(msg) = msg {
+                    return Some(Action::publish(msg).and_capture());
+                }
+                return Some(Action::capture());
             }
         }
 
-        match state {
-            ViewProgramState::Idle => {
+        match state.drag {
+            ViewDragState::Idle => {
                 if let Event::Mouse(mouse::Event::ButtonPressed(Button::Right)) = event {
                     if let Some(pos) = cursor.position_in(bounds) {
                         return Some(Action::publish(Message::ContextMenuOpened(Vec2::new(
@@ -311,7 +340,7 @@ impl Program<Message> for ViewProgram {
                 }
                 if let Event::Mouse(mouse::Event::ButtonPressed(Button::Left)) = event {
                     if let Some(pos) = cursor.position_over(bounds) {
-                        *state = ViewProgramState::Panning(pos);
+                        state.drag = ViewDragState::Panning(pos);
                         return Some(Action::capture());
                     }
                 }
@@ -326,14 +355,14 @@ impl Program<Message> for ViewProgram {
                     return Some(Action::publish(Message::CursorLeft));
                 }
             }
-            ViewProgramState::Panning(prev) => match event {
+            ViewDragState::Panning(prev) => match event {
                 Event::Mouse(mouse::Event::ButtonReleased(Button::Left)) => {
-                    *state = ViewProgramState::Idle;
+                    state.drag = ViewDragState::Idle;
                     return Some(Action::capture());
                 }
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
                     let delta = vec2(position.x - prev.x, prev.y - position.y);
-                    *state = ViewProgramState::Panning(*position);
+                    state.drag = ViewDragState::Panning(*position);
                     return Some(Action::publish(Message::Pan(delta)).and_capture());
                 }
                 _ => {}
@@ -348,9 +377,9 @@ impl Program<Message> for ViewProgram {
         _bounds: Rectangle,
         _cursor: Cursor,
     ) -> Interaction {
-        match state {
-            ViewProgramState::Panning(_) => Interaction::Grabbing,
-            ViewProgramState::Idle => Interaction::Idle,
+        match state.drag {
+            ViewDragState::Panning(_) => Interaction::Grabbing,
+            ViewDragState::Idle => Interaction::Idle,
         }
     }
 }
