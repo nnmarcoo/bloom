@@ -18,7 +18,7 @@ use crate::{
     components::{
         bottom_bar, preferences,
         preferences::{PreferenceMessage, PreferenceOutcome},
-        viewer,
+        timeline_bar, viewer,
     },
     config::Config,
     gallery::Gallery,
@@ -38,6 +38,8 @@ pub struct App {
     editing_config: Option<Config>,
     preference_state: preferences::PreferenceState,
     context_menu_pos: Option<Vec2>,
+    paused: bool,
+    scrubbing: bool,
 }
 
 impl Default for App {
@@ -57,6 +59,8 @@ impl Default for App {
             editing_config: None,
             preference_state: preferences::PreferenceState::default(),
             context_menu_pos: None,
+            paused: false,
+            scrubbing: false,
         }
     }
 }
@@ -90,6 +94,14 @@ pub enum Message {
     CopyPath,
     Rotate,
     Exit,
+    TogglePlayback,
+    FrameFirst,
+    FrameLast,
+    FrameNext,
+    FramePrev,
+    FrameSeek(usize),
+    TimelineScrubStart,
+    TimelineScrubEnd,
     Noop,
 }
 
@@ -239,6 +251,48 @@ impl App {
                 }
             }
             Message::Exit => return tasks::close_window(),
+            Message::TogglePlayback => {
+                self.paused = !self.paused;
+                if !self.paused {
+                    self.program.resume_animation();
+                }
+            }
+            Message::FrameFirst => {
+                self.paused = true;
+                self.program.seek_animation(0);
+            }
+            Message::FrameLast => {
+                self.paused = true;
+                if let Some((_, total)) = self.program.animation_info() {
+                    self.program.seek_animation(total.saturating_sub(1));
+                }
+            }
+            Message::FrameNext => {
+                self.paused = true;
+                if let Some((frame, total)) = self.program.animation_info() {
+                    self.program
+                        .seek_animation((frame + 1).min(total.saturating_sub(1)));
+                }
+            }
+            Message::FramePrev => {
+                self.paused = true;
+                if let Some((frame, _)) = self.program.animation_info() {
+                    self.program.seek_animation(frame.saturating_sub(1));
+                }
+            }
+            Message::FrameSeek(index) => {
+                self.program.seek_animation(index);
+                if !self.paused && !self.scrubbing {
+                    self.program.resume_animation();
+                }
+            }
+            Message::TimelineScrubStart => self.scrubbing = true,
+            Message::TimelineScrubEnd => {
+                self.scrubbing = false;
+                if !self.paused {
+                    self.program.resume_animation();
+                }
+            }
             Message::Noop => {}
             Message::Event(event) => return self.handle_event(event),
         }
@@ -250,6 +304,8 @@ impl App {
             MediaData::Image(data) => self.program.set_image(data),
             MediaData::Animation(anim) => self.program.set_animation(anim),
         }
+        self.paused = !self.config.autoplay;
+        self.scrubbing = false;
         self.program.fit();
     }
 
@@ -328,25 +384,33 @@ impl App {
         if let Some(pending) = &self.editing_config {
             return preferences::view(pending, &self.config.theme, &self.preference_state);
         }
-        column![
-            viewer::view(
-                self.program.clone(),
-                self.loading.as_deref(),
-                self.config.show_info,
-                self.gallery.current().map(|p| p.as_path()),
-                &self.gallery,
-                &self.config.theme,
-                &self.config.info_collapsed,
-            ),
-            bottom_bar::view(
-                self.mode,
-                self.program.scale(),
-                self.program.rotation(),
-                self.focus_scale,
-                self.config.show_info,
-                self.gallery.current().is_some(),
-            ),
-        ]
+        let mut col = column![viewer::view(
+            self.program.clone(),
+            self.loading.as_deref(),
+            self.config.show_info,
+            self.gallery.current().map(|p| p.as_path()),
+            &self.gallery,
+            &self.config.theme,
+            &self.config.info_collapsed,
+        )];
+
+        if let Some((frame, total)) = self.program.animation_info() {
+            let position = if total > 1 {
+                frame as f32 / (total - 1) as f32
+            } else {
+                0.0
+            };
+            col = col.push(timeline_bar::view(total, position, !self.paused));
+        }
+
+        col.push(bottom_bar::view(
+            self.mode,
+            self.program.scale(),
+            self.program.rotation(),
+            self.focus_scale,
+            self.config.show_info,
+            self.gallery.current().is_some(),
+        ))
         .into()
     }
 
@@ -363,11 +427,15 @@ impl App {
 
     pub fn subscription(&self) -> Subscription<Message> {
         let events = event::listen().map(Message::Event);
-        if let Some(delay) = self.program.time_until_next_frame() {
-            let delay = delay.max(Duration::from_millis(1));
-            Subscription::batch([events, every(delay).map(Message::AnimationTick)])
-        } else {
-            events
+        match (!self.paused && !self.scrubbing)
+            .then(|| self.program.time_until_next_frame())
+            .flatten()
+        {
+            Some(delay) => {
+                let delay = delay.max(Duration::from_millis(1));
+                Subscription::batch([events, every(delay).map(Message::AnimationTick)])
+            }
+            None => events,
         }
     }
 }

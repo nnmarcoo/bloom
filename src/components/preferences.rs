@@ -32,6 +32,7 @@ pub enum PreferenceMessage {
     SetRounded(bool),
     SetDecorations(bool),
     SetAlwaysOnTop(bool),
+    SetAutoplay(bool),
     StartCapture(Action),
     CancelCapture,
     SetKeybinding(Action, KeyBinding),
@@ -77,6 +78,10 @@ pub fn update(
             pending.always_on_top = v;
             PreferenceOutcome::Open
         }
+        PreferenceMessage::SetAutoplay(v) => {
+            pending.autoplay = v;
+            PreferenceOutcome::Open
+        }
         PreferenceMessage::StartCapture(action) => {
             preference_state.capturing = Some(action);
             PreferenceOutcome::Open
@@ -103,7 +108,9 @@ pub fn update(
             PreferenceOutcome::Open
         }
         PreferenceMessage::ResetRendering => {
-            pending.lanczos = Config::default().lanczos;
+            let d = Config::default();
+            pending.lanczos = d.lanczos;
+            pending.autoplay = d.autoplay;
             PreferenceOutcome::Open
         }
         PreferenceMessage::ResetKeybindings => {
@@ -357,6 +364,15 @@ pub fn view<'a>(
             "High-quality downsampling when zoomed out. This is GPU intensive",
             toggler(pending.lanczos)
                 .on_toggle(|v| Message::Preference(PreferenceMessage::SetLanczos(v)))
+                .into(),
+            theme,
+        ),
+        iced::widget::Space::new().height(PAD),
+        setting(
+            "Autoplay animations",
+            "Automatically play animations when opened",
+            toggler(pending.autoplay)
+                .on_toggle(|v| Message::Preference(PreferenceMessage::SetAutoplay(v)))
                 .into(),
             theme,
         ),

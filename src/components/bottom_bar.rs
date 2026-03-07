@@ -50,7 +50,7 @@ pub fn view<'a>(
                 include_bytes!("../../assets/icons/left.svg"),
                 Some(Message::Previous)
             ),
-            "Previous",
+            "Previous media",
             Position::Top,
         ),
         with_tooltip(
@@ -58,7 +58,7 @@ pub fn view<'a>(
                 include_bytes!("../../assets/icons/right.svg"),
                 Some(Message::Next)
             ),
-            "Next",
+            "Next media",
             Position::Top,
         ),
         with_tooltip(

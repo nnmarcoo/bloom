@@ -39,6 +39,7 @@ pub struct Config {
     pub rounded: bool,
     pub decorations: bool,
     pub always_on_top: bool,
+    pub autoplay: bool,
     pub keymap: Keymap,
     pub info_collapsed: HashSet<String>,
 }
@@ -52,6 +53,7 @@ impl Default for Config {
             rounded: true,
             decorations: true,
             always_on_top: false,
+            autoplay: true,
             keymap: Keymap::default(),
             info_collapsed: HashSet::new(),
         }
@@ -68,6 +70,8 @@ struct ConfigFile {
     decorations: bool,
     #[serde(default)]
     always_on_top: bool,
+    #[serde(default = "default_true")]
+    autoplay: bool,
     #[serde(default)]
     keybinds: KeymapFile,
     #[serde(default)]
@@ -89,6 +93,7 @@ impl From<&Config> for ConfigFile {
             rounded: c.rounded,
             decorations: c.decorations,
             always_on_top: c.always_on_top,
+            autoplay: c.autoplay,
             keybinds: KeymapFile::from(&c.keymap),
             info_collapsed,
         }
@@ -104,6 +109,7 @@ impl From<ConfigFile> for Config {
             rounded: f.rounded,
             decorations: f.decorations,
             always_on_top: f.always_on_top,
+            autoplay: f.autoplay,
             keymap: Keymap::from(f.keybinds),
             info_collapsed: f.info_collapsed.into_iter().collect(),
         }

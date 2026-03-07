@@ -20,12 +20,12 @@ pub struct Animation {
 impl Animation {
     pub fn new(frames: Vec<Frame>) -> Self {
         let total_duration = frames.iter().map(|f| f.delay).sum();
-        let deadline = Instant::now() + frames[0].delay;
+        let first_delay = frames[0].delay;
         Self {
             frames: Arc::new(frames),
             total_duration,
             current: 0,
-            deadline,
+            deadline: Instant::now() + first_delay,
         }
     }
 
@@ -53,16 +53,30 @@ impl Animation {
         self.total_duration
     }
 
+    pub fn seek(&mut self, index: usize) -> Arc<ImageData> {
+        let index = index.min(self.frames.len() - 1);
+        self.current = index;
+        self.deadline = Instant::now() + self.frames[index].delay;
+        Arc::clone(&self.frames[index].data)
+    }
+
+    pub fn resume(&mut self) {
+        let now = Instant::now();
+        let remaining = self.deadline.saturating_duration_since(now);
+        self.deadline = now + remaining.max(self.frames[self.current].delay);
+    }
+
     pub fn tick(&mut self, now: Instant) -> Option<Arc<ImageData>> {
         if now < self.deadline {
             return None;
         }
 
-        self.current = (self.current + 1) % self.frames.len();
-        self.deadline += self.frames[self.current].delay;
-        while self.deadline <= now {
+        loop {
             self.current = (self.current + 1) % self.frames.len();
             self.deadline += self.frames[self.current].delay;
+            if self.deadline > now {
+                break;
+            }
         }
 
         Some(Arc::clone(&self.frames[self.current].data))

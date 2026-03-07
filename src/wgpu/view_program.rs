@@ -180,6 +180,18 @@ impl ViewProgram {
         self.cursor_pos = pos;
     }
 
+    pub fn seek_animation(&mut self, index: usize) {
+        if let Some(ref mut anim) = self.animation {
+            self.image = Some(anim.seek(index));
+        }
+    }
+
+    pub fn resume_animation(&mut self) {
+        if let Some(ref mut anim) = self.animation {
+            anim.resume();
+        }
+    }
+
     pub fn tick_animation(&mut self, now: Instant) {
         if let Some(ref mut anim) = self.animation {
             if let Some(frame) = anim.tick(now) {
