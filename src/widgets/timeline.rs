@@ -1,24 +1,60 @@
+use std::time::{Duration, Instant};
+
 use iced::advanced::layout;
 use iced::advanced::renderer::Quad;
 use iced::advanced::widget::tree::{self, Tree};
 use iced::advanced::{self, Clipboard, Layout, Shell, Widget};
 use iced::mouse;
+use iced::window;
 use iced::{Background, Border, Element, Event, Length, Rectangle, Renderer, Size};
 
 pub struct Timeline<Message> {
-    frame: usize,
+    timing: Option<(Instant, Duration, Duration)>,
+    position: f32,
     total: usize,
     on_seek: Box<dyn Fn(usize) -> Message>,
+    on_drag_start: Option<Message>,
+    on_drag_end: Option<Message>,
     height: f32,
 }
 
 impl<Message> Timeline<Message> {
-    pub fn new(frame: usize, total: usize, on_seek: impl Fn(usize) -> Message + 'static) -> Self {
+    pub fn new(
+        timing: Option<(Instant, Duration, Duration)>,
+        position: f32,
+        total: usize,
+        on_seek: impl Fn(usize) -> Message + 'static,
+    ) -> Self {
         Self {
-            frame,
+            timing,
+            position,
             total,
             on_seek: Box::new(on_seek),
+            on_drag_start: None,
+            on_drag_end: None,
             height: 20.0,
+        }
+    }
+
+    pub fn on_drag_start(mut self, msg: Message) -> Self {
+        self.on_drag_start = Some(msg);
+        self
+    }
+
+    pub fn on_drag_end(mut self, msg: Message) -> Self {
+        self.on_drag_end = Some(msg);
+        self
+    }
+
+    fn live_position(&self) -> f32 {
+        if let Some((frame_began_at, frame_start_elapsed, total_duration)) = self.timing {
+            if total_duration.is_zero() {
+                return 0.0;
+            }
+            let elapsed = frame_start_elapsed + frame_began_at.elapsed();
+            (elapsed.as_secs_f32() / total_duration.as_secs_f32()).clamp(0.0, 1.0)
+        } else {
+            self.position
         }
     }
 }
@@ -68,9 +104,17 @@ where
         _viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_mut::<State>();
+
+        if let Event::Window(window::Event::RedrawRequested(_)) = event {
+            if self.timing.is_some() && state.drag_x.is_none() {
+                shell.request_redraw();
+            }
+            return;
+        }
+
         let bounds = layout.bounds();
 
-        let seek_from_x = |x: f32| -> usize {
+        let frame_from_x = |x: f32| -> usize {
             if self.total <= 1 {
                 return 0;
             }
@@ -82,6 +126,10 @@ where
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(pos) = cursor.position_over(bounds) {
                     state.drag_x = Some(pos.x);
+                    if let Some(msg) = self.on_drag_start.clone() {
+                        shell.publish(msg);
+                    }
+                    shell.publish((self.on_seek)(frame_from_x(pos.x)));
                     shell.capture_event();
                     shell.request_redraw();
                 }
@@ -89,13 +137,16 @@ where
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
                 if state.drag_x.is_some() {
                     state.drag_x = Some(position.x);
+                    shell.publish((self.on_seek)(frame_from_x(position.x)));
                     shell.capture_event();
                     shell.request_redraw();
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                if let Some(x) = state.drag_x.take() {
-                    shell.publish((self.on_seek)(seek_from_x(x)));
+                if state.drag_x.take().is_some() {
+                    if let Some(msg) = self.on_drag_end.clone() {
+                        shell.publish(msg);
+                    }
                     shell.capture_event();
                 }
             }
@@ -143,10 +194,8 @@ where
 
         let progress = if let Some(x) = state.drag_x {
             ((x - bounds.x) / bounds.width).clamp(0.0, 1.0)
-        } else if self.total <= 1 {
-            0.0
         } else {
-            self.frame as f32 / (self.total - 1) as f32
+            self.live_position()
         };
 
         if progress > 0.0 {

@@ -39,6 +39,7 @@ pub struct App {
     preference_state: preferences::PreferenceState,
     context_menu_pos: Option<Vec2>,
     paused: bool,
+    scrubbing: bool,
 }
 
 impl Default for App {
@@ -59,6 +60,7 @@ impl Default for App {
             preference_state: preferences::PreferenceState::default(),
             context_menu_pos: None,
             paused: false,
+            scrubbing: false,
         }
     }
 }
@@ -98,6 +100,8 @@ pub enum Message {
     FrameNext,
     FramePrev,
     FrameSeek(usize),
+    TimelineScrubStart,
+    TimelineScrubEnd,
     Noop,
 }
 
@@ -278,6 +282,13 @@ impl App {
             }
             Message::FrameSeek(index) => {
                 self.program.seek_animation(index);
+                if !self.paused && !self.scrubbing {
+                    self.program.resume_animation();
+                }
+            }
+            Message::TimelineScrubStart => self.scrubbing = true,
+            Message::TimelineScrubEnd => {
+                self.scrubbing = false;
                 if !self.paused {
                     self.program.resume_animation();
                 }
@@ -293,6 +304,8 @@ impl App {
             MediaData::Image(data) => self.program.set_image(data),
             MediaData::Animation(anim) => self.program.set_animation(anim),
         }
+        self.paused = false;
+        self.scrubbing = false;
         self.program.fit();
     }
 
@@ -382,7 +395,21 @@ impl App {
         )];
 
         if let Some((frame, total)) = self.program.animation_info() {
-            col = col.push(timeline_bar::view(frame, total, !self.paused));
+            let timing = (!self.paused && !self.scrubbing)
+                .then(|| self.program.animation_timing())
+                .flatten();
+            let position = if total > 1 {
+                frame as f32 / (total - 1) as f32
+            } else {
+                0.0
+            };
+            col = col.push(timeline_bar::view(
+                frame,
+                total,
+                timing,
+                position,
+                !self.paused,
+            ));
         }
 
         col.push(bottom_bar::view(
@@ -409,7 +436,7 @@ impl App {
 
     pub fn subscription(&self) -> Subscription<Message> {
         let events = event::listen().map(Message::Event);
-        match (!self.paused)
+        match (!self.paused && !self.scrubbing)
             .then(|| self.program.time_until_next_frame())
             .flatten()
         {

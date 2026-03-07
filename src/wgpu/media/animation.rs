@@ -14,6 +14,7 @@ pub struct Animation {
     frames: Arc<Vec<Frame>>,
     total_duration: Duration,
     current: usize,
+    frame_start_elapsed: Duration,
     deadline: Instant,
 }
 
@@ -25,6 +26,7 @@ impl Animation {
             frames: Arc::new(frames),
             total_duration,
             current: 0,
+            frame_start_elapsed: Duration::ZERO,
             deadline,
         }
     }
@@ -45,6 +47,15 @@ impl Animation {
         self.current
     }
 
+    pub fn timing(&self) -> (Instant, Duration, Duration) {
+        let frame_began_at = self.deadline - self.frames[self.current].delay;
+        (
+            frame_began_at,
+            self.frame_start_elapsed,
+            self.total_duration,
+        )
+    }
+
     pub fn time_until_next_frame(&self) -> Duration {
         self.deadline.saturating_duration_since(Instant::now())
     }
@@ -54,9 +65,11 @@ impl Animation {
     }
 
     pub fn seek(&mut self, index: usize) -> Arc<ImageData> {
-        self.current = index.min(self.frames.len() - 1);
-        self.deadline = Instant::now() + self.frames[self.current].delay;
-        Arc::clone(&self.frames[self.current].data)
+        let index = index.min(self.frames.len() - 1);
+        self.frame_start_elapsed = self.frames[..index].iter().map(|f| f.delay).sum();
+        self.current = index;
+        self.deadline = Instant::now() + self.frames[index].delay;
+        Arc::clone(&self.frames[index].data)
     }
 
     pub fn resume(&mut self) {
@@ -74,11 +87,18 @@ impl Animation {
             return None;
         }
 
-        self.current = (self.current + 1) % self.frames.len();
-        self.deadline += self.frames[self.current].delay;
-        while self.deadline <= now {
+        loop {
+            let prev = self.current;
             self.current = (self.current + 1) % self.frames.len();
+            self.frame_start_elapsed = if self.current == 0 {
+                Duration::ZERO
+            } else {
+                self.frame_start_elapsed + self.frames[prev].delay
+            };
             self.deadline += self.frames[self.current].delay;
+            if self.deadline > now {
+                break;
+            }
         }
 
         Some(Arc::clone(&self.frames[self.current].data))

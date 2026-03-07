@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use iced::alignment::Vertical;
 use iced::widget::container;
 use iced::widget::tooltip::Position;
@@ -9,7 +11,13 @@ use crate::styles::{BAR_HEIGHT, PAD, bar_style};
 use crate::ui::{svg_button, with_tooltip};
 use crate::widgets::timeline::Timeline;
 
-pub fn view<'a>(frame: usize, total_frames: usize, playing: bool) -> Element<'a, Message> {
+pub fn view<'a>(
+    frame: usize,
+    total_frames: usize,
+    timing: Option<(Instant, Duration, Duration)>,
+    position: f32,
+    playing: bool,
+) -> Element<'a, Message> {
     let (play_pause_icon, play_pause_tooltip): (&'static [u8], &str) = if playing {
         (include_bytes!("../../assets/icons/pause.svg"), "Pause")
     } else {
@@ -61,7 +69,9 @@ pub fn view<'a>(frame: usize, total_frames: usize, playing: bool) -> Element<'a,
     container(
         row![
             controls,
-            Timeline::new(frame, total_frames, Message::FrameSeek),
+            Timeline::new(timing, position, total_frames, Message::FrameSeek)
+                .on_drag_start(Message::TimelineScrubStart)
+                .on_drag_end(Message::TimelineScrubEnd),
             text(format!("{} / {}", frame + 1, total_frames)).size(12),
         ]
         .height(Length::Fixed(BAR_HEIGHT))
