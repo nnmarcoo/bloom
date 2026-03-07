@@ -53,6 +53,22 @@ impl Animation {
         self.total_duration
     }
 
+    pub fn seek(&mut self, index: usize) -> Arc<ImageData> {
+        self.current = index.min(self.frames.len() - 1);
+        self.deadline = Instant::now() + self.frames[self.current].delay;
+        Arc::clone(&self.frames[self.current].data)
+    }
+
+    pub fn resume(&mut self) {
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        let carry = if remaining.is_zero() {
+            self.frames[self.current].delay
+        } else {
+            remaining
+        };
+        self.deadline = Instant::now() + carry;
+    }
+
     pub fn tick(&mut self, now: Instant) -> Option<Arc<ImageData>> {
         if now < self.deadline {
             return None;

@@ -25,7 +25,7 @@ impl<Message> Timeline<Message> {
 
 #[derive(Default)]
 struct State {
-    dragging: bool,
+    drag_x: Option<f32>,
 }
 
 impl<Message> Widget<Message, iced::Theme, Renderer> for Timeline<Message>
@@ -81,20 +81,21 @@ where
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(pos) = cursor.position_over(bounds) {
-                    state.dragging = true;
-                    shell.publish((self.on_seek)(seek_from_x(pos.x)));
+                    state.drag_x = Some(pos.x);
                     shell.capture_event();
+                    shell.request_redraw();
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                if state.dragging {
-                    shell.publish((self.on_seek)(seek_from_x(position.x)));
+                if state.drag_x.is_some() {
+                    state.drag_x = Some(position.x);
                     shell.capture_event();
+                    shell.request_redraw();
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                if state.dragging {
-                    state.dragging = false;
+                if let Some(x) = state.drag_x.take() {
+                    shell.publish((self.on_seek)(seek_from_x(x)));
                     shell.capture_event();
                 }
             }
@@ -117,7 +118,7 @@ where
         let state = tree.state.downcast_ref::<State>();
         let bounds = layout.bounds();
         let palette = theme.extended_palette();
-        let is_active = cursor.is_over(bounds) || state.dragging;
+        let is_active = cursor.is_over(bounds) || state.drag_x.is_some();
 
         let track_h = if is_active { 6.0_f32 } else { 4.0_f32 };
         let track_y = bounds.center_y() - track_h / 2.0;
@@ -140,8 +141,10 @@ where
             Background::Color(palette.background.strong.color),
         );
 
-        let progress = if self.total <= 1 {
-            0.0_f32
+        let progress = if let Some(x) = state.drag_x {
+            ((x - bounds.x) / bounds.width).clamp(0.0, 1.0)
+        } else if self.total <= 1 {
+            0.0
         } else {
             self.frame as f32 / (self.total - 1) as f32
         };
@@ -196,7 +199,7 @@ where
         _renderer: &Renderer,
     ) -> mouse::Interaction {
         let state = tree.state.downcast_ref::<State>();
-        if state.dragging || cursor.is_over(layout.bounds()) {
+        if state.drag_x.is_some() || cursor.is_over(layout.bounds()) {
             mouse::Interaction::Pointer
         } else {
             mouse::Interaction::default()

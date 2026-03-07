@@ -20,31 +20,37 @@ pub fn view<'a>(frame: usize, total_frames: usize, playing: bool) -> Element<'a,
         with_tooltip(
             svg_button(
                 include_bytes!("../../assets/icons/first.svg"),
-                Message::Noop
+                Message::FrameFirst
             ),
             "First frame",
             Position::Top,
         ),
         with_tooltip(
-            svg_button(include_bytes!("../../assets/icons/left.svg"), Message::Noop),
+            svg_button(
+                include_bytes!("../../assets/icons/left.svg"),
+                Message::FramePrev
+            ),
             "Previous frame",
             Position::Top,
         ),
         with_tooltip(
-            svg_button(play_pause_icon, Message::Noop),
+            svg_button(play_pause_icon, Message::TogglePlayback),
             play_pause_tooltip,
             Position::Top,
         ),
         with_tooltip(
             svg_button(
                 include_bytes!("../../assets/icons/right.svg"),
-                Message::Noop
+                Message::FrameNext
             ),
             "Next frame",
             Position::Top,
         ),
         with_tooltip(
-            svg_button(include_bytes!("../../assets/icons/last.svg"), Message::Noop),
+            svg_button(
+                include_bytes!("../../assets/icons/last.svg"),
+                Message::FrameLast
+            ),
             "Last frame",
             Position::Top,
         ),
@@ -55,7 +61,7 @@ pub fn view<'a>(frame: usize, total_frames: usize, playing: bool) -> Element<'a,
     container(
         row![
             controls,
-            Timeline::new(frame, total_frames, |_f| Message::Noop),
+            Timeline::new(frame, total_frames, Message::FrameSeek),
             text(format!("{} / {}", frame + 1, total_frames)).size(12),
         ]
         .height(Length::Fixed(BAR_HEIGHT))
