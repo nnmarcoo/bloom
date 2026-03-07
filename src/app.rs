@@ -304,7 +304,7 @@ impl App {
             MediaData::Image(data) => self.program.set_image(data),
             MediaData::Animation(anim) => self.program.set_animation(anim),
         }
-        self.paused = false;
+        self.paused = !self.config.autoplay;
         self.scrubbing = false;
         self.program.fit();
     }
