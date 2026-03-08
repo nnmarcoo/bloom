@@ -24,7 +24,10 @@ use crate::{
     gallery::Gallery,
     keybinds::{Action, KeyBinding},
     styles, tasks,
-    wgpu::{media::image_data::MediaData, view_program::ViewProgram},
+    wgpu::{
+        media::{animation::Frame, image_data::MediaData},
+        view_program::ViewProgram,
+    },
 };
 
 pub struct App {
@@ -40,6 +43,7 @@ pub struct App {
     context_menu_pos: Option<Vec2>,
     paused: bool,
     scrubbing: bool,
+    pending_animation: Option<(u64, Vec<Frame>)>,
 }
 
 impl Default for App {
@@ -61,6 +65,7 @@ impl Default for App {
             context_menu_pos: None,
             paused: false,
             scrubbing: false,
+            pending_animation: None,
         }
     }
 }
@@ -102,6 +107,9 @@ pub enum Message {
     FrameSeek(usize),
     TimelineScrubStart,
     TimelineScrubEnd,
+    StreamAnimation(PathBuf, u64),
+    AnimationFrameLoaded(u64, Frame),
+    AnimationDone(u64),
     Noop,
 }
 
@@ -152,6 +160,7 @@ impl App {
                 if let Some(p) = self.gallery.set(path) {
                     self.loading = Some(Gallery::filename(p));
                     self.load_generation = self.load_generation.wrapping_add(1);
+                    self.pending_animation = None;
                     return tasks::load_media(p.clone(), self.load_generation);
                 }
             }
@@ -291,6 +300,33 @@ impl App {
                 self.scrubbing = false;
                 if !self.paused {
                     self.program.resume_animation();
+                }
+            }
+            Message::StreamAnimation(path, generation) => {
+                return tasks::stream_animation(path, generation);
+            }
+            Message::AnimationFrameLoaded(generation, frame) => {
+                if generation != self.load_generation {
+                    return Task::none();
+                }
+                let (_, frames) = self
+                    .pending_animation
+                    .get_or_insert_with(|| (generation, Vec::new()));
+                frames.push(frame);
+                let anim = crate::wgpu::media::animation::Animation::new(frames.clone());
+                if frames.len() == 1 {
+                    self.loading = None;
+                    self.program.set_animation(anim);
+                    self.paused = !self.config.autoplay;
+                    self.scrubbing = false;
+                    self.program.fit();
+                } else {
+                    self.program.replace_animation(anim);
+                }
+            }
+            Message::AnimationDone(generation) => {
+                if generation == self.load_generation {
+                    self.pending_animation = None;
                 }
             }
             Message::Noop => {}

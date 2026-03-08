@@ -176,6 +176,12 @@ impl ViewProgram {
         self.rotation = 0;
     }
 
+    /// Replaces the animation frames without resetting the view (no fit/rotation reset).
+    /// Used during streaming to append newly decoded frames while playback continues.
+    pub fn replace_animation(&mut self, anim: Animation) {
+        self.animation = Some(anim);
+    }
+
     pub fn set_cursor_pos(&mut self, pos: Option<Vec2>) {
         self.cursor_pos = pos;
     }

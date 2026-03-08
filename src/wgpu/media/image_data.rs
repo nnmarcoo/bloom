@@ -31,6 +31,79 @@ use zip::ZipArchive;
 use super::animation::{Animation, Frame};
 use super::exif_data::ExifData;
 
+struct GifFrameIter {
+    decoder: gif::Decoder<BufReader<File>>,
+    screen: gif_dispose::Screen,
+}
+
+impl Iterator for GifFrameIter {
+    type Item = Result<Frame, ImageError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let frame = match self.decoder.read_next_frame() {
+            Ok(Some(f)) => f,
+            Ok(None) => return None,
+            Err(e) => return Some(Err(ImageError::IoError(Error::other(e)))),
+        };
+        let delay_ms = frame.delay as u64 * 10;
+        let delay = Duration::from_millis(if delay_ms < 20 { 100 } else { delay_ms });
+        if let Err(e) = self.screen.blit_frame(frame) {
+            return Some(Err(ImageError::IoError(Error::other(e))));
+        }
+        let img = self.screen.pixels_rgba();
+        let (pixels_rgba, width, height) = img.to_contiguous_buf();
+        let pixels = pixels_rgba
+            .iter()
+            .flat_map(|p| [p.r, p.g, p.b, p.a])
+            .collect();
+        Some(Ok(Frame {
+            data: Arc::new(ImageData::new(pixels, width as u32, height as u32)),
+            delay,
+        }))
+    }
+}
+
+struct WebpFrameIter {
+    decoder: image_webp::WebPDecoder<std::io::Cursor<Vec<u8>>>,
+    width: u32,
+    height: u32,
+    has_alpha: bool,
+    buf: Vec<u8>,
+    remaining: u32,
+}
+
+impl Iterator for WebpFrameIter {
+    type Item = Result<Frame, ImageError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+        self.remaining -= 1;
+        let duration_ms = match self.decoder.read_frame(&mut self.buf) {
+            Ok(d) => d,
+            Err(e) => return Some(Err(ImageError::IoError(Error::other(e)))),
+        };
+        let delay = Duration::from_millis(if duration_ms < 20 {
+            100
+        } else {
+            duration_ms as u64
+        });
+        let pixels = if self.has_alpha {
+            self.buf.clone()
+        } else {
+            self.buf
+                .chunks_exact(3)
+                .flat_map(|p| [p[0], p[1], p[2], 255])
+                .collect()
+        };
+        Some(Ok(Frame {
+            data: Arc::new(ImageData::new(pixels, self.width, self.height)),
+            delay,
+        }))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum MediaData {
     Image(ImageData),
@@ -107,40 +180,22 @@ impl ImageData {
         Ok(Self::new(img.into_raw(), width, height))
     }
 
-    pub fn load_gif(path: &Path) -> Result<Animation, ImageError> {
+    pub fn iter_gif_frames(
+        path: &Path,
+    ) -> Result<impl Iterator<Item = Result<Frame, ImageError>>, ImageError> {
         let file = File::open(path).map_err(ImageError::IoError)?;
         let mut gif_opts = gif::DecodeOptions::new();
         gif_opts.set_color_output(gif::ColorOutput::Indexed);
-        let mut decoder = gif_opts
+        let decoder = gif_opts
             .read_info(BufReader::new(file))
             .map_err(|e| ImageError::IoError(Error::other(e)))?;
-        let mut screen = gif_dispose::Screen::new_decoder(&decoder);
+        let screen = gif_dispose::Screen::new_decoder(&decoder);
+        Ok(GifFrameIter { decoder, screen })
+    }
 
-        let mut frames = Vec::new();
-        while let Some(frame) = decoder
-            .read_next_frame()
-            .map_err(|e| ImageError::IoError(Error::other(e)))?
-        {
-            let delay_ms = frame.delay as u64 * 10;
-            let delay = Duration::from_millis(if delay_ms < 20 { 100 } else { delay_ms });
-
-            screen
-                .blit_frame(frame)
-                .map_err(|e| ImageError::IoError(Error::other(e)))?;
-
-            let img = screen.pixels_rgba();
-            let (pixels_rgba, width, height) = img.to_contiguous_buf();
-            let pixels = pixels_rgba
-                .iter()
-                .flat_map(|p| [p.r, p.g, p.b, p.a])
-                .collect();
-            frames.push(Frame {
-                data: Arc::new(ImageData::new(pixels, width as u32, height as u32)),
-                delay,
-            });
-        }
-
-        Ok(Animation::new(frames))
+    pub fn load_gif(path: &Path) -> Result<Animation, ImageError> {
+        let frames: Result<Vec<_>, _> = Self::iter_gif_frames(path)?.collect();
+        Ok(Animation::new(frames?))
     }
 
     // Extended Reinhard tonemapping (Reinhard et al. 2002, eq. 4) preserving hue.
@@ -310,28 +365,35 @@ impl ImageData {
         Ok(Self::new(pixmap.take(), width, height))
     }
 
-    pub fn load_apng(path: &Path) -> Result<Animation, ImageError> {
+    pub fn iter_apng_frames(
+        path: &Path,
+    ) -> Result<impl Iterator<Item = Result<Frame, ImageError>>, ImageError> {
         let file = File::open(path).map_err(ImageError::IoError)?;
         let decoder = PngDecoder::new(BufReader::new(file))?.apng()?;
-        let mut frames = Vec::new();
-        for frame_result in decoder.into_frames() {
+        Ok(decoder.into_frames().map(|frame_result| {
             let frame = frame_result?;
             let (numer, denom) = frame.delay().numer_denom_ms();
             let delay_ms = (numer as u64) / (denom as u64).max(1);
             let delay = Duration::from_millis(if delay_ms < 20 { 100 } else { delay_ms });
             let rgba = frame.into_buffer();
             let (width, height) = rgba.dimensions();
-            frames.push(Frame {
+            Ok(Frame {
                 data: Arc::new(ImageData::new(rgba.into_raw(), width, height)),
                 delay,
-            });
-        }
-        Ok(Animation::new(frames))
+            })
+        }))
     }
 
-    pub fn load_webp_animated(path: &Path) -> Result<Animation, ImageError> {
+    pub fn load_apng(path: &Path) -> Result<Animation, ImageError> {
+        let frames: Result<Vec<_>, _> = Self::iter_apng_frames(path)?.collect();
+        Ok(Animation::new(frames?))
+    }
+
+    pub fn iter_webp_frames(
+        path: &Path,
+    ) -> Result<impl Iterator<Item = Result<Frame, ImageError>>, ImageError> {
         let data = std::fs::read(path).map_err(ImageError::IoError)?;
-        let mut decoder = image_webp::WebPDecoder::new(std::io::Cursor::new(&data))
+        let decoder = image_webp::WebPDecoder::new(std::io::Cursor::new(data))
             .map_err(|e| ImageError::IoError(Error::other(e)))?;
         let (width, height) = decoder.dimensions();
         let num_frames = decoder.num_frames();
@@ -339,30 +401,19 @@ impl ImageData {
         let buf_size = decoder
             .output_buffer_size()
             .ok_or_else(|| ImageError::IoError(Error::other("unknown WebP buffer size")))?;
-        let mut frames = Vec::new();
-        let mut buf = vec![0u8; buf_size];
-        for _ in 0..num_frames {
-            let duration_ms = decoder
-                .read_frame(&mut buf)
-                .map_err(|e| ImageError::IoError(Error::other(e)))?;
-            let delay = Duration::from_millis(if duration_ms < 20 {
-                100
-            } else {
-                duration_ms as u64
-            });
-            let pixels = if has_alpha {
-                buf.clone()
-            } else {
-                buf.chunks_exact(3)
-                    .flat_map(|p| [p[0], p[1], p[2], 255])
-                    .collect()
-            };
-            frames.push(Frame {
-                data: Arc::new(ImageData::new(pixels, width, height)),
-                delay,
-            });
-        }
-        Ok(Animation::new(frames))
+        Ok(WebpFrameIter {
+            decoder,
+            width,
+            height,
+            has_alpha,
+            buf: vec![0u8; buf_size],
+            remaining: num_frames,
+        })
+    }
+
+    pub fn load_webp_animated(path: &Path) -> Result<Animation, ImageError> {
+        let frames: Result<Vec<_>, _> = Self::iter_webp_frames(path)?.collect();
+        Ok(Animation::new(frames?))
     }
 
     pub fn load_jp2(path: &Path) -> Result<Self, ImageError> {

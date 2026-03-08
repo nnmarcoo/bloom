@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use super::image_data::ImageData;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Frame {
     pub data: Arc<ImageData>,
     pub delay: Duration,
