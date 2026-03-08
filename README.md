@@ -17,11 +17,15 @@
 - **GPU rendering** — hardware-accelerated via [wgpu](https://wgpu.rs) at any resolution
 - **Lanczos filtering** — high-quality downsampling with a 5-level mip pyramid
 - **Hardware mipmaps** — smooth zoomed-out views
-- **GIF, APNG & WebP** — animation playback
+- **GIF, APNG & WebP** — animation playback with timeline scrubbing and frame controls
 - **Gallery** — browse every image in a folder seamlessly
 - **Tiled texture system** — handles images larger than GPU texture limits
 - **Pan and zoom** — flexible zoom from 0.01× to 35×, with custom % input
 - **Clipboard import** — load an image directly from clipboard or file path (`Ctrl+V`)
+- **Info panel** — file metadata, dimensions, EXIF, pixel color under cursor, RGB histogram, and animation timing
+- **Image rotation** — rotate 90° clockwise
+- **Context menu** — right-click to copy pixel color or file path
+- **Customizable keybindings** — rebind any action via the preferences panel
 
 ## Supported Formats
 
