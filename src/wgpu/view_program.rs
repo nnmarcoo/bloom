@@ -176,9 +176,11 @@ impl ViewProgram {
         self.rotation = 0;
     }
 
-    /// Replaces the animation frames without resetting the view (no fit/rotation reset).
-    /// Used during streaming to append newly decoded frames while playback continues.
-    pub fn replace_animation(&mut self, anim: Animation) {
+    pub fn replace_animation(&mut self, mut anim: Animation) {
+        if let Some(ref old) = self.animation {
+            anim.adopt_playback_state(old);
+        }
+        self.image = Some(Arc::clone(anim.current_image()));
         self.animation = Some(anim);
     }
 

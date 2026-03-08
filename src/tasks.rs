@@ -12,7 +12,7 @@ use crate::{
     },
 };
 
-fn is_streamed_animation(path: &PathBuf) -> bool {
+fn is_streamed_animation(path: &std::path::Path) -> bool {
     matches!(
         path.extension()
             .and_then(|e| e.to_str())
@@ -24,7 +24,6 @@ fn is_streamed_animation(path: &PathBuf) -> bool {
 }
 
 pub fn load_media(path: PathBuf, generation: u64) -> iced::Task<Message> {
-    // WebP needs a quick peek to decide if it's animated before we can choose a path.
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -32,35 +31,38 @@ pub fn load_media(path: PathBuf, generation: u64) -> iced::Task<Message> {
         .to_ascii_lowercase();
 
     if ext == "webp" {
-        // Open once to check; if animated, stream; otherwise fall through to static load.
-        return iced::Task::future(async move {
-            let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
-            let path2 = path.clone();
-            std::thread::spawn(move || {
-                let animated = std::fs::File::open(&path2)
-                    .ok()
-                    .and_then(|f| {
-                        image_webp::WebPDecoder::new(std::io::BufReader::new(f)).ok()
-                    })
-                    .map(|d| d.is_animated())
-                    .unwrap_or(false);
-                let _ = tx.send(animated);
-            });
-            match rx.await {
-                Ok(true) => return Message::StreamAnimation(path, generation),
-                _ => {}
-            }
-            // Static WebP: fall back to normal load
-            let (tx2, rx2) = tokio::sync::oneshot::channel();
-            std::thread::spawn(move || {
-                let _ = tx2.send(ImageData::load_media(&path));
-            });
-            match rx2.await {
-                Ok(Ok(media)) => Message::MediaLoaded(generation, media),
-                Ok(Err(e)) => Message::MediaFailed(generation, e.to_string()),
-                Err(_) => Message::MediaFailed(generation, "load thread panicked".to_string()),
-            }
+        use std::sync::Arc;
+        let path = Arc::new(path);
+        let path2 = Arc::clone(&path);
+        let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+        std::thread::spawn(move || {
+            let animated = std::fs::File::open(path2.as_ref())
+                .ok()
+                .and_then(|f| image_webp::WebPDecoder::new(std::io::BufReader::new(f)).ok())
+                .map(|d| d.is_animated())
+                .unwrap_or(false);
+            let _ = tx.send(animated);
         });
+        return iced::Task::future(async move { rx.await.unwrap_or(false) })
+            .then(move |animated| {
+                let path = Arc::clone(&path);
+                if animated {
+                    stream_animation((*path).clone(), generation)
+                } else {
+                    let path = (*path).clone();
+                    iced::Task::future(async move {
+                        let (tx, rx) = tokio::sync::oneshot::channel();
+                        std::thread::spawn(move || {
+                            let _ = tx.send(ImageData::load_media(&path));
+                        });
+                        match rx.await {
+                            Ok(Ok(media)) => Message::MediaLoaded(generation, media),
+                            Ok(Err(e)) => Message::MediaFailed(generation, e.to_string()),
+                            Err(_) => Message::MediaFailed(generation, "load thread panicked".to_string()),
+                        }
+                    })
+                }
+            });
     }
 
     if is_streamed_animation(&path) {
@@ -92,8 +94,6 @@ pub fn stream_animation(path: PathBuf, generation: u64) -> iced::Task<Message> {
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Frame, String>>(8);
 
-        // Helper: drains any concrete iterator into the channel.
-        // Called inside the spawn closure so no Send bound on the iterator itself.
         fn send_frames(
             iter: impl Iterator<Item = Result<Frame, image::ImageError>>,
             tx: &tokio::sync::mpsc::Sender<Result<Frame, String>>,
@@ -129,9 +129,7 @@ pub fn stream_animation(path: PathBuf, generation: u64) -> iced::Task<Message> {
                         .await;
                 }
                 Err(e) => {
-                    let _ = output
-                        .send(Message::MediaFailed(generation, e))
-                        .await;
+                    let _ = output.send(Message::MediaFailed(generation, e)).await;
                     return;
                 }
             }

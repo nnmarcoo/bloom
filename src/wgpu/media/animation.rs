@@ -73,6 +73,12 @@ impl Animation {
         self.deadline = now + remaining.max(self.frames[self.current].delay);
     }
 
+    pub fn adopt_playback_state(&mut self, src: &Animation) {
+        self.current = src.current.min(self.frames.len() - 1);
+        self.current_timestamp = src.current_timestamp;
+        self.deadline = src.deadline;
+    }
+
     pub fn tick(&mut self, now: Instant) -> Option<Arc<ImageData>> {
         if now < self.deadline {
             return None;

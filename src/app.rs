@@ -43,7 +43,7 @@ pub struct App {
     context_menu_pos: Option<Vec2>,
     paused: bool,
     scrubbing: bool,
-    pending_animation: Option<(u64, Vec<Frame>)>,
+    pending_animation: Option<Vec<Frame>>,
 }
 
 impl Default for App {
@@ -107,7 +107,6 @@ pub enum Message {
     FrameSeek(usize),
     TimelineScrubStart,
     TimelineScrubEnd,
-    StreamAnimation(PathBuf, u64),
     AnimationFrameLoaded(u64, Frame),
     AnimationDone(u64),
     Noop,
@@ -302,16 +301,13 @@ impl App {
                     self.program.resume_animation();
                 }
             }
-            Message::StreamAnimation(path, generation) => {
-                return tasks::stream_animation(path, generation);
-            }
             Message::AnimationFrameLoaded(generation, frame) => {
                 if generation != self.load_generation {
                     return Task::none();
                 }
-                let (_, frames) = self
+                let frames = self
                     .pending_animation
-                    .get_or_insert_with(|| (generation, Vec::new()));
+                    .get_or_insert_with(Vec::new);
                 frames.push(frame);
                 let anim = crate::wgpu::media::animation::Animation::new(frames.clone());
                 if frames.len() == 1 {
