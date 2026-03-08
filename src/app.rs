@@ -400,7 +400,11 @@ impl App {
             } else {
                 0.0
             };
-            col = col.push(timeline_bar::view(total, position, !self.paused));
+            let timestamp = self
+                .program
+                .animation_timestamp()
+                .zip(self.program.animation_duration());
+            col = col.push(timeline_bar::view(total, position, !self.paused, timestamp));
         }
 
         col.push(bottom_bar::view(

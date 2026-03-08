@@ -229,6 +229,10 @@ impl ViewProgram {
         self.animation.as_ref().map(|a| a.total_duration())
     }
 
+    pub fn animation_timestamp(&self) -> Option<Duration> {
+        self.animation.as_ref().map(|a| a.current_timestamp())
+    }
+
     pub fn decoded_size_bytes(&self) -> Option<usize> {
         self.image.as_ref().map(|img| img.size_bytes())
     }

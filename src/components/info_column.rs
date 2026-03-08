@@ -5,12 +5,13 @@ use std::time::Duration;
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::tooltip::Position;
-use iced::widget::{Space, button, column, container, row, scrollable, text, tooltip};
+use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Background, Color, Element, Font, Length, Theme, border};
 
 use crate::app::Message;
 use crate::gallery::Gallery;
 use crate::styles::{PAD, bar_style, info_section_header_style, radius};
+use crate::ui::{format_duration, with_tooltip_delay};
 use crate::wgpu::view_program::ViewProgram;
 use crate::widgets::histogram::Histogram;
 
@@ -128,17 +129,6 @@ fn aspect_ratio_str(w: u32, h: u32) -> String {
     format!("{}:{}", w / d, h / d)
 }
 
-fn format_duration(d: Duration) -> String {
-    let ms = d.as_millis();
-    let secs = ms / 1000;
-    let rem = ms % 1000;
-    if rem == 0 {
-        format!("{secs}s")
-    } else {
-        format!("{secs}.{rem:03}s")
-    }
-}
-
 pub fn view<'a>(
     path: Option<&'a Path>,
     gallery: &Gallery,
@@ -191,14 +181,7 @@ pub fn view<'a>(
         if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
             let filename_row = row_item("Filename", truncate_filename(name, 18), muted);
             file_rows.push(if let Some(path_str) = p.to_str() {
-                tooltip(
-                    filename_row,
-                    container(text(path_str).size(11).font(Font::MONOSPACE))
-                        .padding(PAD)
-                        .style(container::rounded_box),
-                    Position::Right,
-                )
-                .into()
+                with_tooltip_delay(filename_row, path_str, Position::Right, Duration::ZERO)
             } else {
                 filename_row
             });
@@ -243,8 +226,15 @@ pub fn view<'a>(
             muted,
         ));
     }
-    if let Some(dur) = program.animation_duration() {
-        anim_rows.push(row_item("Duration", format_duration(dur), muted));
+    if let Some((ts, dur)) = program
+        .animation_timestamp()
+        .zip(program.animation_duration())
+    {
+        anim_rows.push(row_item(
+            "Time",
+            format!("{} / {}", format_duration(ts), format_duration(dur)),
+            muted,
+        ));
     }
     push_section(&mut rows, "ANIMATION", anim_rows);
 

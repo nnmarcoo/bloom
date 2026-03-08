@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use iced::widget::svg::Handle;
 use iced::widget::tooltip::Position;
 use iced::widget::{button, container, svg, text, tooltip};
@@ -5,9 +7,20 @@ use iced::{Element, Length};
 
 use crate::app::Message;
 use crate::styles::{
-    BUTTON_SIZE, PAD, icon_button_active_style, icon_button_style, plain_icon_button_style,
-    svg_style, tooltip_style,
+    BUTTON_SIZE, PAD, TOOLTIP_DELAY, icon_button_active_style, icon_button_style,
+    plain_icon_button_style, svg_style, tooltip_style,
 };
+
+pub fn format_duration(d: Duration) -> String {
+    let ms = d.as_millis();
+    let secs = ms / 1000;
+    let rem = ms % 1000;
+    if rem == 0 {
+        format!("{secs}s")
+    } else {
+        format!("{secs}.{rem:03}s")
+    }
+}
 
 pub fn svg_button<'a>(icon: &'static [u8], msg: Message) -> Element<'a, Message> {
     button(
@@ -50,17 +63,26 @@ pub fn svg_button_plain<'a>(icon: &'static [u8], msg: Message) -> Element<'a, Me
 
 pub fn with_tooltip<'a>(
     content: impl Into<Element<'a, Message>>,
-    label: &'a str,
+    label: impl ToString,
     position: Position,
+) -> Element<'a, Message> {
+    with_tooltip_delay(content, label, position, TOOLTIP_DELAY)
+}
+
+pub fn with_tooltip_delay<'a>(
+    content: impl Into<Element<'a, Message>>,
+    label: impl ToString,
+    position: Position,
+    delay: Duration,
 ) -> Element<'a, Message> {
     tooltip(
         content,
-        container(text(label).size(12))
+        container(text(label.to_string()).size(12))
             .padding(PAD)
             .style(tooltip_style),
         position,
     )
-    .delay(crate::styles::TOOLTIP_DELAY)
+    .delay(delay)
     .into()
 }
 
