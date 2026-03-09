@@ -13,6 +13,9 @@ target
 # Contains mutation testing data
 **/mutants.out*/
 
+# Vendored native dependencies (populated by scripts/setup-ffmpeg)
+vendor/
+
 # Python
 __pycache__/
 *.pyc

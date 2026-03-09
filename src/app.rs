@@ -165,7 +165,10 @@ impl App {
                 self.loading = None;
                 self.apply_media(media);
             }
-            Message::AnimationTick(now) => self.program.tick_animation(now),
+            Message::AnimationTick(now) => {
+                self.program.tick_animation(now);
+                self.program.tick_video(now);
+            }
             Message::MediaFailed(generation, err) => {
                 if generation == self.load_generation {
                     self.loading = None;
@@ -255,6 +258,9 @@ impl App {
                 self.paused = !self.paused;
                 if !self.paused {
                     self.program.resume_animation();
+                    self.program.start_video_clock();
+                } else {
+                    self.program.pause_video_clock();
                 }
             }
             Message::FrameFirst => {
@@ -281,15 +287,37 @@ impl App {
                 }
             }
             Message::FrameSeek(index) => {
-                self.program.seek_animation(index);
-                if !self.paused && !self.scrubbing {
-                    self.program.resume_animation();
+                // For animation: index is a frame index.
+                // For video: index is out of 1000, converted to a timestamp.
+                if let Some((_, duration)) = self.program.video_info() {
+                    let t = duration.mul_f32(index as f32 / 999.0);
+                    if self.scrubbing {
+                        self.program.seek_video_coarse(t);
+                    } else {
+                        self.program.seek_video(t);
+                    }
+                } else {
+                    self.program.seek_animation(index);
+                    if !self.paused && !self.scrubbing {
+                        self.program.resume_animation();
+                    }
                 }
             }
-            Message::TimelineScrubStart => self.scrubbing = true,
+            Message::TimelineScrubStart => {
+                self.scrubbing = true;
+                // Silence audio while scrubbing.
+                self.program.pause_video_clock();
+            }
             Message::TimelineScrubEnd => {
                 self.scrubbing = false;
+                // Accurate seek to final position, then resume if playing.
+                if let Some((pts, duration)) = self.program.video_info() {
+                    if !duration.is_zero() {
+                        self.program.seek_video(pts);
+                    }
+                }
                 if !self.paused {
+                    self.program.start_video_clock();
                     self.program.resume_animation();
                 }
             }
@@ -303,9 +331,13 @@ impl App {
         match media {
             MediaData::Image(data) => self.program.set_image(data),
             MediaData::Animation(anim) => self.program.set_animation(anim),
+            MediaData::Video(video) => self.program.set_video(video),
         }
         self.paused = !self.config.autoplay;
         self.scrubbing = false;
+        if !self.paused {
+            self.program.start_video_clock();
+        }
         self.program.fit();
     }
 
@@ -405,6 +437,19 @@ impl App {
                 .animation_timestamp()
                 .zip(self.program.animation_duration());
             col = col.push(timeline_bar::view(total, position, !self.paused, timestamp));
+        } else if let Some((pts, duration)) = self.program.video_info() {
+            let position = if duration.is_zero() {
+                0.0
+            } else {
+                pts.as_secs_f32() / duration.as_secs_f32()
+            };
+            // Use a synthetic frame count of 1000 so the slider has fine resolution.
+            col = col.push(timeline_bar::view(
+                1000,
+                position,
+                !self.paused,
+                Some((pts, duration)),
+            ));
         }
 
         col.push(bottom_bar::view(
@@ -431,13 +476,25 @@ impl App {
 
     pub fn subscription(&self) -> Subscription<Message> {
         let events = event::listen().map(Message::Event);
-        match (!self.paused && !self.scrubbing)
-            .then(|| self.program.time_until_next_frame())
-            .flatten()
-        {
-            Some(delay) => {
-                let delay = delay.max(Duration::from_millis(1));
-                Subscription::batch([events, every(delay).map(Message::AnimationTick)])
+        if self.paused || self.scrubbing {
+            return events;
+        }
+        // Use whichever tick source is active (animation or video), preferring
+        // the sooner deadline if somehow both are set.
+        let anim_delay = self.program.time_until_next_frame();
+        // For video: use buffered next-frame delay, or poll at ~60fps if buffer is empty.
+        let video_delay = self.program.video_time_until_next_frame()
+            .or_else(|| self.program.video_info().map(|_| Duration::from_millis(16)));
+        let delay = match (anim_delay, video_delay) {
+            (Some(a), Some(v)) => Some(a.min(v)),
+            (Some(a), None) => Some(a),
+            (None, Some(v)) => Some(v),
+            (None, None) => None,
+        };
+        match delay {
+            Some(d) => {
+                let d = d.max(Duration::from_millis(1));
+                Subscription::batch([events, every(d).map(Message::AnimationTick)])
             }
             None => events,
         }

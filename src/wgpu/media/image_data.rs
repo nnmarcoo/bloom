@@ -30,11 +30,13 @@ use zip::ZipArchive;
 
 use super::animation::{Animation, Frame};
 use super::exif_data::ExifData;
+use super::video::VideoData;
 
 #[derive(Debug, Clone)]
 pub enum MediaData {
     Image(ImageData),
     Animation(Animation),
+    Video(VideoData),
 }
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -527,6 +529,12 @@ impl ImageData {
     pub fn load_media(path: &Path) -> Result<MediaData, ImageError> {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         let media = match ext.to_ascii_lowercase().as_str() {
+            "mp4" | "mkv" | "mov" | "avi" | "webm" | "flv" | "wmv" | "m4v" | "mpg" | "mpeg"
+            | "ts" | "mts" | "m2ts" | "3gp" | "ogv" | "vob" => {
+                let video = VideoData::open(path)
+                    .map_err(|e| ImageError::IoError(std::io::Error::other(e)))?;
+                return Ok(MediaData::Video(video));
+            }
             "gif" => MediaData::Animation(Self::load_gif(path)?),
             "hdr" => MediaData::Image(Self::load_hdr(path)?),
             "exr" => MediaData::Image(Self::load_exr(path)?),

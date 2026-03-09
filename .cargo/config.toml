@@ -1,0 +1,7 @@
+[env]
+# Points ffmpeg-sys-next to the vendored FFmpeg dev package.
+# Points bindgen (used by ffmpeg-sys-next) to the vendored LLVM libclang.dll.
+# Both are populated by scripts/setup-ffmpeg.ps1 (Windows) or setup-ffmpeg.sh (Linux/macOS).
+# Override either by setting the env var in your shell before running cargo build.
+FFMPEG_DIR      = { value = "vendor/ffmpeg",    relative = true }
+LIBCLANG_PATH   = { value = "vendor/llvm/bin",  relative = true }

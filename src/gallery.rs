@@ -5,9 +5,13 @@ use std::{
 };
 
 pub const SUPPORTED: &[&str] = &[
+    // Images
     "jpg", "jpeg", "png", "gif", "tif", "tiff", "webp", "bmp", "ico", "qoi", "pbm", "pgm", "ppm",
     "tga", "dds", "ff", "hdr", "exr", "jxl", "psd", "icns", "kra", "avif", "svg", "svgz", "apng",
     "jp2", "j2k", "j2c", "jpx", "dcm", "dicom", "ktx2",
+    // Video
+    "mp4", "mkv", "mov", "avi", "webm", "flv", "wmv", "m4v", "mpg", "mpeg", "ts", "mts", "m2ts",
+    "3gp", "ogv", "vob",
 ];
 
 #[derive(Default)]

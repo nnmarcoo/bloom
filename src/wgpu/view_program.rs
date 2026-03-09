@@ -11,8 +11,13 @@ use iced::{
 use crate::{
     app::Message,
     wgpu::{
-        media::animation::Animation, media::exif_data::ExifData, media::image_data::ImageData,
-        scale::Scale, view_pipeline::Uniforms, view_primitive::ViewPrimitive,
+        media::animation::Animation,
+        media::exif_data::ExifData,
+        media::image_data::ImageData,
+        media::video::VideoData,
+        scale::Scale,
+        view_pipeline::Uniforms,
+        view_primitive::ViewPrimitive,
     },
 };
 
@@ -47,6 +52,7 @@ pub struct ViewProgram {
     bounds: Rectangle,
     image: Option<Arc<ImageData>>,
     animation: Option<Animation>,
+    video: Option<VideoData>,
     pub lanczos_enabled: bool,
     cursor_pos: Option<Vec2>,
     rotation: u8, // 0=0°, 1=90°CW, 2=180°, 3=270°CW
@@ -61,6 +67,7 @@ impl Default for ViewProgram {
             bounds: Rectangle::default(),
             image: None,
             animation: None,
+            video: None,
             lanczos_enabled: false,
             cursor_pos: None,
             rotation: 0,
@@ -152,6 +159,7 @@ impl ViewProgram {
         self.image_size = vec2(data.width as f32, data.height as f32);
         self.image = Some(Arc::new(data));
         self.animation = None;
+        self.video = None;
         self.cursor_pos = None;
         self.rotation = 0;
     }
@@ -172,8 +180,65 @@ impl ViewProgram {
         self.image_size = vec2(first.width as f32, first.height as f32);
         self.image = Some(first);
         self.animation = Some(anim);
+        self.video = None;
         self.cursor_pos = None;
         self.rotation = 0;
+    }
+
+    pub fn set_video(&mut self, video: VideoData) {
+        self.image_size = vec2(video.width as f32, video.height as f32);
+        self.image = Some(Arc::clone(video.current_image()));
+        self.animation = None;
+        self.video = Some(video);
+        self.cursor_pos = None;
+        self.rotation = 0;
+    }
+
+    pub fn start_video_clock(&mut self) {
+        if let Some(v) = &mut self.video {
+            v.start_clock();
+        }
+    }
+
+    pub fn pause_video_clock(&mut self) {
+        if let Some(v) = &mut self.video {
+            v.pause_clock();
+        }
+    }
+
+    pub fn tick_video(&mut self, now: Instant) {
+        if let Some(v) = &mut self.video {
+            v.tick(now);
+            self.image = Some(Arc::clone(v.current_image()));
+        }
+    }
+
+    pub fn seek_video(&mut self, target: Duration) {
+        if let Some(v) = &mut self.video {
+            v.seek(target);
+            v.recv_seek_frame();
+            self.image = Some(Arc::clone(v.current_image()));
+        }
+    }
+
+    pub fn seek_video_coarse(&mut self, target: Duration) {
+        if let Some(v) = &mut self.video {
+            v.seek_coarse(target);
+            v.recv_seek_frame();
+            self.image = Some(Arc::clone(v.current_image()));
+        }
+    }
+
+    pub fn video_info(&self) -> Option<(Duration, Duration)> {
+        self.video.as_ref().map(|v| (v.current_pts(), v.duration))
+    }
+
+    pub fn video_time_until_next_frame(&self) -> Option<Duration> {
+        self.video.as_ref()?.time_until_next_frame()
+    }
+
+    pub fn video_is_finished(&self) -> bool {
+        self.video.as_ref().map_or(false, |v| v.is_finished())
     }
 
     pub fn set_cursor_pos(&mut self, pos: Option<Vec2>) {
