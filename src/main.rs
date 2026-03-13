@@ -46,5 +46,6 @@ fn main() -> iced::Result {
         .centered()
         .theme(App::theme)
         .subscription(App::subscription)
+        .scale_factor(App::scale_factor)
         .run()
 }

@@ -6,6 +6,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::keybinds::{Keymap, KeymapFile};
 
+pub const UI_SCALE_MIN: f32 = 0.5;
+pub const UI_SCALE_MAX: f32 = 3.0;
+pub const UI_SCALE_STEP: f32 = 0.1;
+pub const UI_SCALE_DEFAULT: f32 = 1.0;
+
 pub const ALL_THEMES: &[Theme] = &[
     Theme::Light,
     Theme::Dark,
@@ -42,6 +47,7 @@ pub struct Config {
     pub autoplay: bool,
     pub keymap: Keymap,
     pub info_collapsed: HashSet<String>,
+    pub ui_scale: f32,
 }
 
 impl Default for Config {
@@ -56,6 +62,7 @@ impl Default for Config {
             autoplay: true,
             keymap: Keymap::default(),
             info_collapsed: HashSet::new(),
+            ui_scale: UI_SCALE_DEFAULT,
         }
     }
 }
@@ -76,10 +83,16 @@ struct ConfigFile {
     keybinds: KeymapFile,
     #[serde(default)]
     info_collapsed: Vec<String>,
+    #[serde(default = "default_scale")]
+    ui_scale: f32,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_scale() -> f32 {
+    UI_SCALE_DEFAULT
 }
 
 impl From<&Config> for ConfigFile {
@@ -96,6 +109,7 @@ impl From<&Config> for ConfigFile {
             autoplay: c.autoplay,
             keybinds: KeymapFile::from(&c.keymap),
             info_collapsed,
+            ui_scale: c.ui_scale,
         }
     }
 }
@@ -112,6 +126,7 @@ impl From<ConfigFile> for Config {
             autoplay: f.autoplay,
             keymap: Keymap::from(f.keybinds),
             info_collapsed: f.info_collapsed.into_iter().collect(),
+            ui_scale: f.ui_scale,
         }
     }
 }

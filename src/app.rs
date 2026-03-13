@@ -20,7 +20,7 @@ use crate::{
         preferences::{PreferenceMessage, PreferenceOutcome},
         timeline_bar, viewer,
     },
-    config::Config,
+    config::{Config, UI_SCALE_DEFAULT, UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP},
     gallery::Gallery,
     keybinds::{Action, KeyBinding},
     styles, tasks,
@@ -102,6 +102,9 @@ pub enum Message {
     FrameSeek(usize),
     TimelineScrubStart,
     TimelineScrubEnd,
+    UiScaleUp,
+    UiScaleDown,
+    UiScaleReset,
     Noop,
 }
 
@@ -293,6 +296,18 @@ impl App {
                     self.program.resume_animation();
                 }
             }
+            Message::UiScaleUp => {
+                self.config.ui_scale = (self.config.ui_scale + UI_SCALE_STEP).min(UI_SCALE_MAX);
+                self.config.save();
+            }
+            Message::UiScaleDown => {
+                self.config.ui_scale = (self.config.ui_scale - UI_SCALE_STEP).max(UI_SCALE_MIN);
+                self.config.save();
+            }
+            Message::UiScaleReset => {
+                self.config.ui_scale = UI_SCALE_DEFAULT;
+                self.config.save();
+            }
             Message::Noop => {}
             Message::Event(event) => return self.handle_event(event),
         }
@@ -376,6 +391,9 @@ impl App {
             Some(Action::ZoomOut) => Task::done(Message::ScaleDown(self.program.viewport_center())),
             Some(Action::ZoomFit) => Task::done(Message::Fit),
             Some(Action::ZoomPreset(n)) => Task::done(Message::Scale(n as f32)),
+            Some(Action::UiScaleUp) => Task::done(Message::UiScaleUp),
+            Some(Action::UiScaleDown) => Task::done(Message::UiScaleDown),
+            Some(Action::UiScaleReset) => Task::done(Message::UiScaleReset),
             None => Task::none(),
         }
     }
@@ -427,6 +445,10 @@ impl App {
 
     pub fn theme(&self) -> Theme {
         self.config.theme.clone()
+    }
+
+    pub fn scale_factor(&self) -> f32 {
+        self.config.ui_scale
     }
 
     pub fn subscription(&self) -> Subscription<Message> {

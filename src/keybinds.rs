@@ -17,6 +17,9 @@ pub enum Action {
     ZoomOut,
     ZoomFit,
     ZoomPreset(u8),
+    UiScaleUp,
+    UiScaleDown,
+    UiScaleReset,
 }
 
 impl Action {
@@ -31,6 +34,9 @@ impl Action {
             Self::ZoomOut => "Zoom out".into(),
             Self::ZoomFit => "Fit to viewport".into(),
             Self::ZoomPreset(n) => format!("Zoom {}×", n),
+            Self::UiScaleUp => "UI scale up".into(),
+            Self::UiScaleDown => "UI scale down".into(),
+            Self::UiScaleReset => "UI scale reset".into(),
         }
     }
 
@@ -45,6 +51,9 @@ impl Action {
             Self::ZoomOut => "Decrease zoom level",
             Self::ZoomFit => "Fit the image to the viewport",
             Self::ZoomPreset(_) => "Jump to a fixed zoom multiplier",
+            Self::UiScaleUp => "Increase the application UI scale",
+            Self::UiScaleDown => "Decrease the application UI scale",
+            Self::UiScaleReset => "Reset the application UI scale to 100%",
         }
     }
 
@@ -58,6 +67,9 @@ impl Action {
             Action::ZoomIn,
             Action::ZoomOut,
             Action::ZoomFit,
+            Action::UiScaleUp,
+            Action::UiScaleDown,
+            Action::UiScaleReset,
         ]
     }
 }
@@ -315,6 +327,9 @@ impl Default for Keymap {
         m.insert(Action::ZoomIn, c(key::Code::Equal));
         m.insert(Action::ZoomOut, c(key::Code::Minus));
         m.insert(Action::ZoomFit, c(key::Code::Digit0));
+        m.insert(Action::UiScaleUp, n(key::Code::Equal));
+        m.insert(Action::UiScaleDown, n(key::Code::Minus));
+        m.insert(Action::UiScaleReset, n(key::Code::Digit0));
         let digit_codes = [
             key::Code::Digit1,
             key::Code::Digit2,
@@ -378,6 +393,9 @@ pub(crate) struct KeymapFile {
     pub zoom_preset_7: Option<String>,
     pub zoom_preset_8: Option<String>,
     pub zoom_preset_9: Option<String>,
+    pub ui_scale_up: Option<String>,
+    pub ui_scale_down: Option<String>,
+    pub ui_scale_reset: Option<String>,
 }
 
 impl From<&Keymap> for KeymapFile {
@@ -408,6 +426,9 @@ impl From<&Keymap> for KeymapFile {
             zoom_preset_7: bind(Action::ZoomPreset(7)),
             zoom_preset_8: bind(Action::ZoomPreset(8)),
             zoom_preset_9: bind(Action::ZoomPreset(9)),
+            ui_scale_up: bind(Action::UiScaleUp),
+            ui_scale_down: bind(Action::UiScaleDown),
+            ui_scale_reset: bind(Action::UiScaleReset),
         }
     }
 }
@@ -440,6 +461,9 @@ impl From<KeymapFile> for Keymap {
             resolve(f.zoom_preset_7, Action::ZoomPreset(7)),
             resolve(f.zoom_preset_8, Action::ZoomPreset(8)),
             resolve(f.zoom_preset_9, Action::ZoomPreset(9)),
+            resolve(f.ui_scale_up, Action::UiScaleUp),
+            resolve(f.ui_scale_down, Action::UiScaleDown),
+            resolve(f.ui_scale_reset, Action::UiScaleReset),
         ]
         .into_iter()
         .flatten()

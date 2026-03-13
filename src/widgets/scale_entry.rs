@@ -34,6 +34,11 @@ impl<Message> ScaleEntry<Message> {
         }
     }
 
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = width;
+        self
+    }
+
     pub fn focused(mut self, focused: bool) -> Self {
         self.focused = focused;
         self

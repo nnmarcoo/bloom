@@ -7,13 +7,14 @@ use iced::widget::{button, column, container, pick_list, row, rule, scrollable, 
 use iced::{Element, Length, Theme};
 
 use crate::app::Message;
-use crate::config::{ALL_THEMES, Config};
+use crate::config::{ALL_THEMES, Config, UI_SCALE_MAX, UI_SCALE_MIN};
 use crate::keybinds::{Action, KeyBinding, Keymap};
 use crate::styles::{
     PAD, capturing_chip_style, key_chip_style, plain_icon_button_style, set_radius,
 };
 use crate::ui::{svg_button_plain, with_tooltip};
 use crate::wgpu::view_program::ViewProgram;
+use crate::widgets::scale_entry::ScaleEntry;
 
 fn on_wayland() -> bool {
     static ON_WAYLAND: OnceLock<bool> = OnceLock::new();
@@ -32,6 +33,7 @@ pub enum PreferenceMessage {
     SetRounded(bool),
     SetDecorations(bool),
     SetAlwaysOnTop(bool),
+    SetUiScale(f32),
     SetAutoplay(bool),
     StartCapture(Action),
     CancelCapture,
@@ -78,6 +80,10 @@ pub fn update(
             pending.always_on_top = v;
             PreferenceOutcome::Open
         }
+        PreferenceMessage::SetUiScale(v) => {
+            pending.ui_scale = v.clamp(UI_SCALE_MIN, UI_SCALE_MAX);
+            PreferenceOutcome::Open
+        }
         PreferenceMessage::SetAutoplay(v) => {
             pending.autoplay = v;
             PreferenceOutcome::Open
@@ -105,6 +111,7 @@ pub fn update(
             pending.rounded = d.rounded;
             pending.decorations = d.decorations;
             pending.always_on_top = d.always_on_top;
+            pending.ui_scale = d.ui_scale;
             PreferenceOutcome::Open
         }
         PreferenceMessage::ResetRendering => {
@@ -348,6 +355,17 @@ pub fn view<'a>(
                     t.on_toggle(|v| Message::Preference(PreferenceMessage::SetAlwaysOnTop(v)))
                 }
             }
+            .into(),
+            theme,
+        ),
+        iced::widget::Space::new().height(PAD),
+        setting(
+            "UI scale",
+            "Scale the application interface",
+            ScaleEntry::new(pending.ui_scale, |v| {
+                Message::Preference(PreferenceMessage::SetUiScale(v))
+            })
+            .width(36.0)
             .into(),
             theme,
         ),
