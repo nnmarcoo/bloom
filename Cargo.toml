@@ -48,7 +48,7 @@ rfd = "0.17.2"
 
 # Video decoding
 ffmpeg-next = { version = "7", features = ["codec", "format", "software-scaling", "software-resampling"] }
-cpal = "0.15"
+cpal = "0.17.3"
 
 # Config persistence
 serde = { version = "1.0.228", features = ["derive"] }

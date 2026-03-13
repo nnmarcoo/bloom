@@ -213,18 +213,20 @@ impl ViewProgram {
         }
     }
 
-    pub fn seek_video(&mut self, target: Duration) {
+    pub fn poll_scrub_video(&mut self) {
         if let Some(v) = &mut self.video {
-            v.seek(target);
-            v.recv_seek_frame();
-            self.image = Some(Arc::clone(v.current_image()));
+            if v.poll_scrub_frame() {
+                self.image = Some(Arc::clone(v.current_image()));
+            }
         }
     }
 
-    pub fn seek_video_coarse(&mut self, target: Duration) {
+    pub fn seek_video(&mut self, target: Duration, wait_for_frame: bool) {
         if let Some(v) = &mut self.video {
-            v.seek_coarse(target);
-            v.recv_seek_frame();
+            v.seek(target);
+            if wait_for_frame {
+                v.recv_seek_frame();
+            }
             self.image = Some(Arc::clone(v.current_image()));
         }
     }

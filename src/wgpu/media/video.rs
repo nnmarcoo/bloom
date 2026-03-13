@@ -13,7 +13,7 @@ use ffmpeg_next::packet::Mut as PacketMut;
 
 use super::image_data::ImageData;
 
-const FRAME_BUFFER: usize = 8;
+const FRAME_BUFFER: usize = 2;
 const AUDIO_BUFFER_MS: usize = 300;
 
 // Tagged video frame — dropped if generation doesn't match.
@@ -24,7 +24,7 @@ pub struct VideoFrame {
 }
 
 enum DecoderCmd {
-    Seek(Duration, bool), // (target, accurate)
+    Seek(Duration),
     Stop,
 }
 
@@ -258,29 +258,34 @@ impl VideoData {
         changed
     }
 
-    /// Keyframe-only seek — fast, used while scrubbing.
-    pub fn seek_coarse(&mut self, target: Duration) {
-        self.seek_inner(target, false);
+    /// Called each tick while scrubbing — drains the channel and shows the latest decoded frame.
+    pub fn poll_scrub_frame(&mut self) -> bool {
+        let cur_gen = self.current_gen;
+        let mut changed = false;
+        loop {
+            match self.frame_rx.try_recv() {
+                Ok(f) if f.generation == cur_gen => {
+                    self.current = f.image;
+                    self.current_pts = f.pts;
+                    changed = true;
+                }
+                Ok(_) => {} // stale generation, discard
+                Err(_) => break,
+            }
+        }
+        changed
     }
 
-    /// Accurate seek — decodes to exact frame, used on release.
     pub fn seek(&mut self, target: Duration) {
-        self.seek_inner(target, true);
-    }
-
-    fn seek_inner(&mut self, target: Duration, accurate: bool) {
         let new_gen = self.seek_gen.fetch_add(1, Ordering::SeqCst) + 1;
         self.current_gen = new_gen;
         self.next = None;
 
         while self.frame_rx.try_recv().is_ok() {}
 
-        let _ = self.cmd_tx.try_send(DecoderCmd::Seek(target, accurate));
-        // Only seek audio on accurate seeks (scrub release), not during scrubbing.
-        if accurate {
-            if let Some(a) = &self._audio {
-                let _ = a.cmd_tx.try_send(AudioCmd::Seek(target));
-            }
+        let _ = self.cmd_tx.try_send(DecoderCmd::Seek(target));
+        if let Some(a) = &self._audio {
+            let _ = a.cmd_tx.try_send(AudioCmd::Seek(target));
         }
 
         self.current_pts = target;
@@ -361,10 +366,10 @@ fn video_decode_loop(
                 Ok(DecoderCmd::Stop) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     return;
                 }
-                Ok(DecoderCmd::Seek(target, accurate)) => {
+                Ok(DecoderCmd::Seek(target)) => {
                     let _ = ictx.seek(dur_to_av_ts(target), ..);
                     decoder.flush();
-                    seek_target = if accurate { Some(target) } else { None };
+                    seek_target = Some(target);
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
             }
@@ -379,10 +384,10 @@ fn video_decode_loop(
             };
             if ret < 0 {
                 match cmd_rx.recv() {
-                    Ok(DecoderCmd::Seek(target, accurate)) => {
+                    Ok(DecoderCmd::Seek(target)) => {
                         let _ = ictx.seek(dur_to_av_ts(target), ..);
                         decoder.flush();
-                        seek_target = if accurate { Some(target) } else { None };
+                        seek_target = Some(target);
                         continue;
                     }
                     _ => break,
@@ -427,13 +432,33 @@ fn video_decode_loop(
                     .collect()
             };
 
+            // Before sending, check if a newer seek command arrived — if so,
+            // discard this frame and handle the seek instead of blocking on send.
+            match cmd_rx.try_recv() {
+                Ok(DecoderCmd::Stop) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    break 'outer;
+                }
+                Ok(DecoderCmd::Seek(target)) => {
+                    let _ = ictx.seek(dur_to_av_ts(target), ..);
+                    decoder.flush();
+                    seek_target = Some(target);
+                    continue;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+
             let frame = VideoFrame {
                 image: Arc::new(ImageData::new(pixels, width, height)),
                 pts,
                 generation: cur_gen,
             };
 
-            if tx.send(frame).is_err() { break 'outer; }
+            // Non-blocking send: if full, discard — scrubbing only needs the latest frame.
+            match tx.try_send(frame) {
+                Ok(_) => {}
+                Err(std::sync::mpsc::TrySendError::Full(_)) => {}
+                Err(std::sync::mpsc::TrySendError::Disconnected(_)) => break 'outer,
+            }
         }
     }
 }
@@ -457,12 +482,10 @@ fn start_audio(path: &PathBuf, stop: &Arc<AtomicBool>) -> Option<AudioHandle> {
         (dec.rate() as i32, dec.channels() as i32, dec.format())
     };
 
-    let audio_tb = ictx.stream(audio_idx)?.time_base();
-
     let host = cpal::default_host();
     let device = host.default_output_device()?;
     let supported = device.default_output_config().ok()?;
-    let dst_rate = supported.sample_rate().0 as i32;
+    let dst_rate = supported.sample_rate() as i32;
     let dst_channels = supported.channels() as i32;
 
     let queue = Arc::new(Mutex::new(AudioQueue {

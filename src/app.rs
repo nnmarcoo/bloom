@@ -167,7 +167,11 @@ impl App {
             }
             Message::AnimationTick(now) => {
                 self.program.tick_animation(now);
-                self.program.tick_video(now);
+                if self.scrubbing {
+                    self.program.poll_scrub_video();
+                } else {
+                    self.program.tick_video(now);
+                }
             }
             Message::MediaFailed(generation, err) => {
                 if generation == self.load_generation {
@@ -291,11 +295,7 @@ impl App {
                 // For video: index is out of 1000, converted to a timestamp.
                 if let Some((_, duration)) = self.program.video_info() {
                     let t = duration.mul_f32(index as f32 / 999.0);
-                    if self.scrubbing {
-                        self.program.seek_video_coarse(t);
-                    } else {
-                        self.program.seek_video(t);
-                    }
+                    self.program.seek_video(t, !self.scrubbing);
                 } else {
                     self.program.seek_animation(index);
                     if !self.paused && !self.scrubbing {
@@ -305,17 +305,10 @@ impl App {
             }
             Message::TimelineScrubStart => {
                 self.scrubbing = true;
-                // Silence audio while scrubbing.
                 self.program.pause_video_clock();
             }
             Message::TimelineScrubEnd => {
                 self.scrubbing = false;
-                // Accurate seek to final position, then resume if playing.
-                if let Some((pts, duration)) = self.program.video_info() {
-                    if !duration.is_zero() {
-                        self.program.seek_video(pts);
-                    }
-                }
                 if !self.paused {
                     self.program.start_video_clock();
                     self.program.resume_animation();
@@ -476,7 +469,7 @@ impl App {
 
     pub fn subscription(&self) -> Subscription<Message> {
         let events = event::listen().map(Message::Event);
-        if self.paused || self.scrubbing {
+        if self.paused && !self.scrubbing {
             return events;
         }
         // Use whichever tick source is active (animation or video), preferring
