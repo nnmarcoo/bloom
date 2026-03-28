@@ -35,8 +35,8 @@ fn full_list_height() -> f32 {
     ITEM_HEIGHT * ALL_THEMES.len() as f32
 }
 
-fn max_scroll_offset() -> f32 {
-    (full_list_height() - (max_dropdown_height() - PADDING * 2.0)).max(0.0)
+fn max_scroll_offset_for(visible_h: f32) -> f32 {
+    (full_list_height() - visible_h).max(0.0)
 }
 
 #[derive(Default)]
@@ -136,7 +136,6 @@ fn draw_scrollbar(renderer: &mut Renderer, bounds: Rectangle, scroll_offset: f32
     let palette = theme.extended_palette();
     let track_x = bounds.x + bounds.width - PADDING - SCROLLBAR_WIDTH;
     let track_y = bounds.y + PADDING;
-    let track_h = visible_h;
 
     renderer.fill_quad(
         Quad {
@@ -144,7 +143,7 @@ fn draw_scrollbar(renderer: &mut Renderer, bounds: Rectangle, scroll_offset: f32
                 x: track_x,
                 y: track_y,
                 width: SCROLLBAR_WIDTH,
-                height: track_h,
+                height: visible_h,
             },
             border: Border {
                 radius: (SCROLLBAR_WIDTH / 2.0).into(),
@@ -155,9 +154,9 @@ fn draw_scrollbar(renderer: &mut Renderer, bounds: Rectangle, scroll_offset: f32
         Background::Color(palette.background.strong.color),
     );
 
-    let thumb_h = (visible_h / list_h * track_h).max(16.0);
+    let thumb_h = (visible_h / list_h * visible_h).max(16.0);
     let max_offset = list_h - visible_h;
-    let thumb_y = track_y + (scroll_offset / max_offset) * (track_h - thumb_h);
+    let thumb_y = track_y + (scroll_offset / max_offset) * (visible_h - thumb_h);
 
     renderer.fill_quad(
         Quad {
@@ -224,14 +223,17 @@ impl<Message: Clone + 'static> Widget<Message, Theme, Renderer> for ThemePicker<
                 state.expanded = !state.expanded;
                 if state.expanded {
                     if let Some(idx) = ALL_THEMES.iter().position(|t| t == &self.selected) {
+                        let visible_h = max_dropdown_height() - PADDING * 2.0;
                         let item_top = idx as f32 * ITEM_HEIGHT;
                         let item_bot = item_top + ITEM_HEIGHT;
-                        let visible_h = max_dropdown_height() - PADDING * 2.0;
                         if item_top < state.scroll_offset {
                             state.scroll_offset = item_top;
                         } else if item_bot > state.scroll_offset + visible_h {
                             state.scroll_offset = item_bot - visible_h;
                         }
+                        state.scroll_offset = state
+                            .scroll_offset
+                            .clamp(0.0, max_scroll_offset_for(visible_h));
                     }
                 }
                 shell.capture_event();
@@ -354,11 +356,6 @@ impl<Message: Clone> DropdownOverlay<'_, Message> {
         self.widget_state.downcast_ref::<State>().scroll_offset
     }
 
-    fn set_scroll_offset(&mut self, offset: f32) {
-        self.widget_state.downcast_mut::<State>().scroll_offset =
-            offset.clamp(0.0, max_scroll_offset());
-    }
-
     fn item_bounds(dropdown_origin: Point, index: usize, scroll_offset: f32) -> Rectangle {
         Rectangle {
             x: dropdown_origin.x + PADDING,
@@ -372,7 +369,7 @@ impl<Message: Clone> DropdownOverlay<'_, Message> {
         Rectangle {
             x: dropdown_bounds.x,
             y: dropdown_bounds.y + PADDING,
-            width: dropdown_bounds.width,
+            width: dropdown_bounds.width - PADDING - SCROLLBAR_WIDTH,
             height: dropdown_bounds.height - PADDING * 2.0,
         }
     }
@@ -507,6 +504,7 @@ impl<Message: Clone> Overlay<Message, Theme, Renderer> for DropdownOverlay<'_, M
     ) {
         let bounds = layout.bounds();
         let origin = Point::new(bounds.x, bounds.y);
+        let visible_h = bounds.height - PADDING * 2.0;
         let scroll_offset = self.scroll_offset();
 
         match event {
@@ -534,7 +532,9 @@ impl<Message: Clone> Overlay<Message, Theme, Renderer> for DropdownOverlay<'_, M
                     mouse::ScrollDelta::Lines { y, .. } => *y,
                     mouse::ScrollDelta::Pixels { y, .. } => *y / ITEM_HEIGHT,
                 };
-                self.set_scroll_offset(scroll_offset - lines * ITEM_HEIGHT);
+                let new_offset = (scroll_offset - lines * ITEM_HEIGHT)
+                    .clamp(0.0, max_scroll_offset_for(visible_h));
+                self.widget_state.downcast_mut::<State>().scroll_offset = new_offset;
                 shell.capture_event();
                 shell.request_redraw();
             }
@@ -553,6 +553,10 @@ impl<Message: Clone> Overlay<Message, Theme, Renderer> for DropdownOverlay<'_, M
         cursor: mouse::Cursor,
         _renderer: &Renderer,
     ) -> mouse::Interaction {
+        if !cursor.is_over(layout.bounds()) {
+            return mouse::Interaction::default();
+        }
+
         let bounds = layout.bounds();
         let clip_area = Self::scroll_area(bounds);
         let origin = Point::new(bounds.x, bounds.y);
