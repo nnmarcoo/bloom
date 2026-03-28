@@ -541,12 +541,7 @@ where
 
         renderer.fill_quad(
             renderer::Quad {
-                bounds: Rectangle {
-                    x: bounds.x,
-                    y: bounds.y,
-                    width: bounds.width,
-                    height: bounds.height,
-                },
+                bounds,
                 ..renderer::Quad::default()
             },
             Background::Color(custom_style.track_color),
