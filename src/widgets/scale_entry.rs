@@ -49,6 +49,14 @@ impl<Message> ScaleEntry<Message> {
 enum State {
     #[default]
     Idle,
+    Pending {
+        origin_x: f32,
+        origin_value: f32,
+    },
+    Dragging {
+        origin_x: f32,
+        origin_value: f32,
+    },
     Editing {
         buffer: String,
         fresh: bool,
@@ -58,6 +66,10 @@ enum State {
 impl State {
     fn is_editing(&self) -> bool {
         matches!(self, Self::Editing { .. })
+    }
+
+    fn is_dragging(&self) -> bool {
+        matches!(self, Self::Dragging { .. })
     }
 }
 
@@ -115,14 +127,71 @@ where
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if cursor.is_over(bounds) {
                     if !state.is_editing() {
-                        *state = State::Editing {
-                            buffer: format!("{}", (self.value * 100.0).round() as i32),
-                            fresh: true,
-                        };
+                        if let Some(pos) = cursor.position() {
+                            *state = State::Pending {
+                                origin_x: pos.x,
+                                origin_value: self.value,
+                            };
+                        }
                         shell.capture_event();
                     }
                 } else if state.is_editing() {
                     self.commit(state, shell);
+                }
+            }
+
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => match *state {
+                State::Pending { origin_value, .. } => {
+                    *state = State::Editing {
+                        buffer: format!("{}", (origin_value * 100.0).round() as i32),
+                        fresh: true,
+                    };
+                    shell.capture_event();
+                }
+                State::Dragging { .. } => {
+                    *state = State::Idle;
+                    shell.capture_event();
+                }
+                _ => {}
+            },
+
+            Event::Mouse(mouse::Event::CursorMoved { position }) => match *state {
+                State::Pending {
+                    origin_x,
+                    origin_value,
+                } => {
+                    let delta_x = position.x - origin_x;
+                    if delta_x.abs() >= 4.0 {
+                        *state = State::Dragging {
+                            origin_x,
+                            origin_value,
+                        };
+                        let new_pct = (origin_value * 100.0 + delta_x).round().max(1.0);
+                        shell.publish((self.on_change)(new_pct / 100.0));
+                        shell.capture_event();
+                    }
+                }
+                State::Dragging {
+                    origin_x,
+                    origin_value,
+                } => {
+                    let delta_x = position.x - origin_x;
+                    let new_pct = (origin_value * 100.0 + delta_x).round().max(1.0);
+                    shell.publish((self.on_change)(new_pct / 100.0));
+                    shell.capture_event();
+                }
+                _ => {}
+            },
+
+            Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
+                if !state.is_editing() {
+                    let lines = match delta {
+                        mouse::ScrollDelta::Lines { y, .. } => *y,
+                        mouse::ScrollDelta::Pixels { y, .. } => *y / 16.0,
+                    };
+                    let new_pct = ((self.value * 100.0).round() + lines).round().max(1.0);
+                    shell.publish((self.on_change)(new_pct / 100.0));
+                    shell.capture_event();
                 }
             }
 
@@ -191,8 +260,12 @@ where
         let bounds = layout.bounds();
         let palette = theme.extended_palette();
         let is_hovered = cursor.is_over(bounds);
+        let is_active = is_hovered
+            || state.is_editing()
+            || state.is_dragging()
+            || matches!(state, State::Pending { .. });
 
-        if is_hovered || state.is_editing() {
+        if is_active {
             renderer.fill_quad(
                 Quad {
                     bounds,
@@ -211,17 +284,18 @@ where
             );
         }
 
-        let (display, selected, show_caret) = match state {
-            State::Idle => (
-                format!("{}%", (self.value * 100.0).round() as i32),
-                false,
-                false,
-            ),
-            State::Editing {
-                buffer,
-                fresh: true,
-            } => (buffer.clone(), true, false),
-            State::Editing { buffer, .. } => (buffer.clone(), false, true),
+        let selected = matches!(
+            state,
+            State::Pending { .. } | State::Editing { fresh: true, .. }
+        );
+        let show_caret = matches!(state, State::Editing { fresh: false, .. });
+
+        let display: String = match state {
+            State::Idle | State::Dragging { .. } => {
+                format!("{}%", (self.value * 100.0).round() as i32)
+            }
+            State::Pending { .. } => (self.value * 100.0).round().to_string(),
+            State::Editing { buffer, .. } => buffer.clone(),
         };
 
         if selected {
@@ -244,9 +318,31 @@ where
             palette.background.base.text
         };
 
+        let caret_x = if show_caret {
+            let para = <Renderer as advanced::text::Renderer>::Paragraph::with_text(Text {
+                content: display.as_str(),
+                bounds: Size::new(f32::INFINITY, f32::INFINITY),
+                size: Pixels(self.text_size),
+                line_height: text::LineHeight::default(),
+                font: Font::DEFAULT,
+                align_x: iced::alignment::Horizontal::Left.into(),
+                align_y: iced::alignment::Vertical::Top.into(),
+                shaping: text::Shaping::Basic,
+                wrapping: text::Wrapping::None,
+            });
+            let text_width = para.min_bounds().width;
+            Some(if text_width > 0.0 {
+                (bounds.center_x() + text_width / 2.0 + 2.0).round()
+            } else {
+                bounds.center_x().round()
+            })
+        } else {
+            None
+        };
+
         renderer.fill_text(
             Text {
-                content: display.clone(),
+                content: display,
                 bounds: Size::new(bounds.width, bounds.height),
                 size: Pixels(self.text_size),
                 line_height: text::LineHeight::default(),
@@ -261,24 +357,7 @@ where
             bounds,
         );
 
-        if show_caret {
-            let para = <Renderer as advanced::text::Renderer>::Paragraph::with_text(Text {
-                content: display.as_str(),
-                bounds: Size::new(f32::INFINITY, f32::INFINITY),
-                size: Pixels(self.text_size),
-                line_height: text::LineHeight::default(),
-                font: Font::DEFAULT,
-                align_x: iced::alignment::Horizontal::Left.into(),
-                align_y: iced::alignment::Vertical::Top.into(),
-                shaping: text::Shaping::Basic,
-                wrapping: text::Wrapping::None,
-            });
-            let text_width = para.min_bounds().width;
-            let caret_x = if text_width > 0.0 {
-                (bounds.center_x() + text_width / 2.0 + 2.0).round()
-            } else {
-                bounds.center_x().round()
-            };
+        if let Some(caret_x) = caret_x {
             let caret_h = self.text_size + 2.0;
             let caret_y = (bounds.center_y() - caret_h / 2.0).round();
             renderer.fill_quad(
@@ -305,7 +384,9 @@ where
         _renderer: &Renderer,
     ) -> mouse::Interaction {
         let state = tree.state.downcast_ref::<State>();
-        if state.is_editing() || cursor.is_over(layout.bounds()) {
+        if state.is_dragging() {
+            mouse::Interaction::ResizingHorizontally
+        } else if state.is_editing() || cursor.is_over(layout.bounds()) {
             mouse::Interaction::Text
         } else {
             mouse::Interaction::default()
