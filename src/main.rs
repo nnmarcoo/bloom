@@ -4,6 +4,7 @@ mod app;
 mod clipboard;
 mod components;
 mod config;
+mod edit;
 mod gallery;
 mod keybinds;
 mod styles;

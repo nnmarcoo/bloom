@@ -10,6 +10,7 @@ use iced::{
 
 use crate::{
     app::Message,
+    edit::nodes::EditNode,
     wgpu::{
         media::animation::Animation, media::exif_data::ExifData, media::image_data::ImageData,
         passes::checkerboard::CheckerboardUniforms, scale::Scale, view_pipeline::Uniforms,
@@ -50,6 +51,7 @@ pub struct ViewProgram {
     animation: Option<Animation>,
     pub show_checkerboard: bool,
     pub checker_uniforms: CheckerboardUniforms,
+    pub edit_nodes: Arc<Vec<EditNode>>,
     cursor_pos: Option<Vec2>,
     rotation: u8,
 }
@@ -70,6 +72,7 @@ impl Default for ViewProgram {
                 tile_size: 12.0,
                 _pad: [0.0; 3],
             },
+            edit_nodes: Arc::new(Vec::new()),
             cursor_pos: None,
             rotation: 0,
         }
@@ -311,6 +314,7 @@ impl Program<Message> for ViewProgram {
             bounds,
             show_checkerboard: self.show_checkerboard,
             checker_uniforms: self.checker_uniforms,
+            edit_nodes: (*self.edit_nodes).clone(),
         }
     }
 

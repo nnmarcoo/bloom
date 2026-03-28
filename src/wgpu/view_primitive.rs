@@ -7,6 +7,7 @@ use iced::{
     widget::shader::{Primitive, Viewport},
 };
 
+use crate::edit::nodes::EditNode;
 use crate::wgpu::{
     media::image_data::ImageData,
     passes::checkerboard::CheckerboardUniforms,
@@ -23,6 +24,7 @@ pub struct ViewPrimitive {
     pub bounds: Rectangle,
     pub show_checkerboard: bool,
     pub checker_uniforms: CheckerboardUniforms,
+    pub edit_nodes: Vec<EditNode>,
 }
 
 impl Primitive for ViewPrimitive {
@@ -57,6 +59,7 @@ impl Primitive for ViewPrimitive {
         if self.show_checkerboard {
             pipeline.update_checkerboard(queue, self.checker_uniforms);
         }
+        pipeline.prepare_edit(device, queue, &self.edit_nodes);
     }
 
     fn render(

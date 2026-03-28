@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use glam::Vec2;
@@ -21,6 +22,7 @@ use crate::{
         timeline_bar, tool_bar, viewer,
     },
     config::{Config, UI_SCALE_DEFAULT, UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP},
+    edit::{EditStack, nodes::EditOp},
     gallery::Gallery,
     keybinds::{Action, KeyBinding},
     styles, tasks,
@@ -32,6 +34,8 @@ use crate::{
 
 pub struct App {
     program: ViewProgram,
+    edit_stack: EditStack,
+    edit_expanded: std::collections::HashSet<u64>,
     gallery: Gallery,
     mode: Mode,
     loading: Option<String>,
@@ -56,6 +60,8 @@ impl Default for App {
         styles::set_radius(config.rounded);
         Self {
             program,
+            edit_stack: EditStack::default(),
+            edit_expanded: std::collections::HashSet::new(),
             gallery: Gallery::default(),
             mode: Mode::Windowed,
             loading: None,
@@ -113,6 +119,14 @@ pub enum Message {
     UiScaleUp,
     UiScaleDown,
     UiScaleReset,
+    AddEditNode(EditOp),
+    RemoveEditNode(u64),
+    ToggleEditNode(u64),
+    UpdateEditNode(u64, EditOp),
+    MoveEditNode { from: usize, to: usize },
+    ToggleExpandNode(u64),
+    Undo,
+    Redo,
     Noop,
 }
 
@@ -331,10 +345,47 @@ impl App {
                 }
                 self.config.save();
             }
+            Message::AddEditNode(op) => {
+                self.edit_stack.add(op);
+                self.sync_edit_nodes();
+            }
+            Message::RemoveEditNode(id) => {
+                self.edit_stack.remove(id);
+                self.sync_edit_nodes();
+            }
+            Message::ToggleEditNode(id) => {
+                self.edit_stack.toggle(id);
+                self.sync_edit_nodes();
+            }
+            Message::UpdateEditNode(id, op) => {
+                self.edit_stack.update(id, op);
+                self.sync_edit_nodes();
+            }
+            Message::MoveEditNode { from, to } => {
+                self.edit_stack.move_node(from, to);
+                self.sync_edit_nodes();
+            }
+            Message::Undo => {
+                self.edit_stack.undo();
+                self.sync_edit_nodes();
+            }
+            Message::Redo => {
+                self.edit_stack.redo();
+                self.sync_edit_nodes();
+            }
+            Message::ToggleExpandNode(id) => {
+                if !self.edit_expanded.remove(&id) {
+                    self.edit_expanded.insert(id);
+                }
+            }
             Message::Noop => {}
             Message::Event(event) => return self.handle_event(event),
         }
         Task::none()
+    }
+
+    fn sync_edit_nodes(&mut self) {
+        self.program.edit_nodes = Arc::new(self.edit_stack.nodes.clone());
     }
 
     fn apply_media(&mut self, media: MediaData) {
@@ -401,6 +452,16 @@ impl App {
             return Task::none();
         }
 
+        if let Physical::Code(code) = physical_key {
+            if modifiers.control() && code == key::Code::KeyZ {
+                return if modifiers.shift() {
+                    Task::done(Message::Redo)
+                } else {
+                    Task::done(Message::Undo)
+                };
+            }
+        }
+
         match self.config.keymap.resolve(&physical_key, &modifiers) {
             Some(Action::Next) => Task::done(Message::Next),
             Some(Action::Previous) => Task::done(Message::Previous),
@@ -438,6 +499,8 @@ impl App {
             &self.gallery,
             &self.config.theme,
             &self.config.info_collapsed,
+            &self.edit_stack.nodes,
+            &self.edit_expanded,
         ));
 
         if let Some((frame, total)) = self.program.animation_info() {

@@ -10,6 +10,7 @@ use iced_aw::ContextMenu;
 use crate::{
     app::Message,
     components::{edit_column, info_column},
+    edit::nodes::EditNode,
     gallery::Gallery,
     styles::{PAD, spinner_bg_style},
     wgpu::view_program::ViewProgram,
@@ -28,6 +29,8 @@ pub fn view<'a>(
     gallery: &'a Gallery,
     theme: &'a Theme,
     info_collapsed: &'a HashSet<String>,
+    edit_nodes: &'a [EditNode],
+    edit_expanded: &'a HashSet<u64>,
 ) -> Element<'a, Message> {
     let base = shader(program.clone())
         .height(Length::Fill)
@@ -73,7 +76,7 @@ pub fn view<'a>(
         (true, true) => row![
             info_column::view(path, gallery, &program, theme, info_collapsed),
             viewer_with_menu,
-            edit_column::view(),
+            edit_column::view(edit_nodes, edit_expanded, theme),
         ]
         .height(Length::Fill)
         .into(),
@@ -83,7 +86,7 @@ pub fn view<'a>(
         ]
         .height(Length::Fill)
         .into(),
-        (false, true) => row![viewer_with_menu, edit_column::view()]
+        (false, true) => row![viewer_with_menu, edit_column::view(edit_nodes, edit_expanded, theme)]
             .height(Length::Fill)
             .into(),
         (false, false) => viewer_with_menu,

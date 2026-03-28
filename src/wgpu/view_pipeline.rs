@@ -11,7 +11,9 @@ use iced::{
     widget::shader::Pipeline,
 };
 
+use crate::edit::nodes::EditNode;
 use crate::wgpu::{
+    edit_pipeline::EditPipeline,
     error::ViewError,
     gpu,
     media::image_data::{ImageData, ImageId},
@@ -45,6 +47,7 @@ fn ndc_rect_of_transform(transform: &Mat4) -> (Vec2, Vec2) {
 pub struct ViewPipeline {
     display: DisplayPass,
     checkerboard: CheckerboardPass,
+    edit: EditPipeline,
     trilinear_sampler: Sampler,
     nearest_sampler: Sampler,
     blit_pipeline: RenderPipeline,
@@ -52,6 +55,8 @@ pub struct ViewPipeline {
     placeholder_bind_group: BindGroup,
     _placeholder_uniform: Buffer,
     source: Option<TiledSource>,
+    /// Bind group produced by the edit pipeline during prepare — used in render.
+    edit_bind_group: Option<BindGroup>,
     scale_factor: f32,
     last_checker_uniforms: Option<CheckerboardUniforms>,
 }
@@ -73,6 +78,7 @@ impl ViewPipeline {
             &self.blit_pipeline,
             &self.blit_bgl,
         )?);
+        self.edit.resize(device, image.width, image.height);
         Ok(())
     }
 
@@ -157,6 +163,43 @@ impl ViewPipeline {
             .draw(encoder, target, clip_bounds, bounds, self.scale_factor);
     }
 
+    /// Called during `prepare` — runs the edit pipeline and caches the bind group for `render`.
+    pub fn prepare_edit(&mut self, device: &Device, queue: &Queue, nodes: &[EditNode]) {
+        self.edit_bind_group = None;
+        let enabled_count = nodes.iter().filter(|n| n.enabled).count();
+        if enabled_count == 0 {
+            return;
+        }
+        let source = match &self.source {
+            Some(s) => s,
+            None => return,
+        };
+        let source_view = source.tiles[0]._source_texture.create_view(&Default::default());
+        let uniform_buffer = &source.tiles[0].uniform_buffer;
+
+        // We need a command encoder for the edit passes — create a temporary one.
+        let mut encoder = device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
+            label: Some("edit-prepare-encoder"),
+        });
+        if let Some(edited_view) = self.edit.run(
+            &mut encoder,
+            device,
+            queue,
+            &source_view,
+            nodes,
+        ) {
+            let bg = self.display.create_bind_group(
+                device,
+                uniform_buffer,
+                edited_view,
+                &self.trilinear_sampler,
+                Some("edited-bg"),
+            );
+            self.edit_bind_group = Some(bg);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+    }
+
     pub fn render_display(
         &self,
         encoder: &mut CommandEncoder,
@@ -164,6 +207,12 @@ impl ViewPipeline {
         clip_bounds: &Rectangle<u32>,
         bounds: &Rectangle,
     ) {
+        // If the edit pipeline produced output, use it for the whole image.
+        if let Some(bg) = &self.edit_bind_group {
+            self.draw_display_pass(encoder, target, clip_bounds, bounds, bg);
+            return;
+        }
+
         if let Some(source) = &self.source {
             for tile in &source.tiles {
                 // Viewport culling.
@@ -304,10 +353,12 @@ impl Pipeline for ViewPipeline {
         );
 
         let checkerboard = CheckerboardPass::new(device, format);
+        let edit = EditPipeline::new(device);
 
         Self {
             display,
             checkerboard,
+            edit,
             trilinear_sampler,
             nearest_sampler,
             blit_pipeline,
@@ -315,6 +366,7 @@ impl Pipeline for ViewPipeline {
             placeholder_bind_group,
             _placeholder_uniform: placeholder_uniform,
             source: None,
+            edit_bind_group: None,
             scale_factor: 1.0,
             last_checker_uniforms: None,
         }
