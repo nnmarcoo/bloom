@@ -3,11 +3,11 @@ use std::sync::OnceLock;
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::tooltip::Position;
-use iced::widget::{button, column, container, pick_list, row, rule, scrollable, text, toggler};
+use iced::widget::{button, column, container, row, rule, scrollable, text, toggler};
 use iced::{Element, Length, Theme};
 
 use crate::app::Message;
-use crate::config::{ALL_THEMES, Config, UI_SCALE_MAX, UI_SCALE_MIN};
+use crate::config::{Config, UI_SCALE_MAX, UI_SCALE_MIN};
 use crate::keybinds::{Action, KeyBinding, Keymap};
 use crate::styles::{
     PAD, capturing_chip_style, key_chip_style, plain_icon_button_style, set_radius,
@@ -15,6 +15,7 @@ use crate::styles::{
 use crate::ui::{svg_button_plain, with_tooltip};
 use crate::wgpu::view_program::ViewProgram;
 use crate::widgets::scale_entry::ScaleEntry;
+use crate::widgets::theme_picker::ThemePicker;
 
 fn on_wayland() -> bool {
     static ON_WAYLAND: OnceLock<bool> = OnceLock::new();
@@ -315,7 +316,7 @@ pub fn view<'a>(
         setting(
             "Theme",
             "Color scheme for the application",
-            pick_list(ALL_THEMES, Some(&pending.theme), |t| {
+            ThemePicker::new(pending.theme.clone(), |t| {
                 Message::Preference(PreferenceMessage::SetTheme(t))
             })
             .into(),
