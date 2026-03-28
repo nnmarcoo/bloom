@@ -21,10 +21,6 @@ pub struct Tile {
     pub hw_mip_bind_group: BindGroup,
     /// Nearest-neighbor sampler on mip 0 — used when zoomed in (physical_scale >= 1).
     pub nearest_bind_group: BindGroup,
-    /// Lanczos mip pyramid bind group — built incrementally, None until ready.
-    pub lanczos_bind_group: Option<BindGroup>,
-    /// Keeps the Lanczos Rgba16Float mip texture alive.
-    pub _lanczos_texture: Option<Texture>,
 
     /// Cached NDC bounding rect for viewport culling (min, max).
     pub last_ndc_rect: Option<(Vec2, Vec2)>,
@@ -151,8 +147,6 @@ impl TiledSource {
                     uniform_buffer,
                     hw_mip_bind_group,
                     nearest_bind_group,
-                    lanczos_bind_group: None,
-                    _lanczos_texture: None,
                     last_ndc_rect: None,
                     last_transform: None,
                     x: tx,
@@ -172,7 +166,5 @@ impl TiledSource {
         })
     }
 
-    pub fn lanczos_all_ready(&self) -> bool {
-        self.tiles.iter().all(|t| t.lanczos_bind_group.is_some())
-    }
+
 }

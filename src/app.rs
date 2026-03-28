@@ -49,7 +49,6 @@ impl Default for App {
     fn default() -> Self {
         let config = Config::load();
         let mut program = ViewProgram::default();
-        program.lanczos_enabled = config.lanczos;
         program.show_checkerboard = config.show_checkerboard;
         if config.show_checkerboard {
             program.checker_uniforms = checker_uniforms_from_theme(&config.theme);
@@ -216,7 +215,6 @@ impl App {
                 let outcome = preferences::update(
                     msg,
                     pending,
-                    &mut self.program,
                     &mut self.preference_state,
                 );
                 match outcome {

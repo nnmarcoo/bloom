@@ -3,7 +3,6 @@ pub mod view_program;
 
 mod error;
 mod gpu;
-mod lanczos_build;
 pub mod passes;
 mod scale;
 mod tiled_source;

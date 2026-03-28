@@ -21,7 +21,6 @@ pub struct ViewPrimitive {
     pub pan_ndc: Vec2,
     pub rotation: u8,
     pub bounds: Rectangle,
-    pub lanczos_enabled: bool,
     pub show_checkerboard: bool,
     pub checker_uniforms: CheckerboardUniforms,
 }
@@ -54,7 +53,6 @@ impl Primitive for ViewPrimitive {
             vec2(self.bounds.width, self.bounds.height),
             self.pan_ndc,
             self.rotation,
-            self.lanczos_enabled,
         );
         if self.show_checkerboard {
             pipeline.update_checkerboard(queue, self.checker_uniforms);

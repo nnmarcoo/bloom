@@ -14,12 +14,10 @@ use iced::{
 use crate::wgpu::{
     error::ViewError,
     gpu,
-    lanczos_build::LanczosBuildState,
     media::image_data::{ImageData, ImageId},
     passes::{
         checkerboard::{CheckerboardPass, CheckerboardUniforms},
         display::DisplayPass,
-        lanczos::LanczosPass,
     },
     tiled_source::TiledSource,
 };
@@ -47,8 +45,6 @@ fn ndc_rect_of_transform(transform: &Mat4) -> (Vec2, Vec2) {
 pub struct ViewPipeline {
     display: DisplayPass,
     checkerboard: CheckerboardPass,
-    lanczos_h: LanczosPass,
-    lanczos_v: LanczosPass,
     trilinear_sampler: Sampler,
     nearest_sampler: Sampler,
     blit_pipeline: RenderPipeline,
@@ -56,8 +52,6 @@ pub struct ViewPipeline {
     placeholder_bind_group: BindGroup,
     _placeholder_uniform: Buffer,
     source: Option<TiledSource>,
-    lanczos_build: Option<LanczosBuildState>,
-    lanczos_enabled: bool,
     scale_factor: f32,
     last_checker_uniforms: Option<CheckerboardUniforms>,
 }
@@ -69,7 +63,6 @@ impl ViewPipeline {
         queue: &Queue,
         image: &ImageData,
     ) -> Result<(), ViewError> {
-        self.lanczos_build = None;
         self.source = Some(TiledSource::new(
             device,
             queue,
@@ -80,30 +73,12 @@ impl ViewPipeline {
             &self.blit_pipeline,
             &self.blit_bgl,
         )?);
-        if self.lanczos_enabled {
-            if let Some(ref src) = self.source {
-                self.lanczos_build = Some(LanczosBuildState::new(src.tiles.len()));
-            }
-        }
         Ok(())
-    }
-
-    pub fn set_lanczos_enabled(&mut self, enabled: bool) {
-        self.lanczos_enabled = enabled;
-        if enabled {
-            if let Some(ref src) = self.source {
-                if !src.lanczos_all_ready() && self.lanczos_build.is_none() {
-                    self.lanczos_build = Some(LanczosBuildState::new(src.tiles.len()));
-                }
-            }
-        } else {
-            self.lanczos_build = None;
-        }
     }
 
     pub fn update(
         &mut self,
-        device: &Device,
+        _device: &Device,
         queue: &Queue,
         scale: f32,
         scale_factor: f32,
@@ -111,12 +86,7 @@ impl ViewPipeline {
         viewport: Vec2,
         pan_ndc: Vec2,
         rotation: u8,
-        lanczos_enabled: bool,
     ) {
-        if lanczos_enabled != self.lanczos_enabled {
-            self.set_lanczos_enabled(lanczos_enabled);
-        }
-
         self.scale_factor = scale_factor;
         let physical_scale = scale * scale_factor;
 
@@ -125,22 +95,6 @@ impl ViewPipeline {
             None => return,
         };
         source.physical_scale = physical_scale;
-
-        // Advance Lanczos build by one tile per frame.
-        if let Some(ref mut build) = self.lanczos_build {
-            let done = build.step(
-                device,
-                queue,
-                source,
-                &self.display,
-                &self.lanczos_h,
-                &self.lanczos_v,
-                &self.trilinear_sampler,
-            );
-            if done {
-                self.lanczos_build = None;
-            }
-        }
 
         // Write per-tile transform uniforms, skipping redundant writes.
         if source.tiles.len() == 1 {
@@ -221,10 +175,6 @@ impl ViewPipeline {
 
                 let bind_group = if source.physical_scale >= 1.0 - 1e-6 {
                     &tile.nearest_bind_group
-                } else if self.lanczos_enabled {
-                    tile.lanczos_bind_group
-                        .as_ref()
-                        .unwrap_or(&tile.hw_mip_bind_group)
                 } else {
                     &tile.hw_mip_bind_group
                 };
@@ -355,22 +305,9 @@ impl Pipeline for ViewPipeline {
 
         let checkerboard = CheckerboardPass::new(device, format);
 
-        let lanczos_h = LanczosPass::new(
-            device,
-            TextureFormat::Rgba16Float,
-            include_str!("shaders/lanczos_h.wgsl"),
-        );
-        let lanczos_v = LanczosPass::new(
-            device,
-            TextureFormat::Rgba16Float,
-            include_str!("shaders/lanczos_v.wgsl"),
-        );
-
         Self {
             display,
             checkerboard,
-            lanczos_h,
-            lanczos_v,
             trilinear_sampler,
             nearest_sampler,
             blit_pipeline,
@@ -378,8 +315,6 @@ impl Pipeline for ViewPipeline {
             placeholder_bind_group,
             _placeholder_uniform: placeholder_uniform,
             source: None,
-            lanczos_build: None,
-            lanczos_enabled: false,
             scale_factor: 1.0,
             last_checker_uniforms: None,
         }

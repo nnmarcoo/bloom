@@ -48,7 +48,6 @@ pub struct ViewProgram {
     bounds: Rectangle,
     image: Option<Arc<ImageData>>,
     animation: Option<Animation>,
-    pub lanczos_enabled: bool,
     pub show_checkerboard: bool,
     pub checker_uniforms: CheckerboardUniforms,
     cursor_pos: Option<Vec2>,
@@ -64,7 +63,6 @@ impl Default for ViewProgram {
             bounds: Rectangle::default(),
             image: None,
             animation: None,
-            lanczos_enabled: false,
             show_checkerboard: false,
             checker_uniforms: CheckerboardUniforms {
                 color_a: [0.8, 0.8, 0.8, 1.0],
@@ -311,7 +309,6 @@ impl Program<Message> for ViewProgram {
             pan_ndc,
             rotation: self.rotation,
             bounds,
-            lanczos_enabled: self.lanczos_enabled,
             show_checkerboard: self.show_checkerboard,
             checker_uniforms: self.checker_uniforms,
         }

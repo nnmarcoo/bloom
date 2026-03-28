@@ -39,7 +39,6 @@ pub const ALL_THEMES: &[Theme] = &[
 #[derive(Debug, Clone)]
 pub struct Config {
     pub theme: Theme,
-    pub lanczos: bool,
     pub show_info: bool,
     pub show_edit: bool,
     pub show_checkerboard: bool,
@@ -56,7 +55,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             theme: Theme::Dark,
-            lanczos: false,
             show_info: false,
             show_edit: false,
             show_checkerboard: false,
@@ -74,7 +72,6 @@ impl Default for Config {
 #[derive(Serialize, Deserialize)]
 struct ConfigFile {
     theme: String,
-    lanczos: bool,
     show_info: bool,
     #[serde(default)]
     show_edit: bool,
@@ -109,7 +106,6 @@ impl From<&Config> for ConfigFile {
         info_collapsed.sort();
         Self {
             theme: c.theme.to_string(),
-            lanczos: c.lanczos,
             show_info: c.show_info,
             show_edit: c.show_edit,
             show_checkerboard: c.show_checkerboard,
@@ -128,7 +124,6 @@ impl From<ConfigFile> for Config {
     fn from(f: ConfigFile) -> Self {
         Self {
             theme: theme_from_str(&f.theme),
-            lanczos: f.lanczos,
             show_info: f.show_info,
             show_edit: f.show_edit,
             show_checkerboard: f.show_checkerboard,

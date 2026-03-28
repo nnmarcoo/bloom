@@ -13,7 +13,6 @@ use crate::styles::{
     PAD, capturing_chip_style, key_chip_style, plain_icon_button_style, set_radius,
 };
 use crate::ui::{svg_button_plain, with_tooltip};
-use crate::wgpu::view_program::ViewProgram;
 use crate::widgets::scale_entry::ScaleEntry;
 use crate::widgets::theme_picker::ThemePicker;
 
@@ -30,7 +29,6 @@ pub struct PreferenceState {
 #[derive(Debug, Clone)]
 pub enum PreferenceMessage {
     SetTheme(Theme),
-    SetLanczos(bool),
     SetRounded(bool),
     SetDecorations(bool),
     SetAlwaysOnTop(bool),
@@ -57,16 +55,11 @@ pub enum PreferenceOutcome {
 pub fn update(
     msg: PreferenceMessage,
     pending: &mut Config,
-    program: &mut ViewProgram,
     preference_state: &mut PreferenceState,
 ) -> PreferenceOutcome {
     match msg {
         PreferenceMessage::SetTheme(t) => {
             pending.theme = t;
-            PreferenceOutcome::Open
-        }
-        PreferenceMessage::SetLanczos(v) => {
-            pending.lanczos = v;
             PreferenceOutcome::Open
         }
         PreferenceMessage::SetRounded(v) => {
@@ -116,9 +109,7 @@ pub fn update(
             PreferenceOutcome::Open
         }
         PreferenceMessage::ResetRendering => {
-            let d = Config::default();
-            pending.lanczos = d.lanczos;
-            pending.autoplay = d.autoplay;
+            pending.autoplay = Config::default().autoplay;
             PreferenceOutcome::Open
         }
         PreferenceMessage::ResetKeybindings => {
@@ -132,7 +123,6 @@ pub fn update(
             PreferenceOutcome::Open
         }
         PreferenceMessage::Save => {
-            program.lanczos_enabled = pending.lanczos;
             set_radius(pending.rounded);
             PreferenceOutcome::Save
         }
@@ -376,15 +366,6 @@ pub fn view<'a>(
             "Reset rendering to defaults",
             PreferenceMessage::ResetRendering,
             theme
-        ),
-        iced::widget::Space::new().height(PAD),
-        setting(
-            "Lanczos filtering",
-            "High-quality downsampling when zoomed out. This is GPU intensive",
-            toggler(pending.lanczos)
-                .on_toggle(|v| Message::Preference(PreferenceMessage::SetLanczos(v)))
-                .into(),
-            theme,
         ),
         iced::widget::Space::new().height(PAD),
         setting(
