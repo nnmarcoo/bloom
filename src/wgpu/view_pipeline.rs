@@ -16,7 +16,11 @@ use crate::wgpu::{
     gpu,
     lanczos_build::LanczosBuildState,
     media::image_data::{ImageData, ImageId},
-    passes::{display::DisplayPass, lanczos::LanczosPass},
+    passes::{
+        checkerboard::{CheckerboardPass, CheckerboardUniforms},
+        display::DisplayPass,
+        lanczos::LanczosPass,
+    },
     tiled_source::TiledSource,
 };
 
@@ -42,6 +46,7 @@ fn ndc_rect_of_transform(transform: &Mat4) -> (Vec2, Vec2) {
 
 pub struct ViewPipeline {
     display: DisplayPass,
+    checkerboard: CheckerboardPass,
     lanczos_h: LanczosPass,
     lanczos_v: LanczosPass,
     trilinear_sampler: Sampler,
@@ -54,6 +59,7 @@ pub struct ViewPipeline {
     lanczos_build: Option<LanczosBuildState>,
     lanczos_enabled: bool,
     scale_factor: f32,
+    last_checker_uniforms: Option<CheckerboardUniforms>,
 }
 
 impl ViewPipeline {
@@ -177,6 +183,24 @@ impl ViewPipeline {
                 tile.last_transform = Some(transform);
             }
         }
+    }
+
+    pub fn update_checkerboard(&mut self, queue: &Queue, uniforms: CheckerboardUniforms) {
+        if self.last_checker_uniforms != Some(uniforms) {
+            self.checkerboard.update_colors(queue, &uniforms);
+            self.last_checker_uniforms = Some(uniforms);
+        }
+    }
+
+    pub fn render_checkerboard(
+        &self,
+        encoder: &mut CommandEncoder,
+        target: &TextureView,
+        clip_bounds: &Rectangle<u32>,
+        bounds: &Rectangle,
+    ) {
+        self.checkerboard
+            .draw(encoder, target, clip_bounds, bounds, self.scale_factor);
     }
 
     pub fn render_display(
@@ -329,6 +353,8 @@ impl Pipeline for ViewPipeline {
             Some("placeholder-bg"),
         );
 
+        let checkerboard = CheckerboardPass::new(device, format);
+
         let lanczos_h = LanczosPass::new(
             device,
             TextureFormat::Rgba16Float,
@@ -342,6 +368,7 @@ impl Pipeline for ViewPipeline {
 
         Self {
             display,
+            checkerboard,
             lanczos_h,
             lanczos_v,
             trilinear_sampler,
@@ -354,6 +381,7 @@ impl Pipeline for ViewPipeline {
             lanczos_build: None,
             lanczos_enabled: false,
             scale_factor: 1.0,
+            last_checker_uniforms: None,
         }
     }
 }

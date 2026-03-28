@@ -12,7 +12,8 @@ use crate::{
     app::Message,
     wgpu::{
         media::animation::Animation, media::exif_data::ExifData, media::image_data::ImageData,
-        scale::Scale, view_pipeline::Uniforms, view_primitive::ViewPrimitive,
+        passes::checkerboard::CheckerboardUniforms, scale::Scale, view_pipeline::Uniforms,
+        view_primitive::ViewPrimitive,
     },
 };
 
@@ -48,8 +49,10 @@ pub struct ViewProgram {
     image: Option<Arc<ImageData>>,
     animation: Option<Animation>,
     pub lanczos_enabled: bool,
+    pub show_checkerboard: bool,
+    pub checker_uniforms: CheckerboardUniforms,
     cursor_pos: Option<Vec2>,
-    rotation: u8, // 0=0°, 1=90°CW, 2=180°, 3=270°CW
+    rotation: u8,
 }
 
 impl Default for ViewProgram {
@@ -62,6 +65,13 @@ impl Default for ViewProgram {
             image: None,
             animation: None,
             lanczos_enabled: false,
+            show_checkerboard: false,
+            checker_uniforms: CheckerboardUniforms {
+                color_a: [0.8, 0.8, 0.8, 1.0],
+                color_b: [0.6, 0.6, 0.6, 1.0],
+                tile_size: 12.0,
+                _pad: [0.0; 3],
+            },
             cursor_pos: None,
             rotation: 0,
         }
@@ -302,6 +312,8 @@ impl Program<Message> for ViewProgram {
             rotation: self.rotation,
             bounds,
             lanczos_enabled: self.lanczos_enabled,
+            show_checkerboard: self.show_checkerboard,
+            checker_uniforms: self.checker_uniforms,
         }
     }
 

@@ -18,6 +18,7 @@ pub fn view<'a>(
     rotation: u8,
     focus_scale: bool,
     show_info: bool,
+    show_checkerboard: bool,
     has_image: bool,
 ) -> Element<'a, Message> {
     let is_fullscreen = matches!(mode, Mode::Fullscreen);
@@ -110,10 +111,17 @@ pub fn view<'a>(
             Position::Top,
         ),
         with_tooltip(
-            svg_button_maybe(
-                include_bytes!("../../assets/icons/checkerboard.svg"),
-                Some(Message::Noop)
-            ),
+            if show_checkerboard {
+                svg_button_active(
+                    include_bytes!("../../assets/icons/checkerboard.svg"),
+                    Message::ToggleCheckerboard,
+                )
+            } else {
+                svg_button(
+                    include_bytes!("../../assets/icons/checkerboard.svg"),
+                    Message::ToggleCheckerboard,
+                )
+            },
             "Checkerboard background",
             Position::Top,
         ),

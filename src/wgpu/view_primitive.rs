@@ -9,6 +9,7 @@ use iced::{
 
 use crate::wgpu::{
     media::image_data::ImageData,
+    passes::checkerboard::CheckerboardUniforms,
     view_pipeline::{Uniforms, ViewPipeline},
 };
 
@@ -21,6 +22,8 @@ pub struct ViewPrimitive {
     pub rotation: u8,
     pub bounds: Rectangle,
     pub lanczos_enabled: bool,
+    pub show_checkerboard: bool,
+    pub checker_uniforms: CheckerboardUniforms,
 }
 
 impl Primitive for ViewPrimitive {
@@ -53,6 +56,9 @@ impl Primitive for ViewPrimitive {
             self.rotation,
             self.lanczos_enabled,
         );
+        if self.show_checkerboard {
+            pipeline.update_checkerboard(queue, self.checker_uniforms);
+        }
     }
 
     fn render(
@@ -62,6 +68,9 @@ impl Primitive for ViewPrimitive {
         target: &TextureView,
         clip_bounds: &Rectangle<u32>,
     ) {
+        if self.show_checkerboard {
+            pipeline.render_checkerboard(encoder, target, clip_bounds, &self.bounds);
+        }
         pipeline.render_display(encoder, target, clip_bounds, &self.bounds);
     }
 }

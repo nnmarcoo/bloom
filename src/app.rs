@@ -24,7 +24,10 @@ use crate::{
     gallery::Gallery,
     keybinds::{Action, KeyBinding},
     styles, tasks,
-    wgpu::{media::image_data::MediaData, view_program::ViewProgram},
+    wgpu::{
+        media::image_data::MediaData, passes::checkerboard::CheckerboardUniforms,
+        view_program::ViewProgram,
+    },
 };
 
 pub struct App {
@@ -47,6 +50,10 @@ impl Default for App {
         let config = Config::load();
         let mut program = ViewProgram::default();
         program.lanczos_enabled = config.lanczos;
+        program.show_checkerboard = config.show_checkerboard;
+        if config.show_checkerboard {
+            program.checker_uniforms = checker_uniforms_from_theme(&config.theme);
+        }
         styles::set_radius(config.rounded);
         Self {
             program,
@@ -94,6 +101,7 @@ pub enum Message {
     CopyPath,
     Rotate,
     Exit,
+    ToggleCheckerboard,
     TogglePlayback,
     FrameFirst,
     FrameLast,
@@ -214,6 +222,10 @@ impl App {
                         let aot = self.config.always_on_top != pending.always_on_top;
                         self.config = pending;
                         self.config.save();
+                        if self.program.show_checkerboard {
+                            self.program.checker_uniforms =
+                                checker_uniforms_from_theme(&self.config.theme);
+                        }
                         if dec || aot {
                             return Task::batch([
                                 if dec {
@@ -306,6 +318,14 @@ impl App {
             }
             Message::UiScaleReset => {
                 self.config.ui_scale = UI_SCALE_DEFAULT;
+                self.config.save();
+            }
+            Message::ToggleCheckerboard => {
+                self.program.show_checkerboard = !self.program.show_checkerboard;
+                self.config.show_checkerboard = self.program.show_checkerboard;
+                if self.program.show_checkerboard {
+                    self.program.checker_uniforms = checker_uniforms_from_theme(&self.config.theme);
+                }
                 self.config.save();
             }
             Message::Noop => {}
@@ -431,6 +451,7 @@ impl App {
             self.program.rotation(),
             self.focus_scale,
             self.config.show_info,
+            self.program.show_checkerboard,
             self.gallery.current().is_some(),
         ))
         .into()
@@ -463,5 +484,16 @@ impl App {
             }
             None => events,
         }
+    }
+}
+
+fn checker_uniforms_from_theme(theme: &Theme) -> CheckerboardUniforms {
+    let p = theme.extended_palette();
+    let to_arr = |c: iced::Color| [c.r, c.g, c.b, c.a];
+    CheckerboardUniforms {
+        color_a: to_arr(p.background.weak.color),
+        color_b: to_arr(p.background.base.color),
+        tile_size: 12.0,
+        _pad: [0.0; 3],
     }
 }
