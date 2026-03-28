@@ -22,7 +22,7 @@ const SWATCHES_WIDTH: f32 = SWATCH_SIZE * 3.0 + SWATCH_GAP * 2.0;
 const BUTTON_HEIGHT: f32 = 28.0;
 const TEXT_SIZE: f32 = 13.0;
 const DROPDOWN_WIDTH: f32 = 220.0;
-const MAX_VISIBLE_ITEMS: usize = 8;
+const MAX_VISIBLE_ITEMS: usize = 12;
 const PADDING: f32 = 6.0;
 const SCROLLBAR_WIDTH: f32 = 4.0;
 const SCROLLBAR_MARGIN: f32 = 3.0;
@@ -317,19 +317,19 @@ impl<Message: Clone + 'static> Widget<Message, Theme, Renderer> for ThemePicker<
             return None;
         }
 
-        let position = layout.position() + translation;
         let bounds = layout.bounds();
+        let button_bounds = Rectangle {
+            x: bounds.x + translation.x,
+            y: bounds.y + translation.y,
+            width: bounds.width,
+            height: bounds.height,
+        };
 
         Some(overlay::Element::new(Box::new(DropdownOverlay {
             widget_state: &mut tree.state,
             selected: &self.selected,
             on_select: &self.on_select,
-            button_bounds: Rectangle {
-                x: position.x,
-                y: position.y,
-                width: bounds.width,
-                height: bounds.height,
-            },
+            button_bounds,
         })))
     }
 }
@@ -380,14 +380,24 @@ impl<Message: Clone> DropdownOverlay<'_, Message> {
 
 impl<Message: Clone> Overlay<Message, Theme, Renderer> for DropdownOverlay<'_, Message> {
     fn layout(&mut self, _renderer: &Renderer, viewport: Size) -> layout::Node {
-        let dropdown_h = max_dropdown_height();
+        let ideal_h = max_dropdown_height();
+        let gap = 2.0;
 
-        let y = if self.button_bounds.y + self.button_bounds.height + dropdown_h <= viewport.height
-        {
-            self.button_bounds.y + self.button_bounds.height + 2.0
+        let space_below =
+            (viewport.height - (self.button_bounds.y + self.button_bounds.height + gap)).max(0.0);
+        let space_above = (self.button_bounds.y - gap).max(0.0);
+
+        let (y, available_h) = if space_below >= ideal_h || space_below >= space_above {
+            (
+                self.button_bounds.y + self.button_bounds.height + gap,
+                space_below,
+            )
         } else {
-            (self.button_bounds.y - dropdown_h - 2.0).max(0.0)
+            let h = ideal_h.min(space_above);
+            (self.button_bounds.y - gap - h, space_above)
         };
+
+        let dropdown_h = ideal_h.min(available_h).max(ITEM_HEIGHT + PADDING * 2.0);
 
         let x = self
             .button_bounds
