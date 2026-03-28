@@ -18,7 +18,7 @@ use crate::{
     components::{
         bottom_bar, preferences,
         preferences::{PreferenceMessage, PreferenceOutcome},
-        timeline_bar, viewer,
+        timeline_bar, tool_bar, viewer,
     },
     config::{Config, UI_SCALE_DEFAULT, UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP},
     gallery::Gallery,
@@ -427,7 +427,11 @@ impl App {
         if let Some(pending) = &self.editing_config {
             return preferences::view(pending, &self.config.theme, &self.preference_state);
         }
-        let mut col = column![viewer::view(
+        let mut col = column![];
+        if self.config.show_edit {
+            col = col.push(tool_bar::view());
+        }
+        col = col.push(viewer::view(
             self.program.clone(),
             self.loading.as_deref(),
             self.config.show_info,
@@ -436,7 +440,7 @@ impl App {
             &self.gallery,
             &self.config.theme,
             &self.config.info_collapsed,
-        )];
+        ));
 
         if let Some((frame, total)) = self.program.animation_info() {
             let position = if total > 1 {

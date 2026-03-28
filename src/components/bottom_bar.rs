@@ -87,6 +87,7 @@ pub fn view<'a>(
             Position::Top,
         ),
     ]
+    .spacing(2)
     .align_y(Vertical::Center);
 
     let info_btn = if show_info {
@@ -164,6 +165,7 @@ pub fn view<'a>(
             Position::Top,
         ),
     ]
+    .spacing(2)
     .align_y(Vertical::Center);
 
     container(

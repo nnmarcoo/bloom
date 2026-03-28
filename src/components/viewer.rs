@@ -9,7 +9,7 @@ use iced_aw::ContextMenu;
 
 use crate::{
     app::Message,
-    components::{edit_column, info_column, tool_bar},
+    components::{edit_column, info_column},
     gallery::Gallery,
     styles::{PAD, spinner_bg_style},
     wgpu::view_program::ViewProgram,
@@ -69,32 +69,23 @@ pub fn view<'a>(
     })
     .into();
 
-    let center: Element<'a, Message> = if show_edit {
-        column![tool_bar::view(), viewer_with_menu]
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .into()
-    } else {
-        viewer_with_menu
-    };
-
     match (show_info, show_edit) {
         (true, true) => row![
             info_column::view(path, gallery, &program, theme, info_collapsed),
-            center,
+            viewer_with_menu,
             edit_column::view(),
         ]
         .height(Length::Fill)
         .into(),
         (true, false) => row![
             info_column::view(path, gallery, &program, theme, info_collapsed),
-            center,
+            viewer_with_menu,
         ]
         .height(Length::Fill)
         .into(),
-        (false, true) => row![center, edit_column::view()]
+        (false, true) => row![viewer_with_menu, edit_column::view()]
             .height(Length::Fill)
             .into(),
-        (false, false) => center,
+        (false, false) => viewer_with_menu,
     }
 }
