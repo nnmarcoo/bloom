@@ -282,13 +282,6 @@ impl<Message> Widget<Message, Theme, Renderer> for Histogram {
         let chip_bg_active = palette.background.base.color;
         let chip_border = palette.background.strong.color;
         let r = radius();
-        let channel_colors: [Color; 4] = std::array::from_fn(|i| {
-            if is_dark {
-                CHANNEL_COLORS[i].dark
-            } else {
-                CHANNEL_COLORS[i].light
-            }
-        });
 
         for (i, rect) in label_rects.iter().enumerate() {
             let active = state.channels[i];
@@ -299,7 +292,11 @@ impl<Message> Widget<Message, Theme, Renderer> for Histogram {
                 width: rect.width - CHIP_GAP,
                 height: rect.height,
             };
-            let channel_color = channel_colors[i];
+            let channel_color = if is_dark {
+                CHANNEL_COLORS[i].dark
+            } else {
+                CHANNEL_COLORS[i].light
+            };
 
             let border_color = if active {
                 channel_color
