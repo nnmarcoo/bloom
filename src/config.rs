@@ -132,31 +132,11 @@ impl From<ConfigFile> for Config {
 }
 
 fn theme_from_str(s: &str) -> Theme {
-    match s {
-        "Light" => Theme::Light,
-        "Dark" => Theme::Dark,
-        "Dracula" => Theme::Dracula,
-        "Nord" => Theme::Nord,
-        "Solarized Light" => Theme::SolarizedLight,
-        "Solarized Dark" => Theme::SolarizedDark,
-        "Gruvbox Light" => Theme::GruvboxLight,
-        "Gruvbox Dark" => Theme::GruvboxDark,
-        "Catppuccin Latte" => Theme::CatppuccinLatte,
-        "Catppuccin Frappé" => Theme::CatppuccinFrappe,
-        "Catppuccin Macchiato" => Theme::CatppuccinMacchiato,
-        "Catppuccin Mocha" => Theme::CatppuccinMocha,
-        "Tokyo Night" => Theme::TokyoNight,
-        "Tokyo Night Storm" => Theme::TokyoNightStorm,
-        "Tokyo Night Light" => Theme::TokyoNightLight,
-        "Kanagawa Wave" => Theme::KanagawaWave,
-        "Kanagawa Dragon" => Theme::KanagawaDragon,
-        "Kanagawa Lotus" => Theme::KanagawaLotus,
-        "Moonfly" => Theme::Moonfly,
-        "Nightfly" => Theme::Nightfly,
-        "Oxocarbon" => Theme::Oxocarbon,
-        "Ferra" => Theme::Ferra,
-        _ => Theme::Dark,
-    }
+    ALL_THEMES
+        .iter()
+        .find(|t| t.to_string() == s)
+        .cloned()
+        .unwrap_or(Theme::Dark)
 }
 
 fn config_path() -> Option<PathBuf> {
