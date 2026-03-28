@@ -18,6 +18,7 @@ pub fn view<'a>(
     rotation: u8,
     focus_scale: bool,
     show_info: bool,
+    show_edit: bool,
     show_checkerboard: bool,
     has_image: bool,
 ) -> Element<'a, Message> {
@@ -103,10 +104,17 @@ pub fn view<'a>(
     let right_buttons = row![
         with_tooltip(info_btn, "Information", Position::Top),
         with_tooltip(
-            svg_button_maybe(
-                include_bytes!("../../assets/icons/edit.svg"),
-                Some(Message::Noop)
-            ),
+            if show_edit {
+                svg_button_active(
+                    include_bytes!("../../assets/icons/edit.svg"),
+                    Message::ToggleEditPanel,
+                )
+            } else {
+                svg_button(
+                    include_bytes!("../../assets/icons/edit.svg"),
+                    Message::ToggleEditPanel,
+                )
+            },
             "Edit",
             Position::Top,
         ),

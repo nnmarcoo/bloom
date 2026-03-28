@@ -101,6 +101,7 @@ pub enum Message {
     CopyPath,
     Rotate,
     Exit,
+    ToggleEditPanel,
     ToggleCheckerboard,
     TogglePlayback,
     FrameFirst,
@@ -182,6 +183,10 @@ impl App {
                     self.loading = None;
                 }
                 eprintln!("Failed to load media: {err}");
+            }
+            Message::ToggleEditPanel => {
+                self.config.show_edit = !self.config.show_edit;
+                self.config.save();
             }
             Message::ToggleFullscreen => {
                 self.mode = match self.mode {
@@ -426,6 +431,7 @@ impl App {
             self.program.clone(),
             self.loading.as_deref(),
             self.config.show_info,
+            self.config.show_edit,
             self.gallery.current().map(|p| p.as_path()),
             &self.gallery,
             &self.config.theme,
@@ -451,6 +457,7 @@ impl App {
             self.program.rotation(),
             self.focus_scale,
             self.config.show_info,
+            self.config.show_edit,
             self.program.show_checkerboard,
             self.gallery.current().is_some(),
         ))

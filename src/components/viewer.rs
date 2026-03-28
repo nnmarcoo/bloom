@@ -9,7 +9,7 @@ use iced_aw::ContextMenu;
 
 use crate::{
     app::Message,
-    components::info_column,
+    components::{edit_column, info_column, tool_bar},
     gallery::Gallery,
     styles::{PAD, spinner_bg_style},
     wgpu::view_program::ViewProgram,
@@ -23,6 +23,7 @@ pub fn view<'a>(
     program: ViewProgram,
     loading: Option<&'a str>,
     show_info: bool,
+    show_edit: bool,
     path: Option<&'a Path>,
     gallery: &'a Gallery,
     theme: &'a Theme,
@@ -68,14 +69,32 @@ pub fn view<'a>(
     })
     .into();
 
-    if show_info {
-        row![
-            info_column::view(path, gallery, &program, theme, info_collapsed),
-            viewer_with_menu
-        ]
-        .height(Length::Fill)
-        .into()
+    let center: Element<'a, Message> = if show_edit {
+        column![tool_bar::view(), viewer_with_menu]
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .into()
     } else {
         viewer_with_menu
+    };
+
+    match (show_info, show_edit) {
+        (true, true) => row![
+            info_column::view(path, gallery, &program, theme, info_collapsed),
+            center,
+            edit_column::view(),
+        ]
+        .height(Length::Fill)
+        .into(),
+        (true, false) => row![
+            info_column::view(path, gallery, &program, theme, info_collapsed),
+            center,
+        ]
+        .height(Length::Fill)
+        .into(),
+        (false, true) => row![center, edit_column::view()]
+            .height(Length::Fill)
+            .into(),
+        (false, false) => center,
     }
 }
