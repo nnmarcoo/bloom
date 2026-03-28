@@ -5,7 +5,6 @@ use iced::advanced::{self, Clipboard, Layout, Shell, Widget};
 use iced::alignment::Vertical;
 use iced::mouse;
 use iced::widget::{Column, container, text};
-use iced::window;
 use iced::{Background, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme};
 
 use crate::styles::{menu_container_style, menu_item_hover_color, menu_separator_style, radius};
@@ -68,9 +67,6 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for MenuItem<'a, 
                     state.is_hovered = is_over;
                     shell.request_redraw();
                 }
-            }
-            Event::Window(window::Event::RedrawRequested(_)) => {
-                state.is_hovered = is_over;
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) if is_over => {
                 shell.publish(self.on_press.clone());
