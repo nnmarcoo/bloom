@@ -78,17 +78,7 @@ pub fn menu_container_style(theme: &Theme) -> container::Style {
 }
 
 pub fn tooltip_style(theme: &Theme) -> container::Style {
-    let palette = theme.extended_palette();
-    container::Style {
-        text_color: Some(palette.background.base.text),
-        background: Some(Background::Color(palette.background.weak.color)),
-        border: iced::Border {
-            color: palette.background.strong.color,
-            width: 1.0,
-            radius: radius().into(),
-        },
-        ..Default::default()
-    }
+    menu_container_style(theme)
 }
 
 pub fn menu_item_hover_color(theme: &Theme) -> Color {
