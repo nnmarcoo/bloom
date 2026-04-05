@@ -524,6 +524,53 @@ impl ImageData {
         Ok(Self::new(pixels, width, height))
     }
 
+    #[cfg(feature = "heif")]
+    pub fn load_heic(path: &Path) -> Result<Self, ImageError> {
+        use libheif_rs::{ColorSpace, HeifContext, LibHeif, RgbChroma};
+
+        let lib_heif = LibHeif::new();
+        let ctx = HeifContext::read_from_file(path.to_str().unwrap_or_default())
+            .map_err(|e| ImageError::IoError(Error::other(e)))?;
+        let handle = ctx
+            .primary_image_handle()
+            .map_err(|e| ImageError::IoError(Error::other(e)))?;
+
+        let has_alpha = handle.has_alpha_channel();
+        let chroma = if has_alpha {
+            RgbChroma::Rgba
+        } else {
+            RgbChroma::Rgb
+        };
+
+        let image = lib_heif
+            .decode(&handle, ColorSpace::Rgb(chroma), None)
+            .map_err(|e| ImageError::IoError(Error::other(e)))?;
+
+        let plane = image
+            .planes()
+            .interleaved
+            .ok_or_else(|| ImageError::IoError(Error::other("no interleaved plane in HEIC")))?;
+
+        let width = plane.width as usize;
+        let height = plane.height as usize;
+        let stride = plane.stride;
+
+        let mut pixels = Vec::with_capacity(width * height * 4);
+        if has_alpha {
+            for y in 0..height {
+                pixels.extend_from_slice(&plane.data[y * stride..y * stride + width * 4]);
+            }
+        } else {
+            for y in 0..height {
+                for rgb in plane.data[y * stride..y * stride + width * 3].chunks_exact(3) {
+                    pixels.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+                }
+            }
+        }
+
+        Ok(Self::new(pixels, plane.width, plane.height))
+    }
+
     pub fn load_media(path: &Path) -> Result<MediaData, ImageError> {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         let media = match ext.to_ascii_lowercase().as_str() {
@@ -540,6 +587,8 @@ impl ImageData {
             "dcm" | "dicom" => MediaData::Image(Self::load_dicom(path)?),
             "dds" => MediaData::Image(Self::load_dds(path)?),
             "ktx2" => MediaData::Image(Self::load_ktx2(path)?),
+            #[cfg(feature = "heif")]
+            "heic" | "heif" => MediaData::Image(Self::load_heic(path)?),
             "apng" => MediaData::Animation(Self::load_apng(path)?),
             "webp" => {
                 let file = File::open(path).map_err(ImageError::IoError)?;

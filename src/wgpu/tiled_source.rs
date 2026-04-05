@@ -165,6 +165,4 @@ impl TiledSource {
             physical_scale: 1.0,
         })
     }
-
-
 }

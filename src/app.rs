@@ -212,11 +212,7 @@ impl App {
                 let Some(pending) = self.editing_config.as_mut() else {
                     return Task::none();
                 };
-                let outcome = preferences::update(
-                    msg,
-                    pending,
-                    &mut self.preference_state,
-                );
+                let outcome = preferences::update(msg, pending, &mut self.preference_state);
                 match outcome {
                     PreferenceOutcome::Open => {}
                     PreferenceOutcome::Save => {

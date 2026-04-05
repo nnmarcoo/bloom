@@ -1,0 +1,2 @@
+[env]
+LIBHEIF_DIR = { value = "vendor/libheif", relative = true }

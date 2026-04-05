@@ -46,10 +46,15 @@ kamadak-exif = "0.6.1"
 arboard = { version = "3.6.1", default-features = false, features = ["image-data", "wayland-data-control"] }
 rfd = "0.17.2"
 
+libheif-rs = { version = "2", default-features = false, features = ["v1_19"], optional = true }
+
 # Config persistence
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.0.3"
 dirs = "6.0.0"
+
+[features]
+heif = ["dep:libheif-rs"]
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
