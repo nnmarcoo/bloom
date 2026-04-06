@@ -21,13 +21,9 @@ jobs:
             runner: ubuntu-22.04
             artifact: bloom-linux-x86_64.tar.gz
 
-          - name: macOS ARM
+          - name: macOS
             runner: macos-14
             artifact: bloom-macos-arm64.dmg
-
-          - name: macOS Intel
-            runner: macos-13
-            artifact: bloom-macos-x86_64.dmg
 
           - name: Windows x86_64
             runner: windows-latest
@@ -41,22 +37,22 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install libheif (Linux)
+      - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libheif-dev
+          sudo apt-get install -y libheif-dev libdav1d-dev
 
-      - name: Install libheif (macOS)
+      - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install libheif
+        run: brew install libheif dav1d
 
       - name: Install libheif (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           vcpkg integrate install
-          vcpkg install libheif:x64-windows-static-md
+          vcpkg install libheif:x64-windows-static-md dav1d:x64-windows-static-md
           echo "LIBHEIF_DIR=$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static-md" >> $env:GITHUB_ENV
 
       - name: Set macOS deployment target
