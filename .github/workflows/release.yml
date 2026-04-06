@@ -190,7 +190,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cargo wix --no-build --nocapture --output bloom-windows-x86_64.msi --define "CargoProjectRoot=$(Get-Location)"
+          cargo wix --no-build --nocapture --output bloom-windows-x86_64.msi
           Compress-Archive -Path target/release/bloom.exe -DestinationPath bloom-windows-x86_64.zip
 
       - uses: actions/upload-artifact@v4
