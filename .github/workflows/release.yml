@@ -47,13 +47,16 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install libheif dav1d
 
-      - name: Install libheif (Windows)
+      - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          choco install pkgconfiglite -y
           vcpkg integrate install
           vcpkg install libheif:x64-windows-static-md dav1d:x64-windows-static-md
-          echo "LIBHEIF_DIR=$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static-md" >> $env:GITHUB_ENV
+          $vcpkgInstalled = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
+          echo "LIBHEIF_DIR=$vcpkgInstalled" >> $env:GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$vcpkgInstalled\lib\pkgconfig" >> $env:GITHUB_ENV
 
       - name: Set macOS deployment target
         if: runner.os == 'macOS'
