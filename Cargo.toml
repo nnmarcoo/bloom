@@ -52,7 +52,7 @@ kamadak-exif = "0.6.1"
 arboard = { version = "3.6.1", default-features = false, features = ["image-data", "wayland-data-control"] }
 rfd = "0.17.2"
 
-libheif-rs = { version = "2", default-features = false, features = ["v1_19"], optional = true }
+libheif-rs = { version = "2", default-features = false, features = ["v1_17"], optional = true }
 
 # Config persistence
 serde = { version = "1.0.228", features = ["derive"] }
