@@ -373,7 +373,7 @@ impl Program<Message> for ViewProgram {
                 if let Event::Mouse(mouse::Event::ButtonPressed(Button::Left)) = event {
                     if let Some(pos) = cursor.position_over(bounds) {
                         state.drag = ViewDragState::Panning(pos);
-                        return Some(Action::capture());
+                        return Some(Action::publish(Message::ContextMenuClosed));
                     }
                 }
                 if let Event::Mouse(mouse::Event::CursorMoved { .. }) = event {

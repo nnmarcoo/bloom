@@ -96,6 +96,7 @@ pub enum Message {
     CursorMoved(Vec2),
     CursorLeft,
     ContextMenuOpened(Vec2),
+    ContextMenuClosed,
     CopyColor,
     CopyPath,
     Rotate,
@@ -142,7 +143,10 @@ impl App {
                     self.program.rotate();
                 }
             }
-            Message::Fit => self.program.fit(),
+            Message::Fit => {
+                self.context_menu_pos = None;
+                self.program.fit();
+            }
             Message::BoundsChanged(bounds) => self.program.set_bounds(bounds),
             Message::Scale(scale) => {
                 let center = self.program.viewport_center();
@@ -246,20 +250,28 @@ impl App {
                 }
             }
             Message::CursorMoved(pos) => {
-                if self.editing_config.is_none() {
+                if self.editing_config.is_none() && self.context_menu_pos.is_none() {
                     self.program.set_cursor_pos(Some(pos));
                 }
             }
-            Message::CursorLeft => self.program.set_cursor_pos(None),
-            Message::ContextMenuOpened(pos) => self.context_menu_pos = Some(pos),
+            Message::CursorLeft => {
+                self.context_menu_pos = None;
+                self.program.set_cursor_pos(None);
+            }
+            Message::ContextMenuOpened(pos) => {
+                self.context_menu_pos = Some(pos);
+                self.program.set_cursor_pos(Some(pos));
+            }
+            Message::ContextMenuClosed => self.context_menu_pos = None,
             Message::CopyColor => {
-                if let Some(pos) = self.context_menu_pos {
+                if let Some(pos) = self.context_menu_pos.take() {
                     if let Some((_, _, [r, g, b, _])) = self.program.color_at(pos) {
                         clipboard::write_text(&format!("#{r:02X}{g:02X}{b:02X}"));
                     }
                 }
             }
             Message::CopyPath => {
+                self.context_menu_pos = None;
                 if let Some(path) = self.gallery.current() {
                     clipboard::write_text(&path.to_string_lossy());
                 }
