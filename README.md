@@ -3,7 +3,7 @@
   <br><br>
   <p><em>hardware-accelerated image viewer built with Rust</em></p>
 
-  ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0077aa?style=for-the-badge)
+  ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0077aa?style=for-the-badge)
   ![License](https://img.shields.io/badge/license-GPL--3.0-0077aa?style=for-the-badge)
   ![Status](https://img.shields.io/badge/status-alpha-0077aa?style=for-the-badge)
 </div>
@@ -15,7 +15,6 @@
 ## Features
 
 - **GPU rendering** — hardware-accelerated via [wgpu](https://wgpu.rs) at any resolution
-- **Lanczos filtering** — high-quality downsampling with a 5-level mip pyramid
 - **Hardware mipmaps** — smooth zoomed-out views
 - **GIF, APNG & WebP** — animation playback with timeline scrubbing and frame controls
 - **Gallery** — browse every image in a folder seamlessly
@@ -24,6 +23,7 @@
 - **Clipboard import** — load an image directly from clipboard or file path (`Ctrl+V`)
 - **Info panel** — file metadata, dimensions, EXIF, pixel color under cursor, RGB histogram, and animation timing
 - **Image rotation** — rotate 90° clockwise
+- **Checkerboard toggle** — visualize transparency
 - **Context menu** — right-click to copy pixel color or file path
 - **Customizable keybindings** — rebind any action via the preferences panel
 
@@ -43,6 +43,7 @@
     <tr><td>Farbfeld</td><td><code>.ff</code></td><td></td></tr>
     <tr><td>GIF</td><td><code>.gif</code></td><td>Animated</td></tr>
     <tr><td>HDR (Radiance)</td><td><code>.hdr</code></td><td>Tonemapped (Reinhard)</td></tr>
+    <tr><td>HEIC / HEIF</td><td><code>.heic</code> <code>.heif</code></td><td>Requires <code>--features heif</code></td></tr>
     <tr><td>ICO</td><td><code>.ico</code></td><td>Largest available size</td></tr>
     <tr><td>JPEG</td><td><code>.jpg</code> <code>.jpeg</code></td><td></td></tr>
     <tr><td>JPEG 2000</td><td><code>.jp2</code> <code>.j2k</code> <code>.j2c</code> <code>.jpx</code></td><td></td></tr>
@@ -87,9 +88,22 @@ Drag to pan. Scroll wheel to zoom.
 cargo build --release
 ```
 
+For HEIC/HEIF support, install libheif first then build with the feature flag:
+
+```sh
+# macOS
+brew install libheif
+
+# Linux
+sudo apt install libheif-dev   # Ubuntu/Debian
+sudo dnf install libheif-devel # Fedora
+sudo pacman -S libheif         # Arch
+
+cargo build --release --features heif
+```
+
 Requires a GPU with WebGPU support. On Windows, DX12 is used by default.
 
 ## Privacy
 
 Bloom is entirely local. It does not collect, transmit, or store any data of any kind. No telemetry, no analytics, no network requests — ever. Your files stay on your machine.
-
