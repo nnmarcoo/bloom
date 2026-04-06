@@ -1,0 +1,220 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            runner: ubuntu-22.04
+            artifact: bloom-linux-x86_64.tar.gz
+
+          - name: macOS ARM
+            runner: macos-14
+            artifact: bloom-macos-arm64.dmg
+
+          - name: macOS Intel
+            runner: macos-13
+            artifact: bloom-macos-x86_64.dmg
+
+          - name: Windows x86_64
+            runner: windows-latest
+            artifact: bloom-windows-x86_64.zip
+            msi: bloom-windows-x86_64.msi
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install libheif (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libheif-dev
+
+      - name: Install libheif (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libheif
+
+      - name: Install libheif (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          vcpkg integrate install
+          vcpkg install libheif:x64-windows-static-md
+          echo "LIBHEIF_DIR=$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static-md" >> $env:GITHUB_ENV
+
+      - name: Set macOS deployment target
+        if: runner.os == 'macOS'
+        run: echo "MACOSX_DEPLOYMENT_TARGET=10.15" >> $GITHUB_ENV
+
+      - name: Build
+        run: cargo build --release --features heif
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: tar -czf bloom-linux-x86_64.tar.gz -C target/release bloom
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          APP="bloom.app"
+          BINARY="$APP/Contents/MacOS/bloom"
+          FRAMEWORKS="$APP/Contents/Frameworks"
+          BREW_PREFIX="$(brew --prefix)"
+
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0"
+          fi
+
+          mkdir -p "$APP/Contents/MacOS" "$FRAMEWORKS"
+          cp target/release/bloom "$BINARY"
+
+          cat > "$APP/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>bloom</string>
+            <key>CFBundleIdentifier</key><string>com.bloom.app</string>
+            <key>CFBundleName</key><string>Bloom</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>$VERSION</string>
+            <key>NSHighResolutionCapable</key><true/>
+            <key>CFBundleDocumentTypes</key>
+            <array>
+              <dict>
+                <key>CFBundleTypeName</key><string>Image</string>
+                <key>CFBundleTypeRole</key><string>Viewer</string>
+                <key>LSHandlerRank</key><string>Alternate</string>
+                <key>LSItemContentTypes</key>
+                <array>
+                  <string>public.jpeg</string>
+                  <string>public.png</string>
+                  <string>com.compuserve.gif</string>
+                  <string>com.microsoft.bmp</string>
+                  <string>public.tiff</string>
+                  <string>public.svg-image</string>
+                  <string>com.adobe.photoshop</string>
+                  <string>public.webp</string>
+                </array>
+                <key>CFBundleTypeExtensions</key>
+                <array>
+                  <string>jpg</string><string>jpeg</string>
+                  <string>png</string><string>gif</string>
+                  <string>bmp</string><string>tif</string><string>tiff</string>
+                  <string>webp</string><string>svg</string><string>svgz</string>
+                  <string>psd</string><string>ico</string><string>tga</string>
+                  <string>dds</string>
+                </array>
+              </dict>
+              <dict>
+                <key>CFBundleTypeName</key><string>Image</string>
+                <key>CFBundleTypeRole</key><string>Viewer</string>
+                <key>LSHandlerRank</key><string>Default</string>
+                <key>LSItemContentTypes</key>
+                <array>
+                  <string>public.heic</string>
+                  <string>public.heif</string>
+                  <string>public.avif</string>
+                </array>
+                <key>CFBundleTypeExtensions</key>
+                <array>
+                  <string>heic</string><string>heif</string>
+                  <string>avif</string><string>jxl</string>
+                  <string>qoi</string><string>hdr</string><string>exr</string>
+                </array>
+              </dict>
+            </array>
+          </dict>
+          </plist>
+          EOF
+
+          bundle_dylib() {
+            local lib="$1"
+            local name
+            name="$(basename "$lib")"
+            [ -f "$FRAMEWORKS/$name" ] && return
+            cp "$lib" "$FRAMEWORKS/$name"
+            while IFS= read -r dep; do
+              install_name_tool -change "$dep" "@executable_path/../Frameworks/$(basename "$dep")" "$FRAMEWORKS/$name"
+              bundle_dylib "$dep"
+            done < <(otool -L "$FRAMEWORKS/$name" | grep "$BREW_PREFIX" | awk '{print $1}')
+          }
+
+          while IFS= read -r lib; do
+            install_name_tool -change "$lib" "@executable_path/../Frameworks/$(basename "$lib")" "$BINARY"
+            bundle_dylib "$lib"
+          done < <(otool -L "$BINARY" | grep "$BREW_PREFIX" | awk '{print $1}')
+
+          shopt -s nullglob
+          for dylib in "$FRAMEWORKS"/*.dylib; do
+            codesign -s "-" "$dylib"
+          done
+          codesign -s "-" "$BINARY"
+
+          hdiutil create -volname "Bloom" -srcfolder "$APP" -ov -format UDZO "${{ matrix.artifact }}"
+
+      - uses: cargo-bins/cargo-binstall@v1
+        if: runner.os == 'Windows'
+
+      - name: Install cargo-wix (Windows)
+        if: runner.os == 'Windows'
+        run: cargo binstall cargo-wix --no-confirm
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo wix --no-build --nocapture --output bloom-windows-x86_64.msi
+          Compress-Archive -Path target/release/bloom.exe -DestinationPath bloom-windows-x86_64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: ${{ matrix.msi }}
+          path: ${{ matrix.msi }}
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            bloom-*.tar.gz
+            bloom-*.dmg
+            bloom-*.zip
+            bloom-*.msi

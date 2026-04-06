@@ -2,6 +2,12 @@
 name = "bloom"
 version = "0.1.0"
 edition = "2024"
+authors = ["Marco Todorov"]
+description = "A hardware accelerated image viewer"
+homepage = "https://github.com/nnmarcoo/bloom"
+
+[package.metadata.wix]
+eula = false
 
 [dependencies]
 # UI
