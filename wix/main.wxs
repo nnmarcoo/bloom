@@ -96,7 +96,7 @@
                             WorkingDirectory='Bin'
                             Icon='ProductICO'/>
                         <RemoveFolder Id='CleanUpShortcut' On='uninstall'/>
-                        <RegistryValue Id='regShortcut' Root='HKLM' Key='Software\bloom' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
+                        <RegistryValue Id='regShortcut' Root='HKCU' Key='Software\bloom' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
                     </Component>
                 </Directory>
             </Directory>
