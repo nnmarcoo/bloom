@@ -79,7 +79,7 @@
                                 <Extension Id='psd'  ContentType='image/vnd.adobe.photoshop'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
                                 <Extension Id='svg'  ContentType='image/svg+xml'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
                             </ProgId>
-                            <RegistryValue Root='HKLM' Key='Software\bloom' Name='fileassoc' Type='integer' Value='1' KeyPath='yes'/>
+                            <RegistryValue Root='HKLM' Key='Software\bloom\FileAssoc' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
                         </Component>
                     </Directory>
                 </Directory>
@@ -96,7 +96,7 @@
                             WorkingDirectory='Bin'
                             Icon='ProductICO'/>
                         <RemoveFolder Id='CleanUpShortcut' On='uninstall'/>
-                        <RegistryValue Root='HKLM' Key='Software\bloom' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
+                        <RegistryValue Root='HKLM' Key='Software\bloom\Shortcut' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
                     </Component>
                 </Directory>
             </Directory>
