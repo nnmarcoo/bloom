@@ -59,27 +59,27 @@
                         </Component>
 
                         <Component Id='FileAssociations' Guid='*'>
-                            <ProgId Id='bloom.image' Description='Image file' Advertise='no' Icon='exe0'>
-                                <Extension Id='jpg'  ContentType='image/jpeg'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='jpeg' ContentType='image/jpeg'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='png'  ContentType='image/png'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='gif'  ContentType='image/gif'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='bmp'  ContentType='image/bmp'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='tif'  ContentType='image/tiff'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='tiff' ContentType='image/tiff'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='webp' ContentType='image/webp'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='avif' ContentType='image/avif'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='jxl'  ContentType='image/jxl'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='heic' ContentType='image/heic'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='heif' ContentType='image/heif'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='ico'  ContentType='image/x-icon'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='qoi'  ContentType='image/qoi'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='hdr'  ContentType='image/vnd.radiance'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='exr'  ContentType='image/x-exr'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='psd'  ContentType='image/vnd.adobe.photoshop'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                                <Extension Id='svg'  ContentType='image/svg+xml'><Verb Id='open' Command='Open' TargetFile='exe0' Argument='"%1"'/></Extension>
-                            </ProgId>
-                            <RegistryValue Root='HKLM' Key='Software\bloom\FileAssoc' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
+                            <RegistryValue Id='regAssocHandler'     Root='HKLM' Key='Software\Classes\bloom.AssocFile'                                  Type='string'  Value='Image file'               KeyPath='yes'/>
+                            <RegistryValue Id='regAssocIcon'        Root='HKLM' Key='Software\Classes\bloom.AssocFile\DefaultIcon'                       Type='string'  Value='"[Bin]bloom.exe",0'/>
+                            <RegistryValue Id='regAssocCmd'         Root='HKLM' Key='Software\Classes\bloom.AssocFile\shell\open\command'                Type='string'  Value='"[Bin]bloom.exe" "%1"'/>
+                            <RegistryValue Id='regExtJpg'           Root='HKLM' Key='Software\Classes\.jpg\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtJpeg'          Root='HKLM' Key='Software\Classes\.jpeg\OpenWithProgids'  Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtPng'           Root='HKLM' Key='Software\Classes\.png\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtGif'           Root='HKLM' Key='Software\Classes\.gif\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtBmp'           Root='HKLM' Key='Software\Classes\.bmp\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtTif'           Root='HKLM' Key='Software\Classes\.tif\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtTiff'          Root='HKLM' Key='Software\Classes\.tiff\OpenWithProgids'  Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtWebp'          Root='HKLM' Key='Software\Classes\.webp\OpenWithProgids'  Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtAvif'          Root='HKLM' Key='Software\Classes\.avif\OpenWithProgids'  Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtJxl'           Root='HKLM' Key='Software\Classes\.jxl\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtHeic'          Root='HKLM' Key='Software\Classes\.heic\OpenWithProgids'  Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtHeif'          Root='HKLM' Key='Software\Classes\.heif\OpenWithProgids'  Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtIco'           Root='HKLM' Key='Software\Classes\.ico\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtQoi'           Root='HKLM' Key='Software\Classes\.qoi\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtHdr'           Root='HKLM' Key='Software\Classes\.hdr\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtExr'           Root='HKLM' Key='Software\Classes\.exr\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtPsd'           Root='HKLM' Key='Software\Classes\.psd\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtSvg'           Root='HKLM' Key='Software\Classes\.svg\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
                         </Component>
                     </Directory>
                 </Directory>
@@ -96,7 +96,7 @@
                             WorkingDirectory='Bin'
                             Icon='ProductICO'/>
                         <RemoveFolder Id='CleanUpShortcut' On='uninstall'/>
-                        <RegistryValue Root='HKLM' Key='Software\bloom\Shortcut' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
+                        <RegistryValue Id='regShortcut' Root='HKLM' Key='Software\bloom' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
                     </Component>
                 </Directory>
             </Directory>
