@@ -48,6 +48,14 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install libheif dav1d
 
+      - name: Cache vcpkg packages (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: C:\vcpkg\installed
+          key: vcpkg-x64-windows-static-md-${{ hashFiles('.github/workflows/release.yml') }}
+          restore-keys: vcpkg-x64-windows-static-md-
+
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
