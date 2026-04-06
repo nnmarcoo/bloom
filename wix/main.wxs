@@ -31,7 +31,7 @@
 
         <Media Id='1' Cabinet='media1.cab' EmbedCab='yes'/>
 
-        <Icon Id='ProductICO' SourceFile='..\assets\logo\bloom.ico'/>
+        <Icon Id='ProductICO' SourceFile='$(var.CargoProjectRoot)\assets\logo\bloom.ico'/>
         <Property Id='ARPPRODUCTICON' Value='ProductICO'/>
 
         <Directory Id='TARGETDIR' Name='SourceDir'>
