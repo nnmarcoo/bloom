@@ -80,6 +80,35 @@
                             <RegistryValue Id='regExtExr'           Root='HKLM' Key='Software\Classes\.exr\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
                             <RegistryValue Id='regExtPsd'           Root='HKLM' Key='Software\Classes\.psd\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
                             <RegistryValue Id='regExtSvg'           Root='HKLM' Key='Software\Classes\.svg\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtAri'           Root='HKLM' Key='Software\Classes\.ari\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtArw'           Root='HKLM' Key='Software\Classes\.arw\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtCr2'           Root='HKLM' Key='Software\Classes\.cr2\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtCr3'           Root='HKLM' Key='Software\Classes\.cr3\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtCrm'           Root='HKLM' Key='Software\Classes\.crm\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtCrw'           Root='HKLM' Key='Software\Classes\.crw\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtDcr'           Root='HKLM' Key='Software\Classes\.dcr\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtDcs'           Root='HKLM' Key='Software\Classes\.dcs\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtDng'           Root='HKLM' Key='Software\Classes\.dng\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtErf'           Root='HKLM' Key='Software\Classes\.erf\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtFff'           Root='HKLM' Key='Software\Classes\.fff\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtIiq'           Root='HKLM' Key='Software\Classes\.iiq\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtKdc'           Root='HKLM' Key='Software\Classes\.kdc\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtMef'           Root='HKLM' Key='Software\Classes\.mef\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtMos'           Root='HKLM' Key='Software\Classes\.mos\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtMrw'           Root='HKLM' Key='Software\Classes\.mrw\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtNef'           Root='HKLM' Key='Software\Classes\.nef\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtNrw'           Root='HKLM' Key='Software\Classes\.nrw\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtOrf'           Root='HKLM' Key='Software\Classes\.orf\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtOri'           Root='HKLM' Key='Software\Classes\.ori\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtPef'           Root='HKLM' Key='Software\Classes\.pef\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtQtk'           Root='HKLM' Key='Software\Classes\.qtk\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtRaf'           Root='HKLM' Key='Software\Classes\.raf\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtRaw'           Root='HKLM' Key='Software\Classes\.raw\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtRw2'           Root='HKLM' Key='Software\Classes\.rw2\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtRwl'           Root='HKLM' Key='Software\Classes\.rwl\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtSrw'           Root='HKLM' Key='Software\Classes\.srw\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExtX3f'           Root='HKLM' Key='Software\Classes\.x3f\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
+                            <RegistryValue Id='regExt3fr'           Root='HKLM' Key='Software\Classes\.3fr\OpenWithProgids'   Name='bloom.AssocFile'      Type='string'  Value=''/>
                         </Component>
                     </Directory>
                 </Directory>
