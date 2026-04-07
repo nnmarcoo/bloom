@@ -55,6 +55,7 @@
     <tr><td>PNG</td><td><code>.png</code></td><td></td></tr>
     <tr><td>Portable bitmap</td><td><code>.pbm</code> <code>.pgm</code> <code>.ppm</code></td><td></td></tr>
     <tr><td>QOI</td><td><code>.qoi</code></td><td></td></tr>
+    <tr><td>RAW</td><td><code>.ari</code> <code>.arw</code> <code>.cr2</code> <code>.cr3</code> <code>.crw</code> <code>.dcr</code> <code>.dcs</code> <code>.dng</code> <code>.erf</code> <code>.fff</code> <code>.iiq</code> <code>.kdc</code> <code>.mef</code> <code>.mos</code> <code>.mrw</code> <code>.nef</code> <code>.nrw</code> <code>.orf</code> <code>.pef</code> <code>.raf</code> <code>.raw</code> <code>.rw2</code> <code>.srw</code> <code>.x3f</code> <code>.3fr</code></td><td>Camera RAW; not all models supported</td></tr>
     <tr><td>SVG</td><td><code>.svg</code> <code>.svgz</code></td><td>Rasterized at native size</td></tr>
     <tr><td>TGA</td><td><code>.tga</code></td><td></td></tr>
     <tr><td>TIFF</td><td><code>.tif</code> <code>.tiff</code></td><td>No 64-bit float</td></tr>

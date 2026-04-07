@@ -524,6 +524,21 @@ impl ImageData {
         Ok(Self::new(pixels, width, height))
     }
 
+    pub fn load_raw(path: &Path) -> Result<Self, ImageError> {
+        use rawler::imgop::develop::RawDevelop;
+
+        let raw = rawler::decode_file(path).map_err(|e| ImageError::IoError(Error::other(e)))?;
+        let intermediate = RawDevelop::default()
+            .develop_intermediate(&raw)
+            .map_err(|e| ImageError::IoError(Error::other(e)))?;
+        let img = intermediate
+            .to_dynamic_image()
+            .ok_or_else(|| ImageError::IoError(Error::other("failed to convert RAW to image")))?
+            .into_rgba8();
+        let (width, height) = img.dimensions();
+        Ok(Self::new(img.into_raw(), width, height))
+    }
+
     #[cfg(feature = "heif")]
     pub fn load_heic(path: &Path) -> Result<Self, ImageError> {
         use libheif_rs::{ColorSpace, HeifContext, LibHeif, RgbChroma};
@@ -589,6 +604,11 @@ impl ImageData {
             "ktx2" => MediaData::Image(Self::load_ktx2(path)?),
             #[cfg(feature = "heif")]
             "heic" | "heif" => MediaData::Image(Self::load_heic(path)?),
+            "ari" | "arw" | "cr2" | "cr3" | "crm" | "crw" | "dcr" | "dcs" | "dng" | "erf"
+            | "fff" | "iiq" | "kdc" | "mef" | "mos" | "mrw" | "nef" | "nrw" | "orf" | "ori"
+            | "pef" | "qtk" | "raf" | "raw" | "rw2" | "rwl" | "srw" | "x3f" | "3fr" => {
+                MediaData::Image(Self::load_raw(path)?)
+            }
             "apng" => MediaData::Animation(Self::load_apng(path)?),
             "webp" => {
                 let file = File::open(path).map_err(ImageError::IoError)?;
