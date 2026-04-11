@@ -1,32 +1,44 @@
 $ErrorActionPreference = "Stop"
 
 $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
-$LibheifDir = Join-Path $ScriptDir "..\vendor\libheif"
+$RepoRoot   = Resolve-Path (Join-Path $ScriptDir "..")
+$VendorDir  = Join-Path $RepoRoot "vendor"
+$VcpkgDir   = Join-Path $VendorDir "vcpkg"
+$LibheifDir = Join-Path $VendorDir "libheif"
 
-if (Test-Path (Join-Path $LibheifDir "include")) {
-    Write-Host "libheif already present at vendor/libheif — skipping."
+# Check if already installed
+if (Test-Path (Join-Path $LibheifDir "include\libheif\heif.h")) {
+    Write-Host "libheif already present at vendor/libheif - skipping."
+    Write-Host "Make sure VCPKG_ROOT is set: $env:VCPKG_ROOT = '$VcpkgDir'"
     exit 0
 }
 
-$Vcpkg = if ($env:VCPKG_ROOT) { Join-Path $env:VCPKG_ROOT "vcpkg.exe" } else { "vcpkg" }
-
-if (-not (Get-Command $Vcpkg -ErrorAction SilentlyContinue)) {
-    Write-Error "vcpkg not found. Install it from https://github.com/microsoft/vcpkg and set VCPKG_ROOT."
-    exit 1
+# Bootstrap vcpkg into vendor/vcpkg if not already there
+if (-not (Test-Path (Join-Path $VcpkgDir ".vcpkg-root"))) {
+    Write-Host "Bootstrapping vcpkg into vendor/vcpkg..."
+    git clone https://github.com/microsoft/vcpkg.git $VcpkgDir --depth=1
+    & (Join-Path $VcpkgDir "bootstrap-vcpkg.bat") -disableMetrics
+} else {
+    Write-Host "vcpkg already bootstrapped at vendor/vcpkg."
 }
 
-& $Vcpkg integrate install
+$env:VCPKG_ROOT = $VcpkgDir
+$Vcpkg = Join-Path $VcpkgDir "vcpkg.exe"
+
+# Install libheif
+Write-Host "Installing libheif:x64-windows-static-md via vcpkg..."
 & $Vcpkg install libheif:x64-windows-static-md
 
-$VcpkgRoot    = if ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } else { Split-Path (Get-Command $Vcpkg).Source }
-$InstalledDir = Join-Path $VcpkgRoot "installed\x64-windows-static-md"
-
+# Copy headers and libs to vendor/libheif
+$InstalledDir = Join-Path $VcpkgDir "installed\x64-windows-static-md"
 New-Item -ItemType Directory -Force -Path $LibheifDir | Out-Null
 Copy-Item -Recurse -Force (Join-Path $InstalledDir "include") $LibheifDir
 Copy-Item -Recurse -Force (Join-Path $InstalledDir "lib")     $LibheifDir
 
-$AbsLibheifDir = Resolve-Path $LibheifDir
-[System.Environment]::SetEnvironmentVariable("LIBHEIF_DIR", $AbsLibheifDir, "User")
-$env:LIBHEIF_DIR = $AbsLibheifDir
+# Set VCPKG_ROOT for the current session and persistently for the user
+[System.Environment]::SetEnvironmentVariable("VCPKG_ROOT", $VcpkgDir, "User")
+$env:VCPKG_ROOT = $VcpkgDir
 
-Write-Host "Done. Run: cargo build --features heif"
+Write-Host ""
+Write-Host "Done. VCPKG_ROOT set to: $VcpkgDir"
+Write-Host "Run in a new terminal (or reload env): cargo build --features heif"
