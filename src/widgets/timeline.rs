@@ -1,10 +1,10 @@
 use iced::advanced::layout;
-use iced::advanced::renderer::Quad;
+use iced::advanced::renderer::{self, Quad};
 use iced::advanced::widget::tree::{self, Tree};
 use iced::advanced::{self, Clipboard, Layout, Shell, Widget};
 use iced::mouse;
 use iced::window;
-use iced::{Background, Border, Element, Event, Length, Rectangle, Renderer, Size};
+use iced::{Background, Border, Element, Event, Length, Rectangle, Renderer, Size, Theme};
 
 use crate::styles::radius;
 
@@ -146,8 +146,8 @@ where
         &self,
         tree: &Tree,
         renderer: &mut Renderer,
-        theme: &iced::Theme,
-        _style: &iced::advanced::renderer::Style,
+        theme: &Theme,
+        _style: &renderer::Style,
         layout: Layout<'_>,
         _cursor: mouse::Cursor,
         _viewport: &Rectangle,

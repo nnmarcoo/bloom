@@ -52,7 +52,7 @@ fn row_item<'a>(lbl: &'a str, val: impl ToString, muted: Color) -> Element<'a, M
 
 fn color_row<'a>(rgba: [u8; 4], muted: Color) -> Element<'a, Message> {
     let [r, g, b, a] = rgba;
-    let color = iced::Color {
+    let color = Color {
         r: r as f32 / 255.0,
         g: g as f32 / 255.0,
         b: b as f32 / 255.0,

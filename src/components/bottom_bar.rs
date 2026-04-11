@@ -1,7 +1,6 @@
 use iced::alignment::Vertical;
-use iced::widget::container;
 use iced::widget::tooltip::Position;
-use iced::widget::{column, row};
+use iced::widget::{Space, column, container, row};
 use iced::window::Mode;
 use iced::{Element, Length};
 
@@ -171,7 +170,7 @@ pub fn view<'a>(
     container(
         row![
             left_buttons,
-            iced::widget::Space::new().width(Length::Fill),
+            Space::new().width(Length::Fill),
             right_buttons
         ]
         .height(Length::Fixed(BAR_HEIGHT))

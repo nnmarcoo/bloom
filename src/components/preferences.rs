@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::tooltip::Position;
-use iced::widget::{button, column, container, row, rule, scrollable, text, toggler};
+use iced::widget::{Space, button, column, container, row, rule, scrollable, text, toggler};
 use iced::{Element, Length, Theme};
 
 use crate::app::Message;
@@ -143,7 +143,7 @@ fn section<'a>(
     column![
         row![
             text(label).size(11).color(accent),
-            iced::widget::Space::new().width(Length::Fill),
+            Space::new().width(Length::Fill),
             with_tooltip(
                 button(text("Reset").size(11))
                     .style(plain_icon_button_style)
@@ -262,7 +262,7 @@ pub fn view<'a>(
                 "Reset all settings to defaults",
                 Position::Top,
             ),
-            iced::widget::Space::new().width(Length::Fill),
+            Space::new().width(Length::Fill),
             with_tooltip(
                 svg_button_plain(
                     include_bytes!("../../assets/icons/check.svg"),
@@ -295,14 +295,14 @@ pub fn view<'a>(
         container(text("Preferences").size(16))
             .width(Length::Fill)
             .align_x(Horizontal::Center),
-        iced::widget::Space::new().height(PAD * 2.0),
+        Space::new().height(PAD * 2.0),
         section(
             "Appearance",
             "Reset appearance to defaults",
             PreferenceMessage::ResetAppearance,
             theme
         ),
-        iced::widget::Space::new().height(PAD),
+        Space::new().height(PAD),
         setting(
             "Theme",
             "Color scheme for the application",
@@ -312,7 +312,7 @@ pub fn view<'a>(
             .into(),
             theme,
         ),
-        iced::widget::Space::new().height(PAD),
+        Space::new().height(PAD),
         setting(
             "Rounded corners",
             "Use rounded corners on UI elements",
@@ -321,7 +321,7 @@ pub fn view<'a>(
                 .into(),
             theme,
         ),
-        iced::widget::Space::new().height(PAD),
+        Space::new().height(PAD),
         setting(
             "Window decorations",
             "Show the native title bar and window border",
@@ -330,7 +330,7 @@ pub fn view<'a>(
                 .into(),
             theme,
         ),
-        iced::widget::Space::new().height(PAD),
+        Space::new().height(PAD),
         setting(
             "Always on top",
             if on_wayland() {
@@ -349,7 +349,7 @@ pub fn view<'a>(
             .into(),
             theme,
         ),
-        iced::widget::Space::new().height(PAD),
+        Space::new().height(PAD),
         setting(
             "UI scale",
             "Scale the application interface",
@@ -360,14 +360,14 @@ pub fn view<'a>(
             .into(),
             theme,
         ),
-        iced::widget::Space::new().height(PAD * 2.0),
+        Space::new().height(PAD * 2.0),
         section(
             "Rendering",
             "Reset rendering to defaults",
             PreferenceMessage::ResetRendering,
             theme
         ),
-        iced::widget::Space::new().height(PAD),
+        Space::new().height(PAD),
         setting(
             "Autoplay animations",
             "Automatically play animations when opened",
@@ -376,14 +376,14 @@ pub fn view<'a>(
                 .into(),
             theme,
         ),
-        iced::widget::Space::new().height(PAD * 2.0),
+        Space::new().height(PAD * 2.0),
         section(
             "Keybindings",
             "Reset keybindings to defaults",
             PreferenceMessage::ResetKeybindings,
             theme
         ),
-        iced::widget::Space::new().height(PAD),
+        Space::new().height(PAD),
     ]
     .extend(keybind_rows)
     .spacing(PAD)

@@ -3,6 +3,7 @@ use iced::advanced::renderer::{self, Quad};
 use iced::advanced::text::{self, Paragraph, Text};
 use iced::advanced::widget::tree::{self, Tree};
 use iced::advanced::{self, Clipboard, Layout, Shell, Widget};
+use iced::alignment::{Horizontal, Vertical};
 use iced::keyboard::key::Named;
 use iced::keyboard::{self, Key};
 use iced::mouse;
@@ -325,8 +326,8 @@ where
                 size: Pixels(self.text_size),
                 line_height: text::LineHeight::default(),
                 font: Font::DEFAULT,
-                align_x: iced::alignment::Horizontal::Left.into(),
-                align_y: iced::alignment::Vertical::Top.into(),
+                align_x: Horizontal::Left.into(),
+                align_y: Vertical::Top.into(),
                 shaping: text::Shaping::Basic,
                 wrapping: text::Wrapping::None,
             });
@@ -347,8 +348,8 @@ where
                 size: Pixels(self.text_size),
                 line_height: text::LineHeight::default(),
                 font: Font::DEFAULT,
-                align_x: iced::alignment::Horizontal::Center.into(),
-                align_y: iced::alignment::Vertical::Center.into(),
+                align_x: Horizontal::Center.into(),
+                align_y: Vertical::Center.into(),
                 shaping: text::Shaping::Basic,
                 wrapping: text::Wrapping::None,
             },

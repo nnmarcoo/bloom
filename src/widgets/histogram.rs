@@ -5,6 +5,7 @@ use iced::advanced::text::Renderer as _;
 use iced::advanced::text::{self, Text};
 use iced::advanced::widget::tree::{self, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget};
+use iced::alignment::{Horizontal, Vertical};
 use iced::mouse;
 use iced::{
     Background, Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Renderer, Size,
@@ -334,8 +335,8 @@ impl<Message> Widget<Message, Theme, Renderer> for Histogram {
                     size: Pixels(TEXT_SIZE),
                     line_height: text::LineHeight::default(),
                     font: Font::MONOSPACE,
-                    align_x: iced::alignment::Horizontal::Center.into(),
-                    align_y: iced::alignment::Vertical::Center.into(),
+                    align_x: Horizontal::Center.into(),
+                    align_y: Vertical::Center.into(),
                     shaping: text::Shaping::Basic,
                     wrapping: text::Wrapping::None,
                 },

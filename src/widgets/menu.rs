@@ -5,7 +5,7 @@ use iced::advanced::{self, Clipboard, Layout, Shell, Widget};
 use iced::alignment::Vertical;
 use iced::mouse;
 use iced::widget::{Column, container, text};
-use iced::{Background, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme};
+use iced::{Background, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, border};
 
 use crate::styles::{menu_container_style, menu_item_hover_color, menu_separator_style, radius};
 
@@ -96,7 +96,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for MenuItem<'a, 
             renderer.fill_quad(
                 Quad {
                     bounds,
-                    border: iced::border::rounded(radius()),
+                    border: border::rounded(radius()),
                     ..Default::default()
                 },
                 Background::Color(menu_item_hover_color(theme)),

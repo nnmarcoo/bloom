@@ -4,13 +4,13 @@ use std::time::{Duration, Instant};
 use glam::Vec2;
 use iced::time::every;
 use iced::{
-    Element, Event, Rectangle, Subscription, Task, Theme, event,
+    Color, Element, Event, Rectangle, Subscription, Task, Theme, event,
     keyboard::{
         self,
         key::{self, Physical},
     },
     widget::column,
-    window::Mode,
+    window::{self, Mode},
 };
 
 use crate::{
@@ -357,7 +357,7 @@ impl App {
 
     fn handle_event(&mut self, event: Event) -> Task<Message> {
         match event {
-            Event::Window(iced::window::Event::FileDropped(path)) => {
+            Event::Window(window::Event::FileDropped(path)) => {
                 Task::done(Message::MediaSelected(path))
             }
             Event::Keyboard(keyboard::Event::KeyPressed {
@@ -506,7 +506,7 @@ impl App {
 
 fn checker_uniforms_from_theme(theme: &Theme) -> CheckerboardUniforms {
     let p = theme.extended_palette();
-    let to_arr = |c: iced::Color| [c.r, c.g, c.b, c.a];
+    let to_arr = |c: Color| [c.r, c.g, c.b, c.a];
     CheckerboardUniforms {
         color_a: to_arr(p.background.weak.color),
         color_b: to_arr(p.background.base.color),
