@@ -67,6 +67,9 @@ impl Scale {
     }
 
     fn snap_index(scale: f32, dir: Direction) -> usize {
+        if scale.is_nan() {
+            return DEFAULT_INDEX;
+        }
         match STEPS.binary_search_by(|s| s.partial_cmp(&scale).unwrap()) {
             Ok(index) => index,
             Err(index) => match dir {
