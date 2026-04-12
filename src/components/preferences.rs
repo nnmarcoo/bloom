@@ -34,6 +34,7 @@ pub enum PreferenceMessage {
     SetAlwaysOnTop(bool),
     SetUiScale(f32),
     SetAutoplay(bool),
+    SetRememberLast(bool),
     SetMipmapZoomOut(bool),
     SetSmoothZoomIn(bool),
     StartCapture(Action),
@@ -84,6 +85,10 @@ pub fn update(
             pending.autoplay = v;
             PreferenceOutcome::Open
         }
+        PreferenceMessage::SetRememberLast(v) => {
+            pending.remember_last = v;
+            PreferenceOutcome::Open
+        }
         PreferenceMessage::SetMipmapZoomOut(v) => {
             pending.mipmap_zoom_out = v;
             PreferenceOutcome::Open
@@ -121,6 +126,7 @@ pub fn update(
         PreferenceMessage::ResetRendering => {
             let d = Config::default();
             pending.autoplay = d.autoplay;
+            pending.remember_last = d.remember_last;
             pending.mipmap_zoom_out = d.mipmap_zoom_out;
             pending.smooth_zoom_in = d.smooth_zoom_in;
             PreferenceOutcome::Open
@@ -386,6 +392,15 @@ pub fn view<'a>(
             "Automatically play animations when opened",
             toggler(pending.autoplay)
                 .on_toggle(|v| Message::Preference(PreferenceMessage::SetAutoplay(v)))
+                .into(),
+            theme,
+        ),
+        Space::new().height(PAD),
+        setting(
+            "Remember last image",
+            "Open the last viewed image when no file is passed on launch",
+            toggler(pending.remember_last)
+                .on_toggle(|v| Message::Preference(PreferenceMessage::SetRememberLast(v)))
                 .into(),
             theme,
         ),

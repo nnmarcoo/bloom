@@ -47,7 +47,12 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
-        let config = Config::load();
+        Self::from_config(Config::load())
+    }
+}
+
+impl App {
+    fn from_config(config: Config) -> Self {
         let mut program = ViewProgram::default();
         program.show_checkerboard = config.show_checkerboard;
         if config.show_checkerboard {
@@ -121,16 +126,22 @@ pub enum Message {
 
 impl App {
     pub fn new(path: Option<PathBuf>) -> (Self, Task<Message>) {
-        if let Some(p) = path {
-            let app = Self {
-                gallery: Gallery::new(&p),
-                loading: Some(Gallery::filename(&p)),
-                load_generation: 1,
-                ..Self::default()
-            };
+        let config = Config::load();
+        let effective_path = path.or_else(|| {
+            if config.remember_last {
+                config.last_image.as_ref().filter(|p| p.exists()).cloned()
+            } else {
+                None
+            }
+        });
+        let mut app = Self::from_config(config);
+        if let Some(p) = effective_path {
+            app.gallery = Gallery::new(&p);
+            app.loading = Some(Gallery::filename(&p));
+            app.load_generation = 1;
             return (app, tasks::load_media(p, 1));
         }
-        (Self::default(), Task::none())
+        (app, Task::none())
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -176,6 +187,10 @@ impl App {
                 if generation == self.load_generation {
                     self.loading = None;
                     self.apply_media(media);
+                    if self.config.remember_last {
+                        self.config.last_image = self.gallery.current().cloned();
+                        self.config.save();
+                    }
                 }
             }
             Message::ClipboardLoaded(media) => {
