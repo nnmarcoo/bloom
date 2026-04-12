@@ -36,6 +36,8 @@ basis-universal = "0.3.1"
 dds = "0.2.0"
 zip = { version = "8.1.0", default-features = false, features = ["deflate"] }
 zstd = { version = "0.13.3", default-features = false }
+xcf-rs = "0.5.0"
+fitsrs = "0.4.1"
 
 # SVG
 resvg = "0.45.1"

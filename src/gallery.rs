@@ -6,10 +6,11 @@ use std::{
 
 pub const SUPPORTED: &[&str] = &[
     "jpg", "jpeg", "png", "gif", "tif", "tiff", "webp", "bmp", "ico", "qoi", "pbm", "pgm", "ppm",
-    "tga", "dds", "ff", "hdr", "exr", "jxl", "psd", "icns", "kra", "avif", "svg", "svgz", "apng",
-    "jp2", "j2k", "j2c", "jpx", "dcm", "dicom", "ktx2", "heic", "heif", "ari", "arw", "cr2", "cr3",
-    "crm", "crw", "dcr", "dcs", "dng", "erf", "fff", "iiq", "kdc", "mef", "mos", "mrw", "nef",
-    "nrw", "orf", "ori", "pef", "qtk", "raf", "raw", "rw2", "rwl", "srw", "x3f", "3fr",
+    "tga", "dds", "ff", "hdr", "exr", "jxl", "psd", "psb", "icns", "kra", "xcf", "avif", "svg",
+    "svgz", "apng", "jp2", "j2k", "j2c", "jpx", "dcm", "dicom", "ktx2", "heic", "heif", "ari",
+    "arw", "cr2", "cr3", "crm", "crw", "dcr", "dcs", "dng", "erf", "fff", "iiq", "kdc", "mef",
+    "mos", "mrw", "nef", "nrw", "orf", "ori", "pef", "qtk", "raf", "raw", "rw2", "rwl", "srw",
+    "x3f", "3fr", "fits", "fit", "fts", "eps", "ps", "epsf",
 ];
 
 #[derive(Default)]

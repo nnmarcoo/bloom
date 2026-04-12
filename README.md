@@ -40,8 +40,11 @@
     <tr><td>BMP</td><td><code>.bmp</code></td><td></td></tr>
     <tr><td>DDS</td><td><code>.dds</code></td><td>BC1–BC7 and uncompressed</td></tr>
     <tr><td>DICOM</td><td><code>.dcm</code> <code>.dicom</code></td><td>Medical imaging, first frame</td></tr>
+    <tr><td>EPS / PostScript</td><td><code>.eps</code> <code>.ps</code> <code>.epsf</code></td><td>Requires Ghostscript on PATH</td></tr>
     <tr><td>Farbfeld</td><td><code>.ff</code></td><td></td></tr>
+    <tr><td>FITS</td><td><code>.fits</code> <code>.fit</code> <code>.fts</code></td><td>Astronomy imaging; linear normalised to greyscale</td></tr>
     <tr><td>GIF</td><td><code>.gif</code></td><td>Animated</td></tr>
+    <tr><td>GIMP</td><td><code>.xcf</code></td><td>Layers composited top-to-bottom</td></tr>
     <tr><td>HDR (Radiance)</td><td><code>.hdr</code></td><td>Tonemapped (Reinhard)</td></tr>
     <tr><td>HEIC / HEIF</td><td><code>.heic</code> <code>.heif</code></td><td>Requires <code>--features heif</code></td></tr>
     <tr><td>ICO</td><td><code>.ico</code></td><td>Largest available size</td></tr>
@@ -51,7 +54,7 @@
     <tr><td>Krita</td><td><code>.kra</code></td><td>Merged composite, no layers</td></tr>
     <tr><td>KTX2</td><td><code>.ktx2</code></td><td>Basis Universal and uncompressed</td></tr>
     <tr><td>OpenEXR</td><td><code>.exr</code></td><td>Tonemapped (Reinhard)</td></tr>
-    <tr><td>Photoshop</td><td><code>.psd</code></td><td>Merged composite, no layers</td></tr>
+    <tr><td>Photoshop</td><td><code>.psd</code> <code>.psb</code></td><td>Merged composite, no layers</td></tr>
     <tr><td>PNG</td><td><code>.png</code></td><td></td></tr>
     <tr><td>Portable bitmap</td><td><code>.pbm</code> <code>.pgm</code> <code>.ppm</code></td><td></td></tr>
     <tr><td>QOI</td><td><code>.qoi</code></td><td></td></tr>

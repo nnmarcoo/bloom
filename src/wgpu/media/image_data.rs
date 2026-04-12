@@ -10,10 +10,12 @@ use rayon::prelude::*;
 use basis_universal::transcoding::{
     DecodeFlags, TranscodeParameters, Transcoder, TranscoderTextureFormat,
 };
-use bytemuck;
+use bytemuck::cast_slice;
 use dds::{ColorFormat, Decoder as DdsDecoder, ImageViewMut};
 use dicom_object::open_file as dicom_open_file;
 use dicom_pixeldata::PixelDecoder;
+use fitsrs::hdu::data::image::Pixels;
+use fitsrs::{Fits, HDU};
 use icns::{IconFamily, PixelFormat as IcnsPixelFormat};
 use image::{
     AnimationDecoder, ColorType, ImageDecoder, ImageError, ImageReader, codecs::hdr::HdrDecoder,
@@ -26,6 +28,7 @@ use psd::Psd;
 use resvg;
 use tiny_skia::Pixmap;
 use usvg::Options as SvgOptions;
+use xcf_rs::data::xcf::Xcf;
 use zip::ZipArchive;
 
 use super::animation::{Animation, Frame};
@@ -72,7 +75,7 @@ impl ImageData {
 
     fn compute_histogram(pixels: &[u8]) -> ([u32; 256], [u32; 256], [u32; 256]) {
         const CHUNK: usize = 65536 * 4;
-        let (r, g, b) = pixels
+        pixels
             .par_chunks(CHUNK)
             .map(|chunk| {
                 let mut r = [0u32; 256];
@@ -95,8 +98,7 @@ impl ImageData {
                     }
                     (ra, ga, ba)
                 },
-            );
-        (r, g, b)
+            )
     }
 
     pub fn load(path: &Path) -> Result<Self, ImageError> {
@@ -123,11 +125,9 @@ impl ImageData {
         {
             let delay_ms = frame.delay as u64 * 10;
             let delay = Duration::from_millis(if delay_ms < 20 { 100 } else { delay_ms });
-
             screen
                 .blit_frame(frame)
                 .map_err(|e| ImageError::IoError(Error::other(e)))?;
-
             let img = screen.pixels_rgba();
             let (pixels_rgba, width, height) = img.to_contiguous_buf();
             let pixels = pixels_rgba
@@ -143,16 +143,9 @@ impl ImageData {
         Ok(Animation::new(frames))
     }
 
-    // Extended Reinhard tonemapping (Reinhard et al. 2002, eq. 4) preserving hue.
-    // Scale is derived from the peak channel so all three channels compress
-    // proportionally — no channel clips relative to the others.
     fn tonemap_scale(r: f32, g: f32, b: f32) -> f32 {
         let peak = r.max(g).max(b);
-        if peak > 1e-6 {
-            (peak / (1.0 + peak)) / peak
-        } else {
-            1.0
-        }
+        if peak > 1e-6 { 1.0 / (1.0 + peak) } else { 1.0 }
     }
 
     fn tonemap_channel(v: f32, scale: f32) -> u8 {
@@ -169,7 +162,7 @@ impl ImageData {
         let mut buf = vec![0u8; pixel_count * 12];
         decoder.read_image(&mut buf)?;
 
-        let floats: &[f32] = bytemuck::cast_slice(&buf);
+        let floats: &[f32] = cast_slice(&buf);
         let mut pixels = Vec::with_capacity(pixel_count * 4);
         for chunk in floats.chunks_exact(3) {
             let scale = Self::tonemap_scale(chunk[0], chunk[1], chunk[2]);
@@ -194,7 +187,7 @@ impl ImageData {
             ColorType::Rgb32F => {
                 let mut buf = vec![0u8; pixel_count * 12];
                 decoder.read_image(&mut buf)?;
-                let floats: &[f32] = bytemuck::cast_slice(&buf);
+                let floats: &[f32] = cast_slice(&buf);
                 for chunk in floats.chunks_exact(3) {
                     let scale = Self::tonemap_scale(chunk[0], chunk[1], chunk[2]);
                     pixels.push(Self::tonemap_channel(chunk[0], scale));
@@ -206,7 +199,7 @@ impl ImageData {
             ColorType::Rgba32F => {
                 let mut buf = vec![0u8; pixel_count * 16];
                 decoder.read_image(&mut buf)?;
-                let floats: &[f32] = bytemuck::cast_slice(&buf);
+                let floats: &[f32] = cast_slice(&buf);
                 for chunk in floats.chunks_exact(4) {
                     let scale = Self::tonemap_scale(chunk[0], chunk[1], chunk[2]);
                     pixels.push(Self::tonemap_channel(chunk[0], scale));
@@ -351,7 +344,7 @@ impl ImageData {
                 duration_ms as u64
             });
             let pixels = if has_alpha {
-                buf.clone()
+                buf.to_vec()
             } else {
                 buf.chunks_exact(3)
                     .flat_map(|p| [p[0], p[1], p[2], 255])
@@ -456,7 +449,6 @@ impl ImageData {
             .next()
             .ok_or_else(|| ImageError::IoError(Error::other("KTX2 has no mip levels")))?;
 
-        // Basis LZ supercompression (vkFormat == 0) — use the Basis Universal transcoder.
         let is_basis = header.supercompression_scheme == Some(SupercompressionScheme::BasisLZ)
             || header.format.is_none();
         if is_basis {
@@ -465,13 +457,11 @@ impl ImageData {
             transcoder.prepare_transcoding(&basis_data).map_err(|_| {
                 ImageError::IoError(Error::other("KTX2 prepare_transcoding failed"))
             })?;
-
             let desc = transcoder
                 .image_level_description(&basis_data, 0, 0)
                 .ok_or_else(|| {
                     ImageError::IoError(Error::other("KTX2 no image level description"))
                 })?;
-
             let params = TranscodeParameters {
                 image_index: 0,
                 level_index: 0,
@@ -482,11 +472,9 @@ impl ImageData {
             let pixels = transcoder
                 .transcode_image_level(&basis_data, TranscoderTextureFormat::RGBA32, params)
                 .map_err(|e| ImageError::IoError(Error::other(format!("{e:?}"))))?;
-
             return Ok(Self::new(pixels, desc.original_width, desc.original_height));
         }
 
-        // Raw / Zstd-compressed KTX2 with an explicit Vulkan format.
         let raw: Vec<u8> = match header.supercompression_scheme {
             Some(s) if s == SupercompressionScheme::Zstandard => {
                 zstd::decode_all(level.data).map_err(|e| ImageError::IoError(Error::other(e)))?
@@ -496,19 +484,15 @@ impl ImageData {
 
         let fmt = header.format.unwrap();
         let pixels: Vec<u8> = match fmt {
-            // Native RGBA8 — already the right layout.
             f if f == Format::R8G8B8A8_UNORM || f == Format::R8G8B8A8_SRGB => raw,
-            // BGRA8 — swap R and B channels.
             f if f == Format::B8G8R8A8_UNORM || f == Format::B8G8R8A8_SRGB => raw
                 .chunks_exact(4)
                 .flat_map(|p| [p[2], p[1], p[0], p[3]])
                 .collect(),
-            // RGB8 — add full-opacity alpha.
             f if f == Format::R8G8B8_UNORM || f == Format::R8G8B8_SRGB => raw
                 .chunks_exact(3)
                 .flat_map(|p| [p[0], p[1], p[2], 255])
                 .collect(),
-            // BGR8 — swap and add alpha.
             f if f == Format::B8G8R8_UNORM || f == Format::B8G8R8_SRGB => raw
                 .chunks_exact(3)
                 .flat_map(|p| [p[2], p[1], p[0], 255])
@@ -586,29 +570,155 @@ impl ImageData {
         Ok(Self::new(pixels, plane.width, plane.height))
     }
 
-    pub fn load_media(path: &Path) -> Result<MediaData, ImageError> {
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let media = match ext.to_ascii_lowercase().as_str() {
-            "gif" => MediaData::Animation(Self::load_gif(path)?),
-            "hdr" => MediaData::Image(Self::load_hdr(path)?),
-            "exr" => MediaData::Image(Self::load_exr(path)?),
-            "jxl" => MediaData::Image(Self::load_jxl(path)?),
-            "psd" => MediaData::Image(Self::load_psd(path)?),
-            "icns" => MediaData::Image(Self::load_icns(path)?),
-            "kra" => MediaData::Image(Self::load_kra(path)?),
-            "svg" | "svgz" => MediaData::Image(Self::load_svg(path)?),
-            "avif" => MediaData::Image(Self::load(path)?),
-            "jp2" | "j2k" | "j2c" | "jpx" => MediaData::Image(Self::load_jp2(path)?),
-            "dcm" | "dicom" => MediaData::Image(Self::load_dicom(path)?),
-            "dds" => MediaData::Image(Self::load_dds(path)?),
-            "ktx2" => MediaData::Image(Self::load_ktx2(path)?),
-            #[cfg(feature = "heif")]
-            "heic" | "heif" => MediaData::Image(Self::load_heic(path)?),
-            "ari" | "arw" | "cr2" | "cr3" | "crm" | "crw" | "dcr" | "dcs" | "dng" | "erf"
-            | "fff" | "iiq" | "kdc" | "mef" | "mos" | "mrw" | "nef" | "nrw" | "orf" | "ori"
-            | "pef" | "qtk" | "raf" | "raw" | "rw2" | "rwl" | "srw" | "x3f" | "3fr" => {
-                MediaData::Image(Self::load_raw(path)?)
+    pub fn load_xcf(path: &Path) -> Result<Self, ImageError> {
+        let path_buf = path.to_path_buf();
+        let xcf = std::panic::catch_unwind(|| Xcf::open(&path_buf))
+            .map_err(|_| {
+                ImageError::IoError(Error::other("xcf-rs panicked parsing XCF tile data"))
+            })?
+            .map_err(|e| ImageError::IoError(Error::other(e)))?;
+        let (width, height) = xcf.dimensions();
+        let mut canvas = vec![0u8; width as usize * height as usize * 4];
+
+        for layer in xcf.layers.iter().rev() {
+            let (lw, lh): (u32, u32) = layer.dimensions();
+            let buf = layer.raw_rgba_buffer();
+            for py in 0..lh.min(height) {
+                for px in 0..lw.min(width) {
+                    let src = buf[(py * lw + px) as usize].0;
+                    let dst = (py * width + px) as usize * 4;
+                    let sa = src[3] as u32;
+                    let da = canvas[dst + 3] as u32;
+                    let out_a = sa + da * (255 - sa) / 255;
+                    if out_a > 0 {
+                        for c in 0..3 {
+                            canvas[dst + c] = ((src[c] as u32 * sa
+                                + canvas[dst + c] as u32 * da * (255 - sa) / 255)
+                                / out_a) as u8;
+                        }
+                        canvas[dst + 3] = out_a as u8;
+                    }
+                }
             }
+        }
+
+        Ok(Self::new(canvas, width, height))
+    }
+
+    pub fn load_fits(path: &Path) -> Result<Self, ImageError> {
+        let file = File::open(path).map_err(ImageError::IoError)?;
+        let mut hdu_list = Fits::from_reader(BufReader::new(file));
+
+        let hdu = hdu_list
+            .next()
+            .ok_or_else(|| ImageError::IoError(Error::other("FITS file has no HDUs")))?
+            .map_err(|e| ImageError::IoError(Error::other(e)))?;
+
+        let HDU::Primary(primary) = hdu else {
+            return Err(ImageError::IoError(Error::other(
+                "FITS primary HDU is not an image",
+            )));
+        };
+
+        let naxis = primary.get_header().get_xtension().get_naxis();
+        let (width, height) = match naxis {
+            [w, h] | [w, h, _] => (*w as u32, *h as u32),
+            _ => {
+                return Err(ImageError::IoError(Error::other(
+                    "FITS image must be 2D or 3D",
+                )));
+            }
+        };
+
+        let image_data = hdu_list.get_data(&primary);
+        let floats: Vec<f32> = match image_data.pixels() {
+            Pixels::I16(it) => it.map(|v| v as f32).collect(),
+            Pixels::I32(it) => it.map(|v| v as f32).collect(),
+            Pixels::I64(it) => it.map(|v| v as f32).collect(),
+            Pixels::F32(it) => it.collect(),
+            Pixels::F64(it) => it.map(|v| v as f32).collect(),
+            Pixels::U8(it) => it.map(|v| v as f32).collect(),
+        };
+
+        let plane_len = (width * height) as usize;
+        let floats = &floats[..plane_len.min(floats.len())];
+
+        let (mut min, mut max) = (f32::MAX, f32::MIN);
+        for &v in floats {
+            if v.is_finite() {
+                min = min.min(v);
+                max = max.max(v);
+            }
+        }
+        let range = (max - min).max(1e-10);
+
+        let mut pixels = Vec::with_capacity(plane_len * 4);
+        for &v in floats {
+            let byte = ((v - min) / range * 255.0) as u8;
+            pixels.extend_from_slice(&[byte, byte, byte, 255]);
+        }
+        pixels.resize(plane_len * 4, 0);
+
+        Ok(Self::new(pixels, width, height))
+    }
+
+    pub fn load_eps(path: &Path) -> Result<Self, ImageError> {
+        use std::process::Command;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "bloom_eps_{}.png",
+            path.file_stem().and_then(|s| s.to_str()).unwrap_or("out")
+        ));
+
+        let gs_candidates: &[&str] = if cfg!(windows) {
+            &["gswin64c", "gswin32c", "gs"]
+        } else {
+            &["gs"]
+        };
+
+        let gs = gs_candidates
+            .iter()
+            .find(|&&bin| Command::new(bin).arg("-v").output().is_ok())
+            .copied()
+            .ok_or_else(|| {
+                ImageError::IoError(Error::other(
+                    "Ghostscript not found on PATH (install gs / gswin64c)",
+                ))
+            })?;
+
+        let status = Command::new(gs)
+            .args([
+                "-dNOPAUSE",
+                "-dBATCH",
+                "-dSAFER",
+                "-sDEVICE=pngalpha",
+                "-r150",
+                &format!("-sOutputFile={}", tmp.display()),
+                path.to_str().unwrap_or_default(),
+            ])
+            .status()
+            .map_err(|e| ImageError::IoError(Error::other(e)))?;
+
+        if !status.success() {
+            return Err(ImageError::IoError(Error::other(
+                "Ghostscript failed to render EPS",
+            )));
+        }
+
+        let result = Self::load(&tmp);
+        let _ = std::fs::remove_file(&tmp);
+        result
+    }
+
+    pub fn load_media(path: &Path) -> Result<MediaData, ImageError> {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        let media = match ext.as_str() {
+            "gif" => MediaData::Animation(Self::load_gif(path)?),
             "apng" => MediaData::Animation(Self::load_apng(path)?),
             "webp" => {
                 let file = File::open(path).map_err(ImageError::IoError)?;
@@ -620,8 +730,45 @@ impl ImageData {
                     MediaData::Image(Self::load(path)?)
                 }
             }
-            _ => MediaData::Image(Self::load(path)?),
+            _ => {
+                static TABLE: &[(&[&str], fn(&Path) -> Result<ImageData, ImageError>)] = &[
+                    (&["hdr"], ImageData::load_hdr),
+                    (&["exr"], ImageData::load_exr),
+                    (&["jxl"], ImageData::load_jxl),
+                    (&["psd", "psb"], ImageData::load_psd),
+                    (&["icns"], ImageData::load_icns),
+                    (&["kra"], ImageData::load_kra),
+                    (&["xcf"], ImageData::load_xcf),
+                    (&["svg", "svgz"], ImageData::load_svg),
+                    (&["avif"], ImageData::load),
+                    (&["jp2", "j2k", "j2c", "jpx"], ImageData::load_jp2),
+                    (&["dcm", "dicom"], ImageData::load_dicom),
+                    (&["dds"], ImageData::load_dds),
+                    (&["ktx2"], ImageData::load_ktx2),
+                    (&["fits", "fit", "fts"], ImageData::load_fits),
+                    (&["eps", "ps", "epsf"], ImageData::load_eps),
+                    (
+                        &[
+                            "ari", "arw", "cr2", "cr3", "crm", "crw", "dcr", "dcs", "dng", "erf",
+                            "fff", "iiq", "kdc", "mef", "mos", "mrw", "nef", "nrw", "orf", "ori",
+                            "pef", "qtk", "raf", "raw", "rw2", "rwl", "srw", "x3f", "3fr",
+                        ],
+                        ImageData::load_raw,
+                    ),
+                    #[cfg(feature = "heif")]
+                    (&["heic", "heif"], ImageData::load_heic),
+                ];
+
+                let loader = TABLE
+                    .iter()
+                    .find(|(exts, _)| exts.contains(&ext.as_str()))
+                    .map(|(_, f)| *f)
+                    .unwrap_or(ImageData::load);
+
+                MediaData::Image(loader(path)?)
+            }
         };
+
         Ok(Self::attach_exif(path, media))
     }
 
