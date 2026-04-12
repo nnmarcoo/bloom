@@ -50,6 +50,9 @@ pub struct ViewProgram {
     animation: Option<Animation>,
     pub show_checkerboard: bool,
     pub checker_uniforms: CheckerboardUniforms,
+    pub mipmap_zoom_out: bool,
+    pub smooth_zoom_in: bool,
+    uploaded_mipmap_zoom_out: bool,
     cursor_pos: Option<Vec2>,
     rotation: u8,
 }
@@ -72,6 +75,9 @@ impl Default for ViewProgram {
             },
             cursor_pos: None,
             rotation: 0,
+            mipmap_zoom_out: true,
+            smooth_zoom_in: false,
+            uploaded_mipmap_zoom_out: true,
         }
     }
 }
@@ -162,6 +168,7 @@ impl ViewProgram {
         self.animation = None;
         self.cursor_pos = None;
         self.rotation = 0;
+        self.uploaded_mipmap_zoom_out = self.mipmap_zoom_out;
     }
 
     pub fn histogram(&self) -> Option<&([u32; 256], [u32; 256], [u32; 256])> {
@@ -182,6 +189,7 @@ impl ViewProgram {
         self.animation = Some(anim);
         self.cursor_pos = None;
         self.rotation = 0;
+        self.uploaded_mipmap_zoom_out = self.mipmap_zoom_out;
     }
 
     pub fn set_cursor_pos(&mut self, pos: Option<Vec2>) {
@@ -243,6 +251,15 @@ impl ViewProgram {
 
     pub fn decoded_size_bytes(&self) -> Option<usize> {
         self.image.as_ref().map(|img| img.size_bytes())
+    }
+
+    pub fn vram_usage_bytes(&self) -> Option<usize> {
+        let base = self.decoded_size_bytes()?;
+        Some(if self.uploaded_mipmap_zoom_out {
+            base * 4 / 3
+        } else {
+            base
+        })
     }
 
     pub fn screen_to_image_pixel(&self, screen_pos: Vec2) -> Option<(u32, u32)> {
@@ -311,6 +328,8 @@ impl Program<Message> for ViewProgram {
             bounds,
             show_checkerboard: self.show_checkerboard,
             checker_uniforms: self.checker_uniforms,
+            mipmap_zoom_out: self.mipmap_zoom_out,
+            smooth_zoom_in: self.smooth_zoom_in,
         }
     }
 

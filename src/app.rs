@@ -53,6 +53,8 @@ impl Default for App {
         if config.show_checkerboard {
             program.checker_uniforms = checker_uniforms_from_theme(&config.theme);
         }
+        program.mipmap_zoom_out = config.mipmap_zoom_out;
+        program.smooth_zoom_in = config.smooth_zoom_in;
         styles::set_radius(config.rounded);
         Self {
             program,
@@ -225,6 +227,8 @@ impl App {
                         let aot = self.config.always_on_top != pending.always_on_top;
                         self.config = pending;
                         self.config.save();
+                        self.program.mipmap_zoom_out = self.config.mipmap_zoom_out;
+                        self.program.smooth_zoom_in = self.config.smooth_zoom_in;
                         if self.program.show_checkerboard {
                             self.program.checker_uniforms =
                                 checker_uniforms_from_theme(&self.config.theme);

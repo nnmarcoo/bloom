@@ -13,21 +13,13 @@ use crate::wgpu::{
 };
 
 pub struct Tile {
-    /// Source texture (Rgba8Unorm) with hardware-generated mip levels.
     pub _source_texture: Texture,
-    /// Per-tile display transform uniform buffer.
     pub uniform_buffer: Buffer,
-    /// HW mip pyramid + trilinear sampler — used when zoomed out (physical_scale < 1).
-    pub hw_mip_bind_group: BindGroup,
-    /// Nearest-neighbor sampler on mip 0 — used when zoomed in (physical_scale >= 1).
+    pub zoom_out_bind_group: BindGroup,
     pub nearest_bind_group: BindGroup,
-
-    /// Cached NDC bounding rect for viewport culling (min, max).
+    pub linear_bind_group: BindGroup,
     pub last_ndc_rect: Option<(Vec2, Vec2)>,
-    /// Last transform written to `uniform_buffer` — skips redundant GPU writes.
     pub last_transform: Option<Mat4>,
-
-    /// Position and size within the full image.
     pub x: u32,
     pub y: u32,
     pub width: u32,
@@ -39,7 +31,6 @@ pub struct TiledSource {
     pub image_id: ImageId,
     pub full_width: u32,
     pub full_height: u32,
-    /// Cached physical scale for sampler selection.
     pub physical_scale: f32,
 }
 
@@ -51,6 +42,8 @@ impl TiledSource {
         display_pass: &DisplayPass,
         trilinear_sampler: &Sampler,
         nearest_sampler: &Sampler,
+        linear_sampler: &Sampler,
+        mipmap_zoom_out: bool,
         blit_pipeline: &RenderPipeline,
         blit_bgl: &BindGroupLayout,
     ) -> Result<Self, ViewError> {
@@ -76,7 +69,11 @@ impl TiledSource {
                 let th = (image.height - ty).min(max_dim);
                 let label = format!("tile[{col},{row}]");
 
-                let mip_count = gpu::hw_mip_count(tw, th);
+                let mip_count = if mipmap_zoom_out {
+                    gpu::hw_mip_count(tw, th)
+                } else {
+                    1
+                };
 
                 let source_texture = gpu::texture_2d_mipmapped(
                     device,
@@ -84,9 +81,13 @@ impl TiledSource {
                     th,
                     mip_count,
                     TextureFormat::Rgba8Unorm,
-                    TextureUsages::TEXTURE_BINDING
-                        | TextureUsages::COPY_DST
-                        | TextureUsages::RENDER_ATTACHMENT,
+                    if mipmap_zoom_out {
+                        TextureUsages::TEXTURE_BINDING
+                            | TextureUsages::COPY_DST
+                            | TextureUsages::RENDER_ATTACHMENT
+                    } else {
+                        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST
+                    },
                     Some(&format!("{label}:source")),
                 );
 
@@ -106,20 +107,22 @@ impl TiledSource {
                     },
                 );
 
-                let mut encoder =
-                    device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
-                        label: Some(&format!("{label}:mip-encoder")),
-                    });
-                gpu::generate_hw_mipmaps(
-                    &mut encoder,
-                    device,
-                    &source_texture,
-                    mip_count,
-                    TextureFormat::Rgba8Unorm,
-                    blit_pipeline,
-                    blit_bgl,
-                );
-                queue.submit(std::iter::once(encoder.finish()));
+                if mipmap_zoom_out {
+                    let mut encoder =
+                        device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
+                            label: Some(&format!("{label}:mip-encoder")),
+                        });
+                    gpu::generate_hw_mipmaps(
+                        &mut encoder,
+                        device,
+                        &source_texture,
+                        mip_count,
+                        TextureFormat::Rgba8Unorm,
+                        blit_pipeline,
+                        blit_bgl,
+                    );
+                    queue.submit(std::iter::once(encoder.finish()));
+                }
 
                 let source_view = source_texture.create_view(&Default::default());
 
@@ -127,12 +130,16 @@ impl TiledSource {
                     device,
                     Some(&format!("{label}:display-uniform")),
                 );
-                let hw_mip_bind_group = display_pass.create_bind_group(
+                let zoom_out_bind_group = display_pass.create_bind_group(
                     device,
                     &uniform_buffer,
                     &source_view,
-                    trilinear_sampler,
-                    Some(&format!("{label}:hw-mip-bg")),
+                    if mipmap_zoom_out {
+                        trilinear_sampler
+                    } else {
+                        nearest_sampler
+                    },
+                    Some(&format!("{label}:zoom-out-bg")),
                 );
                 let nearest_bind_group = display_pass.create_bind_group(
                     device,
@@ -141,12 +148,20 @@ impl TiledSource {
                     nearest_sampler,
                     Some(&format!("{label}:nearest-bg")),
                 );
+                let linear_bind_group = display_pass.create_bind_group(
+                    device,
+                    &uniform_buffer,
+                    &source_view,
+                    linear_sampler,
+                    Some(&format!("{label}:linear-bg")),
+                );
 
                 tiles.push(Tile {
                     _source_texture: source_texture,
                     uniform_buffer,
-                    hw_mip_bind_group,
+                    zoom_out_bind_group,
                     nearest_bind_group,
+                    linear_bind_group,
                     last_ndc_rect: None,
                     last_transform: None,
                     x: tx,

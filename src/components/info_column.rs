@@ -214,7 +214,10 @@ pub fn view<'a>(
         image_rows.push(row_item("File size", format_size(size), muted));
     }
     if let Some(bytes) = program.decoded_size_bytes() {
-        image_rows.push(row_item("RAM usage", format_size(bytes as u64), muted));
+        image_rows.push(row_item("RAM", format_size(bytes as u64), muted));
+    }
+    if let Some(bytes) = program.vram_usage_bytes() {
+        image_rows.push(row_item("VRAM", format_size(bytes as u64), muted));
     }
     push_section(&mut rows, "IMAGE", image_rows);
 

@@ -47,6 +47,7 @@ pub struct ViewPipeline {
     checkerboard: CheckerboardPass,
     trilinear_sampler: Sampler,
     nearest_sampler: Sampler,
+    linear_sampler: Sampler,
     blit_pipeline: RenderPipeline,
     blit_bgl: BindGroupLayout,
     placeholder_bind_group: BindGroup,
@@ -54,6 +55,7 @@ pub struct ViewPipeline {
     source: Option<TiledSource>,
     scale_factor: f32,
     last_checker_uniforms: Option<CheckerboardUniforms>,
+    pub mipmap_zoom_out: bool,
 }
 
 impl ViewPipeline {
@@ -70,6 +72,8 @@ impl ViewPipeline {
             &self.display,
             &self.trilinear_sampler,
             &self.nearest_sampler,
+            &self.linear_sampler,
+            self.mipmap_zoom_out,
             &self.blit_pipeline,
             &self.blit_bgl,
         )?);
@@ -163,6 +167,7 @@ impl ViewPipeline {
         target: &TextureView,
         clip_bounds: &Rectangle<u32>,
         bounds: &Rectangle,
+        smooth_zoom_in: bool,
     ) {
         if let Some(source) = &self.source {
             for tile in &source.tiles {
@@ -173,10 +178,13 @@ impl ViewPipeline {
                     }
                 }
 
-                let bind_group = if source.physical_scale >= 1.0 - 1e-6 {
-                    &tile.nearest_bind_group
+                let zoomed_out = source.physical_scale < 1.0 - 1e-6;
+                let bind_group = if zoomed_out {
+                    &tile.zoom_out_bind_group
+                } else if smooth_zoom_in {
+                    &tile.linear_bind_group
                 } else {
-                    &tile.hw_mip_bind_group
+                    &tile.nearest_bind_group
                 };
 
                 self.draw_display_pass(encoder, target, clip_bounds, bounds, bind_group);
@@ -268,6 +276,15 @@ impl Pipeline for ViewPipeline {
             ..Default::default()
         });
 
+        let linear_sampler = device.create_sampler(&SamplerDescriptor {
+            label: Some("linear-sampler"),
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            ..Default::default()
+        });
+
         let (blit_pipeline, blit_bgl) = gpu::blit_pipeline(device, TextureFormat::Rgba8Unorm);
 
         let placeholder_texture = gpu::texture_2d(
@@ -310,7 +327,9 @@ impl Pipeline for ViewPipeline {
             checkerboard,
             trilinear_sampler,
             nearest_sampler,
+            linear_sampler,
             blit_pipeline,
+            mipmap_zoom_out: true,
             blit_bgl,
             placeholder_bind_group,
             _placeholder_uniform: placeholder_uniform,

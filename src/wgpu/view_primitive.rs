@@ -23,6 +23,8 @@ pub struct ViewPrimitive {
     pub bounds: Rectangle,
     pub show_checkerboard: bool,
     pub checker_uniforms: CheckerboardUniforms,
+    pub mipmap_zoom_out: bool,
+    pub smooth_zoom_in: bool,
 }
 
 impl Primitive for ViewPrimitive {
@@ -36,6 +38,7 @@ impl Primitive for ViewPrimitive {
         _bounds: &Rectangle,
         viewport: &Viewport,
     ) {
+        pipeline.mipmap_zoom_out = self.mipmap_zoom_out;
         if let Some(image) = &self.image {
             if pipeline.needs_upload(image.id) {
                 if let Err(e) = pipeline.upload_image(device, queue, image) {
@@ -69,6 +72,12 @@ impl Primitive for ViewPrimitive {
         if self.show_checkerboard {
             pipeline.render_checkerboard(encoder, target, clip_bounds, &self.bounds);
         }
-        pipeline.render_display(encoder, target, clip_bounds, &self.bounds);
+        pipeline.render_display(
+            encoder,
+            target,
+            clip_bounds,
+            &self.bounds,
+            self.smooth_zoom_in,
+        );
     }
 }

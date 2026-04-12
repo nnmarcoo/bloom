@@ -46,6 +46,8 @@ pub struct Config {
     pub decorations: bool,
     pub always_on_top: bool,
     pub autoplay: bool,
+    pub mipmap_zoom_out: bool,
+    pub smooth_zoom_in: bool,
     pub keymap: Keymap,
     pub info_collapsed: HashSet<String>,
     pub ui_scale: f32,
@@ -62,6 +64,8 @@ impl Default for Config {
             decorations: true,
             always_on_top: false,
             autoplay: true,
+            mipmap_zoom_out: true,
+            smooth_zoom_in: false,
             keymap: Keymap::default(),
             info_collapsed: HashSet::new(),
             ui_scale: UI_SCALE_DEFAULT,
@@ -84,6 +88,10 @@ struct ConfigFile {
     always_on_top: bool,
     #[serde(default = "default_true")]
     autoplay: bool,
+    #[serde(default = "default_true")]
+    mipmap_zoom_out: bool,
+    #[serde(default)]
+    smooth_zoom_in: bool,
     #[serde(default)]
     keybinds: KeymapFile,
     #[serde(default)]
@@ -113,6 +121,8 @@ impl From<&Config> for ConfigFile {
             decorations: c.decorations,
             always_on_top: c.always_on_top,
             autoplay: c.autoplay,
+            mipmap_zoom_out: c.mipmap_zoom_out,
+            smooth_zoom_in: c.smooth_zoom_in,
             keybinds: KeymapFile::from(&c.keymap),
             info_collapsed,
             ui_scale: c.ui_scale,
@@ -131,6 +141,8 @@ impl From<ConfigFile> for Config {
             decorations: f.decorations,
             always_on_top: f.always_on_top,
             autoplay: f.autoplay,
+            mipmap_zoom_out: f.mipmap_zoom_out,
+            smooth_zoom_in: f.smooth_zoom_in,
             keymap: Keymap::from(f.keybinds),
             info_collapsed: f.info_collapsed.into_iter().collect(),
             ui_scale: f.ui_scale,

@@ -34,6 +34,8 @@ pub enum PreferenceMessage {
     SetAlwaysOnTop(bool),
     SetUiScale(f32),
     SetAutoplay(bool),
+    SetMipmapZoomOut(bool),
+    SetSmoothZoomIn(bool),
     StartCapture(Action),
     CancelCapture,
     SetKeybinding(Action, KeyBinding),
@@ -82,6 +84,14 @@ pub fn update(
             pending.autoplay = v;
             PreferenceOutcome::Open
         }
+        PreferenceMessage::SetMipmapZoomOut(v) => {
+            pending.mipmap_zoom_out = v;
+            PreferenceOutcome::Open
+        }
+        PreferenceMessage::SetSmoothZoomIn(v) => {
+            pending.smooth_zoom_in = v;
+            PreferenceOutcome::Open
+        }
         PreferenceMessage::StartCapture(action) => {
             preference_state.capturing = Some(action);
             PreferenceOutcome::Open
@@ -109,7 +119,10 @@ pub fn update(
             PreferenceOutcome::Open
         }
         PreferenceMessage::ResetRendering => {
-            pending.autoplay = Config::default().autoplay;
+            let d = Config::default();
+            pending.autoplay = d.autoplay;
+            pending.mipmap_zoom_out = d.mipmap_zoom_out;
+            pending.smooth_zoom_in = d.smooth_zoom_in;
             PreferenceOutcome::Open
         }
         PreferenceMessage::ResetKeybindings => {
@@ -373,6 +386,24 @@ pub fn view<'a>(
             "Automatically play animations when opened",
             toggler(pending.autoplay)
                 .on_toggle(|v| Message::Preference(PreferenceMessage::SetAutoplay(v)))
+                .into(),
+            theme,
+        ),
+        Space::new().height(PAD),
+        setting(
+            "Zoom out filtering",
+            "Trilinear mipmapping, pre-averages the image at smaller sizes to reduce aliasing (uses ~33% more VRAM, restart required)",
+            toggler(pending.mipmap_zoom_out)
+                .on_toggle(|v| Message::Preference(PreferenceMessage::SetMipmapZoomOut(v)))
+                .into(),
+            theme,
+        ),
+        Space::new().height(PAD),
+        setting(
+            "Zoom in filtering",
+            "Bilinear filtering, blends between neighbouring pixels when zoomed above 100%",
+            toggler(pending.smooth_zoom_in)
+                .on_toggle(|v| Message::Preference(PreferenceMessage::SetSmoothZoomIn(v)))
                 .into(),
             theme,
         ),
