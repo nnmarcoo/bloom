@@ -1,16 +1,17 @@
 use std::sync::OnceLock;
 
 use iced::alignment::{Horizontal, Vertical};
-use iced::widget::scrollable::{Direction, Scrollbar};
+use iced::widget::scrollable::{AbsoluteOffset, Direction, Scrollbar};
 use iced::widget::tooltip::Position;
-use iced::widget::{Space, button, column, container, row, rule, scrollable, text, toggler};
+use iced::widget::{Id, Space, button, column, container, row, rule, scrollable, text, toggler};
 use iced::{Element, Length, Theme};
 
 use crate::app::Message;
 use crate::config::{Config, UI_SCALE_MAX, UI_SCALE_MIN};
 use crate::keybinds::{Action, KeyBinding, Keymap};
 use crate::styles::{
-    PAD, capturing_chip_style, key_chip_style, plain_icon_button_style, set_radius,
+    PAD, capturing_chip_style, key_chip_style, plain_icon_button_style, section_nav_button_style,
+    set_radius,
 };
 use crate::ui::{svg_button_plain, with_tooltip};
 use crate::widgets::scale_entry::ScaleEntry;
@@ -19,6 +20,32 @@ use crate::widgets::theme_picker::ThemePicker;
 fn on_wayland() -> bool {
     static ON_WAYLAND: OnceLock<bool> = OnceLock::new();
     *ON_WAYLAND.get_or_init(|| std::env::var_os("WAYLAND_DISPLAY").is_some())
+}
+
+pub const PREFS_SCROLL_ID: &str = "prefs_scroll";
+
+/// Approximate Y pixel offsets for each section within the preferences scroll content.
+/// These are intentionally generous — `scroll_to` clamps to actual content bounds.
+const SECTION_Y_APPEARANCE: f32 = 0.0;
+const SECTION_Y_RENDERING: f32 = 300.0;
+const SECTION_Y_KEYBINDINGS: f32 = 10_000.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Appearance,
+    Rendering,
+    Keybindings,
+}
+
+impl Section {
+    pub fn scroll_offset(self) -> AbsoluteOffset {
+        let y = match self {
+            Section::Appearance => SECTION_Y_APPEARANCE,
+            Section::Rendering => SECTION_Y_RENDERING,
+            Section::Keybindings => SECTION_Y_KEYBINDINGS,
+        };
+        AbsoluteOffset { x: 0.0, y }
+    }
 }
 
 #[derive(Default)]
@@ -45,12 +72,14 @@ pub enum PreferenceMessage {
     ResetRendering,
     ResetKeybindings,
     ResetAll,
+    ScrollTo(Section),
     Save,
     Cancel,
 }
 
 pub enum PreferenceOutcome {
     Open,
+    ScrollTo(Section),
     Save,
     Cancel,
 }
@@ -141,6 +170,7 @@ pub fn update(
             preference_state.capturing = None;
             PreferenceOutcome::Open
         }
+        PreferenceMessage::ScrollTo(section) => PreferenceOutcome::ScrollTo(section),
         PreferenceMessage::Save => {
             set_radius(pending.rounded);
             PreferenceOutcome::Save
@@ -310,11 +340,39 @@ pub fn view<'a>(
         .map(|&action| keybind_row(action, &pending.keymap, preference_state.capturing, theme))
         .collect();
 
+    let nav_buttons = container(
+        row![
+            button(text("Appearance").size(11))
+                .style(section_nav_button_style)
+                .on_press(Message::Preference(PreferenceMessage::ScrollTo(
+                    Section::Appearance,
+                )))
+                .padding([3.0, 10.0]),
+            button(text("Rendering").size(11))
+                .style(section_nav_button_style)
+                .on_press(Message::Preference(PreferenceMessage::ScrollTo(
+                    Section::Rendering,
+                )))
+                .padding([3.0, 10.0]),
+            button(text("Keybindings").size(11))
+                .style(section_nav_button_style)
+                .on_press(Message::Preference(PreferenceMessage::ScrollTo(
+                    Section::Keybindings,
+                )))
+                .padding([3.0, 10.0]),
+        ]
+        .spacing(PAD),
+    )
+    .width(Length::Fill)
+    .align_x(Horizontal::Center);
+
     let content = column![
         container(text("Preferences").size(16))
             .width(Length::Fill)
             .align_x(Horizontal::Center),
-        Space::new().height(PAD * 2.0),
+        Space::new().height(PAD),
+        nav_buttons,
+        Space::new().height(PAD),
         section(
             "Appearance",
             "Reset appearance to defaults",
@@ -438,6 +496,7 @@ pub fn view<'a>(
 
     column![
         scrollable(content)
+            .id(Id::new(PREFS_SCROLL_ID))
             .width(Length::Fill)
             .height(Length::Fill)
             .direction(Direction::Vertical(

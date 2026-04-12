@@ -9,7 +9,7 @@ use iced::{
         self,
         key::{self, Physical},
     },
-    widget::column,
+    widget::{Id, column},
     window::{self, Mode},
 };
 
@@ -17,7 +17,7 @@ use crate::{
     clipboard,
     components::{
         bottom_bar, preferences,
-        preferences::{PreferenceMessage, PreferenceOutcome},
+        preferences::{PREFS_SCROLL_ID, PreferenceMessage, PreferenceOutcome},
         timeline_bar, tool_bar, viewer,
     },
     config::{Config, UI_SCALE_DEFAULT, UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP},
@@ -236,6 +236,12 @@ impl App {
                 let outcome = preferences::update(msg, pending, &mut self.preference_state);
                 match outcome {
                     PreferenceOutcome::Open => {}
+                    PreferenceOutcome::ScrollTo(section) => {
+                        return iced::widget::operation::scroll_to(
+                            Id::new(PREFS_SCROLL_ID),
+                            section.scroll_offset(),
+                        );
+                    }
                     PreferenceOutcome::Save => {
                         let pending = self.editing_config.take().unwrap();
                         let dec = self.config.decorations != pending.decorations;

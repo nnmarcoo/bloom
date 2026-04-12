@@ -188,6 +188,21 @@ pub fn info_section_header_style(theme: &Theme, status: button::Status) -> butto
     }
 }
 
+pub fn section_nav_button_style(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = theme.extended_palette();
+    let background = match status {
+        button::Status::Hovered => Some(Background::Color(palette.background.strong.color)),
+        button::Status::Pressed => Some(Background::Color(palette.primary.weak.color)),
+        _ => Some(Background::Color(palette.background.weak.color)),
+    };
+    button::Style {
+        background,
+        border: iced::border::rounded(100.0),
+        text_color: palette.background.base.text,
+        ..Default::default()
+    }
+}
+
 pub fn icon_button_active_style(theme: &Theme, status: button::Status) -> button::Style {
     let palette = theme.extended_palette();
 
