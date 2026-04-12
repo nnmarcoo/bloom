@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use iced::{
-    Background, Color, Theme,
+    Background, Border, Color, Shadow, Theme, Vector,
     widget::{button, container, svg},
 };
 
@@ -202,6 +202,43 @@ pub fn icon_button_active_style(theme: &Theme, status: button::Status) -> button
         background,
         border: iced::border::rounded(radius()),
         text_color: palette.background.base.text,
+        ..Default::default()
+    }
+}
+
+pub fn toast_container_style(theme: &Theme, accent: Color, alpha: f32) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        text_color: Some(palette.background.base.text.scale_alpha(alpha)),
+        background: Some(Background::Color(
+            palette.background.weak.color.scale_alpha(alpha),
+        )),
+        border: Border {
+            color: accent.scale_alpha(alpha),
+            width: 1.5,
+            radius: radius().into(),
+        },
+        shadow: Shadow {
+            color: Color::BLACK.scale_alpha(0.3 * alpha),
+            offset: Vector::new(0.0, 2.0),
+            blur_radius: 6.0,
+        },
+        snap: false,
+    }
+}
+
+pub fn toast_dismiss_style(theme: &Theme, status: button::Status, alpha: f32) -> button::Style {
+    let palette = theme.extended_palette();
+    let background = match status {
+        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(
+            palette.background.strong.color.scale_alpha(alpha),
+        )),
+        _ => None,
+    };
+    button::Style {
+        background,
+        border: iced::border::rounded(radius()),
+        text_color: palette.background.base.text.scale_alpha(0.6 * alpha),
         ..Default::default()
     }
 }

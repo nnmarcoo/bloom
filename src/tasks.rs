@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use iced::window::{self, Level, Mode};
+use image::ImageError;
 
 use crate::app::Message;
 use crate::{
@@ -11,13 +12,17 @@ use crate::{
 
 pub fn load_media(path: PathBuf, generation: u64) -> iced::Task<Message> {
     iced::Task::future(async move {
+        let filename = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let (tx, rx) = tokio::sync::oneshot::channel();
         std::thread::spawn(move || {
             let _ = tx.send(ImageData::load_media(&path));
         });
         match rx.await {
             Ok(Ok(media)) => Message::MediaLoaded(generation, media),
-            Ok(Err(e)) => Message::MediaFailed(generation, e.to_string()),
+            Ok(Err(e)) => Message::MediaFailed(generation, friendly_error(&e, &filename)),
             Err(_) => Message::MediaFailed(generation, "load thread panicked".to_string()),
         }
     })
@@ -79,4 +84,13 @@ pub fn close_window() -> iced::Task<Message> {
         Some(id) => window::close(id),
         None => iced::Task::none(),
     })
+}
+
+fn friendly_error(e: &ImageError, filename: &str) -> String {
+    let raw = e.to_string();
+    if raw.contains("not recognized as an image format") {
+        format!("'{filename}' is not a supported format.")
+    } else {
+        format!("Failed to load '{filename}': {raw}")
+    }
 }

@@ -16,7 +16,9 @@ use iced::{
 use crate::{
     clipboard,
     components::{
-        bottom_bar, preferences,
+        bottom_bar,
+        notifications::{Notification, NotificationEntry},
+        preferences,
         preferences::{PreferenceMessage, PreferenceOutcome},
         timeline_bar, tool_bar, viewer,
     },
@@ -43,6 +45,7 @@ pub struct App {
     context_menu_pos: Option<Vec2>,
     paused: bool,
     scrubbing: bool,
+    notifications: Vec<NotificationEntry>,
 }
 
 impl Default for App {
@@ -74,6 +77,7 @@ impl App {
             context_menu_pos: None,
             paused: false,
             scrubbing: false,
+            notifications: Vec::new(),
         }
     }
 }
@@ -121,6 +125,9 @@ pub enum Message {
     UiScaleUp,
     UiScaleDown,
     UiScaleReset,
+    Notify(Notification),
+    DismissNotification(usize),
+    NotificationTick(Instant),
     Noop,
 }
 
@@ -202,7 +209,7 @@ impl App {
                 if generation == self.load_generation {
                     self.loading = None;
                 }
-                eprintln!("Failed to load media: {err}");
+                return Task::done(Message::Notify(Notification::error(err)));
             }
             Message::ToggleEditPanel => {
                 self.config.show_edit = !self.config.show_edit;
@@ -240,6 +247,7 @@ impl App {
                         let pending = self.editing_config.take().unwrap();
                         let dec = self.config.decorations != pending.decorations;
                         let aot = self.config.always_on_top != pending.always_on_top;
+                        let mipmap_changed = self.config.mipmap_zoom_out != pending.mipmap_zoom_out;
                         self.config = pending;
                         self.config.save();
                         self.program.mipmap_zoom_out = self.config.mipmap_zoom_out;
@@ -247,6 +255,12 @@ impl App {
                         if self.program.show_checkerboard {
                             self.program.checker_uniforms =
                                 checker_uniforms_from_theme(&self.config.theme);
+                        }
+                        if mipmap_changed {
+                            self.notifications
+                                .push(NotificationEntry::new(Notification::warning(
+                                    "Restart required to apply mipmapping change.",
+                                )));
                         }
                         if dec || aot {
                             return Task::batch([
@@ -358,6 +372,20 @@ impl App {
                 }
                 self.config.save();
             }
+            Message::Notify(n) => {
+                self.notifications.push(NotificationEntry::new(n));
+            }
+            Message::DismissNotification(i) => {
+                if let Some(entry) = self.notifications.get_mut(i) {
+                    entry.dismissing_at = Some(Instant::now());
+                }
+            }
+            Message::NotificationTick(now) => {
+                for entry in &mut self.notifications {
+                    entry.expire_if_due(now);
+                }
+                self.notifications.retain(|entry| !entry.is_gone(now));
+            }
             Message::Noop => {}
             Message::Event(event) => return self.handle_event(event),
         }
@@ -465,6 +493,7 @@ impl App {
             &self.gallery,
             &self.config.theme,
             &self.config.info_collapsed,
+            &self.notifications,
         ));
 
         if let Some((frame, total)) = self.program.animation_info() {
@@ -510,16 +539,26 @@ impl App {
 
     pub fn subscription(&self) -> Subscription<Message> {
         let events = event::listen().map(Message::Event);
-        match (!self.paused && !self.scrubbing)
+        let mut subs = vec![events];
+
+        if let Some(delay) = (!self.paused && !self.scrubbing)
             .then(|| self.program.time_until_next_frame())
             .flatten()
         {
-            Some(delay) => {
-                let delay = delay.max(Duration::from_millis(1));
-                Subscription::batch([events, every(delay).map(Message::AnimationTick)])
-            }
-            None => events,
+            let delay = delay.max(Duration::from_millis(1));
+            subs.push(every(delay).map(Message::AnimationTick));
         }
+
+        if !self.notifications.is_empty() {
+            let animating = self
+                .notifications
+                .iter()
+                .any(NotificationEntry::is_animating);
+            let tick_ms = if animating { 16 } else { 500 };
+            subs.push(every(Duration::from_millis(tick_ms)).map(Message::NotificationTick));
+        }
+
+        Subscription::batch(subs)
     }
 }
 

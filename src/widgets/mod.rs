@@ -3,5 +3,6 @@ pub mod loading_spinner;
 pub mod menu;
 pub mod menu_button;
 pub mod scale_entry;
+pub mod slide_in;
 pub mod theme_picker;
 pub mod timeline;
