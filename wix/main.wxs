@@ -272,7 +272,7 @@
         <!-- Notify the shell to refresh file association icons/defaults -->
         <CustomAction Id='NotifyShell' Directory='TARGETDIR' ExeCommand='[SystemFolder]cmd.exe /c ie4uinit.exe -show' Execute='deferred' Return='ignore' Impersonate='yes'/>
         <InstallExecuteSequence>
-            <Custom Action='NotifyShell' After='InstallFinalize'>NOT Installed</Custom>
+            <Custom Action='NotifyShell' Before='InstallFinalize'>NOT Installed</Custom>
         </InstallExecuteSequence>
 
         <UI>
