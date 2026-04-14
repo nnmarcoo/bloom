@@ -11,6 +11,9 @@ pub const UI_SCALE_MAX: f32 = 3.0;
 pub const UI_SCALE_STEP: f32 = 0.1;
 pub const UI_SCALE_DEFAULT: f32 = 1.0;
 
+pub const PIXEL_PREVIEW_SIZE_DEFAULT: u32 = 9;
+pub const PIXEL_PREVIEW_SIZE_OPTIONS: &[u32] = &[3, 5, 7, 9, 11, 13, 15];
+
 pub const ALL_THEMES: &[Theme] = &[
     Theme::Light,
     Theme::Dark,
@@ -53,6 +56,7 @@ pub struct Config {
     pub keymap: Keymap,
     pub info_collapsed: HashSet<String>,
     pub ui_scale: f32,
+    pub pixel_preview_size: u32,
 }
 
 impl Default for Config {
@@ -73,6 +77,7 @@ impl Default for Config {
             keymap: Keymap::default(),
             info_collapsed: HashSet::new(),
             ui_scale: UI_SCALE_DEFAULT,
+            pixel_preview_size: PIXEL_PREVIEW_SIZE_DEFAULT,
         }
     }
 }
@@ -106,6 +111,8 @@ struct ConfigFile {
     info_collapsed: Vec<String>,
     #[serde(default = "default_scale")]
     ui_scale: f32,
+    #[serde(default = "default_preview_size")]
+    pixel_preview_size: u32,
 }
 
 fn default_true() -> bool {
@@ -114,6 +121,10 @@ fn default_true() -> bool {
 
 fn default_scale() -> f32 {
     UI_SCALE_DEFAULT
+}
+
+fn default_preview_size() -> u32 {
+    PIXEL_PREVIEW_SIZE_DEFAULT
 }
 
 impl From<&Config> for ConfigFile {
@@ -136,6 +147,7 @@ impl From<&Config> for ConfigFile {
             keybinds: KeymapFile::from(&c.keymap),
             info_collapsed,
             ui_scale: c.ui_scale,
+            pixel_preview_size: c.pixel_preview_size,
         }
     }
 }
@@ -158,6 +170,7 @@ impl From<ConfigFile> for Config {
             keymap: Keymap::from(f.keybinds),
             info_collapsed: f.info_collapsed.into_iter().collect(),
             ui_scale: f.ui_scale,
+            pixel_preview_size: f.pixel_preview_size,
         }
     }
 }

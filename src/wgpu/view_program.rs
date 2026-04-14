@@ -53,7 +53,8 @@ pub struct ViewProgram {
     pub mipmap_zoom_out: bool,
     pub smooth_zoom_in: bool,
     uploaded_mipmap_zoom_out: bool,
-    cursor_pos: Option<Vec2>,
+    cursor_image_pos: Option<Vec2>,
+    panning: bool,
     rotation: u8,
 }
 
@@ -73,7 +74,8 @@ impl Default for ViewProgram {
                 tile_size: 12.0,
                 _pad: [0.0; 3],
             },
-            cursor_pos: None,
+            cursor_image_pos: None,
+            panning: false,
             rotation: 0,
             mipmap_zoom_out: true,
             smooth_zoom_in: false,
@@ -165,9 +167,6 @@ impl ViewProgram {
             * Mat4::from_scale(vec3(aspect.x, aspect.y, 1.0))
     }
 
-    // Returns aspect vec2 that maps the image quad to correct proportions given
-    // the current rotation. At 90/270 the image axes are swapped on screen,
-    // so each image dimension is divided by the opposite viewport dimension.
     fn aspect(&self, viewport: Vec2) -> Vec2 {
         if self.rotation % 2 == 0 {
             self.image_size / viewport
@@ -183,7 +182,8 @@ impl ViewProgram {
         self.image_size = vec2(data.width as f32, data.height as f32);
         self.image = Some(Arc::new(data));
         self.animation = None;
-        self.cursor_pos = None;
+        self.cursor_image_pos = None;
+        self.panning = false;
         self.rotation = 0;
         self.uploaded_mipmap_zoom_out = self.mipmap_zoom_out;
     }
@@ -204,13 +204,25 @@ impl ViewProgram {
         self.image_size = vec2(first.width as f32, first.height as f32);
         self.image = Some(first);
         self.animation = Some(anim);
-        self.cursor_pos = None;
+        self.cursor_image_pos = None;
+        self.panning = false;
         self.rotation = 0;
         self.uploaded_mipmap_zoom_out = self.mipmap_zoom_out;
     }
 
     pub fn set_cursor_pos(&mut self, pos: Option<Vec2>) {
-        self.cursor_pos = pos;
+        if !self.panning {
+            self.cursor_image_pos = pos.and_then(|p| {
+                Some(
+                    self.screen_to_image_coords(p)?
+                        .clamp(Vec2::ZERO, self.image_size - Vec2::ONE),
+                )
+            });
+        }
+    }
+
+    pub fn set_panning(&mut self, panning: bool) {
+        self.panning = panning;
     }
 
     pub fn seek_animation(&mut self, index: usize) {
@@ -279,8 +291,6 @@ impl ViewProgram {
         })
     }
 
-    // Converts a screen position to a raw floating-point image coordinate, without
-    // clamping or bounds checking. Returns None only if the viewport or image is invalid.
     fn screen_to_image_coords(&self, screen_pos: Vec2) -> Option<Vec2> {
         let viewport = vec2(self.bounds.width, self.bounds.height);
         if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
@@ -309,14 +319,30 @@ impl ViewProgram {
     }
 
     pub fn cursor_info(&self) -> Option<(u32, u32, [u8; 4])> {
-        let img = self
-            .screen_to_image_coords(self.cursor_pos?)?
-            .clamp(Vec2::ZERO, self.image_size - Vec2::ONE);
+        let img = self.cursor_image_pos?;
         let (px, py) = (img.x as u32, img.y as u32);
         let image = self.image.as_ref()?;
         let idx = (py as usize * image.width as usize + px as usize) * 4;
         let p = image.pixels.get(idx..idx + 4)?;
         Some((px, py, [p[0], p[1], p[2], p[3]]))
+    }
+
+    pub fn cursor_pixels(&self, size: u32) -> Option<Vec<u8>> {
+        let img = self.cursor_image_pos?;
+        let (cx, cy) = (img.x as i64, img.y as i64);
+        let half = (size / 2) as i64;
+        let image = self.image.as_ref()?;
+        let (w, h) = (image.width as i64, image.height as i64);
+        let mut pixels = Vec::with_capacity((size * size * 4) as usize);
+        for row in 0..size as i64 {
+            for col in 0..size as i64 {
+                let x = (cx - half + col).clamp(0, w - 1) as usize;
+                let y = (cy - half + row).clamp(0, h - 1) as usize;
+                let idx = (y * w as usize + x) * 4;
+                pixels.extend_from_slice(&image.pixels[idx..idx + 4]);
+            }
+        }
+        Some(pixels)
     }
 
     pub fn color_at(&self, pos: Vec2) -> Option<(u32, u32, [u8; 4])> {
@@ -412,7 +438,7 @@ impl Program<Message> for ViewProgram {
                 if let Event::Mouse(mouse::Event::ButtonPressed(Button::Left)) = event {
                     if let Some(pos) = cursor.position_over(bounds) {
                         state.drag = ViewDragState::Panning(pos);
-                        return Some(Action::publish(Message::ContextMenuClosed));
+                        return Some(Action::publish(Message::PanStarted));
                     }
                 }
                 if let Event::Mouse(mouse::Event::CursorMoved { .. }) = event {
@@ -429,7 +455,7 @@ impl Program<Message> for ViewProgram {
             ViewDragState::Panning(prev) => match event {
                 Event::Mouse(mouse::Event::ButtonReleased(Button::Left)) => {
                     state.drag = ViewDragState::Idle;
-                    return Some(Action::capture());
+                    return Some(Action::publish(Message::PanEnded).and_capture());
                 }
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
                     let delta = vec2(position.x - prev.x, prev.y - position.y);

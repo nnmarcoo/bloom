@@ -3,11 +3,13 @@ use std::sync::OnceLock;
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::tooltip::Position;
-use iced::widget::{Space, button, column, container, row, rule, scrollable, text, toggler};
+use iced::widget::{
+    Space, button, column, container, pick_list, row, rule, scrollable, text, toggler,
+};
 use iced::{Element, Length, Theme};
 
 use crate::app::Message;
-use crate::config::{Config, UI_SCALE_MAX, UI_SCALE_MIN};
+use crate::config::{Config, PIXEL_PREVIEW_SIZE_OPTIONS, UI_SCALE_MAX, UI_SCALE_MIN};
 use crate::keybinds::{Action, KeyBinding, Keymap};
 use crate::styles::{
     PAD, capturing_chip_style, key_chip_style, plain_icon_button_style, set_radius,
@@ -37,6 +39,7 @@ pub enum PreferenceMessage {
     SetRememberLast(bool),
     SetMipmapZoomOut(bool),
     SetSmoothZoomIn(bool),
+    SetPixelPreviewSize(u32),
     StartCapture(Action),
     CancelCapture,
     SetKeybinding(Action, KeyBinding),
@@ -97,6 +100,10 @@ pub fn update(
             pending.smooth_zoom_in = v;
             PreferenceOutcome::Open
         }
+        PreferenceMessage::SetPixelPreviewSize(v) => {
+            pending.pixel_preview_size = v;
+            PreferenceOutcome::Open
+        }
         PreferenceMessage::StartCapture(action) => {
             preference_state.capturing = Some(action);
             PreferenceOutcome::Open
@@ -129,6 +136,7 @@ pub fn update(
             pending.remember_last = d.remember_last;
             pending.mipmap_zoom_out = d.mipmap_zoom_out;
             pending.smooth_zoom_in = d.smooth_zoom_in;
+            pending.pixel_preview_size = d.pixel_preview_size;
             PreferenceOutcome::Open
         }
         PreferenceMessage::ResetKeybindings => {
@@ -420,6 +428,19 @@ pub fn view<'a>(
             toggler(pending.smooth_zoom_in)
                 .on_toggle(|v| Message::Preference(PreferenceMessage::SetSmoothZoomIn(v)))
                 .into(),
+            theme,
+        ),
+        Space::new().height(PAD),
+        setting(
+            "Pixel preview size",
+            "Grid size of the zoomed pixel preview in the info panel",
+            pick_list(
+                PIXEL_PREVIEW_SIZE_OPTIONS,
+                Some(pending.pixel_preview_size),
+                |v| Message::Preference(PreferenceMessage::SetPixelPreviewSize(v)),
+            )
+            .text_size(12)
+            .into(),
             theme,
         ),
         Space::new().height(PAD * 2.0),

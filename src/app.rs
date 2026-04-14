@@ -107,7 +107,8 @@ pub enum Message {
     CursorMoved(Vec2),
     CursorLeft,
     ContextMenuOpened(Vec2),
-    ContextMenuClosed,
+    PanStarted,
+    PanEnded,
     CopyColor,
     CopyPath,
     RotateCw,
@@ -301,7 +302,11 @@ impl App {
                 self.context_menu_pos = Some(pos);
                 self.program.set_cursor_pos(Some(pos));
             }
-            Message::ContextMenuClosed => self.context_menu_pos = None,
+            Message::PanStarted => {
+                self.context_menu_pos = None;
+                self.program.set_panning(true);
+            }
+            Message::PanEnded => self.program.set_panning(false),
             Message::CopyColor => {
                 if let Some(pos) = self.context_menu_pos.take() {
                     if let Some((_, _, [r, g, b, _])) = self.program.color_at(pos) {
@@ -502,6 +507,7 @@ impl App {
             &self.config.theme,
             &self.config.info_collapsed,
             &self.notifications,
+            self.config.pixel_preview_size,
         ));
 
         if let Some((frame, total)) = self.program.animation_info() {

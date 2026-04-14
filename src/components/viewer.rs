@@ -30,6 +30,7 @@ pub fn view<'a>(
     theme: &'a Theme,
     info_collapsed: &'a HashSet<String>,
     notifs: &'a [NotificationEntry],
+    pixel_preview_size: u32,
 ) -> Element<'a, Message> {
     let base = shader(program.clone())
         .height(Length::Fill)
@@ -78,14 +79,28 @@ pub fn view<'a>(
 
     match (show_info, show_edit) {
         (true, true) => row![
-            info_column::view(path, gallery, &program, theme, info_collapsed),
+            info_column::view(
+                path,
+                gallery,
+                &program,
+                theme,
+                info_collapsed,
+                pixel_preview_size
+            ),
             viewer_with_menu,
             edit_column::view(),
         ]
         .height(Length::Fill)
         .into(),
         (true, false) => row![
-            info_column::view(path, gallery, &program, theme, info_collapsed),
+            info_column::view(
+                path,
+                gallery,
+                &program,
+                theme,
+                info_collapsed,
+                pixel_preview_size
+            ),
             viewer_with_menu,
         ]
         .height(Length::Fill)

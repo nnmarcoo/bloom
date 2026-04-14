@@ -3,10 +3,14 @@ use std::path::Path;
 use std::time::Duration;
 
 use iced::alignment::{Horizontal, Vertical};
+use iced::widget::canvas::{self, Canvas, Frame, Stroke};
+use iced::widget::image::{self, FilterMethod};
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::tooltip::Position;
-use iced::widget::{Space, button, column, container, row, scrollable, text};
-use iced::{Background, Color, Element, Font, Length, Theme, border};
+use iced::widget::{Space, button, column, container, row, scrollable, stack, text};
+use iced::{
+    Background, Color, Element, Font, Length, Point, Rectangle, Renderer, Theme, border, mouse,
+};
 
 use crate::app::Message;
 use crate::gallery::Gallery;
@@ -14,6 +18,51 @@ use crate::styles::{PAD, bar_style, info_section_header_style, radius};
 use crate::ui::{format_duration, with_tooltip_delay};
 use crate::wgpu::view_program::ViewProgram;
 use crate::widgets::histogram::Histogram;
+
+const INFO_COLUMN_WIDTH: f32 = 220.0;
+
+struct Crosshair {
+    pixel_size: f32,
+}
+
+impl canvas::Program<Message> for Crosshair {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry<Renderer>> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let cx = bounds.width / 2.0;
+        let cy = bounds.height / 2.0;
+        let gap = self.pixel_size / 2.0;
+
+        let arms = [
+            (Point::new(0.0, cy), Point::new(cx - gap, cy)),
+            (Point::new(cx + gap, cy), Point::new(bounds.width, cy)),
+            (Point::new(cx, 0.0), Point::new(cx, cy - gap)),
+            (Point::new(cx, cy + gap), Point::new(cx, bounds.height)),
+        ];
+
+        for (color, width) in [(Color::BLACK, 4.0_f32), (Color::WHITE, 2.0_f32)] {
+            let stroke = Stroke {
+                style: canvas::stroke::Style::Solid(color),
+                width,
+                line_cap: canvas::LineCap::Square,
+                ..Stroke::default()
+            };
+            for (from, to) in arms {
+                frame.stroke(&canvas::Path::line(from, to), stroke.clone());
+            }
+        }
+
+        vec![frame.into_geometry()]
+    }
+}
 
 fn section_header(label: &'static str, header_color: Color) -> Element<'static, Message> {
     let content = container(
@@ -135,6 +184,7 @@ pub fn view<'a>(
     program: &ViewProgram,
     theme: &Theme,
     info_collapsed: &HashSet<String>,
+    pixel_preview_size: u32,
 ) -> Element<'a, Message> {
     let palette = theme.extended_palette();
     let muted = palette.background.base.text.scale_alpha(0.5);
@@ -148,7 +198,7 @@ pub fn view<'a>(
         )
         .style(bar_style)
         .height(Length::Fill)
-        .width(Length::Fixed(220.0))
+        .width(Length::Fixed(INFO_COLUMN_WIDTH))
         .align_x(Horizontal::Center)
         .align_y(Vertical::Center)
         .into();
@@ -262,32 +312,48 @@ pub fn view<'a>(
 
     let mut cursor_rows: Vec<Element<'a, Message>> = Vec::new();
     if let Some((px, py, rgba)) = program.cursor_info() {
+        if let Some(pixels) = program.cursor_pixels(pixel_preview_size) {
+            let display_size = INFO_COLUMN_WIDTH - PAD * 4.0;
+            let pixel_size = display_size / pixel_preview_size as f32;
+            let handle = image::Handle::from_rgba(pixel_preview_size, pixel_preview_size, pixels);
+            cursor_rows.push(
+                stack![
+                    image::Image::new(handle)
+                        .filter_method(FilterMethod::Nearest)
+                        .width(Length::Fill)
+                        .height(Length::Fixed(display_size)),
+                    Canvas::new(Crosshair { pixel_size })
+                        .width(Length::Fixed(display_size))
+                        .height(Length::Fixed(display_size)),
+                ]
+                .into(),
+            );
+        }
         cursor_rows.push(color_row(rgba, muted));
         cursor_rows.push(row_item("Pixel", format!("({}, {})", px, py), muted));
     }
     push_section(&mut rows, "CURSOR", cursor_rows);
 
+    if let Some(histogram) = program.histogram() {
+        rows.push(Space::new().height(PAD * 2.0).into());
+        rows.push(
+            Histogram::new(histogram.0, histogram.1, histogram.2)
+                .height(142.0)
+                .into(),
+        );
+    }
+
     let content = column(rows).padding(PAD * 2.0);
 
-    let mut col = column![
+    container(
         scrollable(content)
             .width(Length::Fill)
             .direction(Direction::Vertical(
                 Scrollbar::new().width(4).scroller_width(4),
             )),
-        Space::new().height(Length::Fill),
-    ];
-
-    if let Some(histogram) = program.histogram() {
-        col = col.push(
-            container(Histogram::new(histogram.0, histogram.1, histogram.2).height(142.0))
-                .padding([PAD, PAD * 2.0]),
-        );
-    }
-
-    container(col)
-        .style(bar_style)
-        .height(Length::Fill)
-        .width(Length::Fixed(220.0))
-        .into()
+    )
+    .style(bar_style)
+    .height(Length::Fill)
+    .width(Length::Fixed(INFO_COLUMN_WIDTH))
+    .into()
 }
