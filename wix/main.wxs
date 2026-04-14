@@ -271,8 +271,8 @@
                 Absent='allow'>
                 <Feature
                     Id='AssocCommonFeature'
-                    Title='Common formats (jpg, png, gif, bmp, webp, tif, ico)'
-                    Description='Associate bloom with common image formats: JPEG, PNG, GIF, BMP, WebP, TIFF, and ICO.'
+                    Title='Common formats (jpg, png, gif, bmp, webp, tif, ico, apng, tga, pbm, pgm, ppm)'
+                    Description='Associate bloom with common image formats: JPEG, PNG, GIF, BMP, WebP, TIFF, ICO, APNG, TGA, and Netpbm formats.'
                     Level='1'
                     AllowAdvertise='no'
                     Absent='allow'>
@@ -280,8 +280,8 @@
                 </Feature>
                 <Feature
                     Id='AssocModernFeature'
-                    Title='Modern formats (avif, jxl, heic, heif, qoi)'
-                    Description='Associate bloom with modern image formats: AVIF, JPEG XL, HEIC, HEIF, and QOI.'
+                    Title='Modern formats (avif, jxl, heic, heif, qoi, jp2, j2k)'
+                    Description='Associate bloom with modern image formats: AVIF, JPEG XL, HEIC, HEIF, QOI, and JPEG 2000.'
                     Level='1'
                     AllowAdvertise='no'
                     Absent='allow'>
@@ -289,8 +289,8 @@
                 </Feature>
                 <Feature
                     Id='AssocSpecialtyFeature'
-                    Title='Specialty formats (hdr, exr, psd, svg)'
-                    Description='Associate bloom with specialty formats: HDR, OpenEXR, Photoshop PSD, and SVG.'
+                    Title='Specialty formats (hdr, exr, psd, svg, icns, dds, kra, xcf, dcm, eps, ...)'
+                    Description='Associate bloom with specialty formats: HDR, OpenEXR, PSD, PSB, SVG, ICNS, DDS, Krita, GIMP XCF, DICOM, FITS, EPS, and more.'
                     Level='1'
                     AllowAdvertise='no'
                     Absent='allow'>
