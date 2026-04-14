@@ -110,7 +110,8 @@ pub enum Message {
     ContextMenuClosed,
     CopyColor,
     CopyPath,
-    Rotate,
+    RotateCw,
+    RotateCcw,
     Exit,
     ToggleEditPanel,
     ToggleCheckerboard,
@@ -158,9 +159,14 @@ impl App {
             Message::Pan(delta) => self.program.pan(delta),
             Message::ScaleUp(cursor) => self.program.scale_up(cursor),
             Message::ScaleDown(cursor) => self.program.scale_down(cursor),
-            Message::Rotate => {
+            Message::RotateCw => {
                 if self.gallery.current().is_some() {
                     self.program.rotate();
+                }
+            }
+            Message::RotateCcw => {
+                if self.gallery.current().is_some() {
+                    self.program.rotate_ccw();
                 }
             }
             Message::Fit => {
@@ -472,6 +478,8 @@ impl App {
             Some(Action::UiScaleUp) => Task::done(Message::UiScaleUp),
             Some(Action::UiScaleDown) => Task::done(Message::UiScaleDown),
             Some(Action::UiScaleReset) => Task::done(Message::UiScaleReset),
+            Some(Action::RotateCw) => Task::done(Message::RotateCw),
+            Some(Action::RotateCcw) => Task::done(Message::RotateCcw),
             None => Task::none(),
         }
     }

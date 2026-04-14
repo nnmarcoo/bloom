@@ -76,7 +76,7 @@ pub fn view<'a>(
             Position::Top,
         ),
         with_tooltip(
-            svg_button_maybe(rotation_icon, Some(Message::Rotate)),
+            svg_button_maybe(rotation_icon, Some(Message::RotateCw)),
             [
                 "Rotate view (0°)",
                 "Rotate view (90°)",

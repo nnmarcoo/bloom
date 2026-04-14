@@ -48,7 +48,7 @@ impl Scale {
     }
 
     pub fn fit_dims(&mut self, iw: f32, ih: f32, bounds: Rectangle) {
-        *self = Scale::Custom((bounds.width / iw).min(bounds.height / ih));
+        self.custom((bounds.width / iw).min(bounds.height / ih));
     }
 
     pub fn custom(&mut self, scale: f32) {

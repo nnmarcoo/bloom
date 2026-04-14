@@ -20,6 +20,8 @@ pub enum Action {
     UiScaleUp,
     UiScaleDown,
     UiScaleReset,
+    RotateCw,
+    RotateCcw,
 }
 
 impl Action {
@@ -37,6 +39,8 @@ impl Action {
             Self::UiScaleUp => "UI scale up".into(),
             Self::UiScaleDown => "UI scale down".into(),
             Self::UiScaleReset => "UI scale reset".into(),
+            Self::RotateCw => "Rotate clockwise".into(),
+            Self::RotateCcw => "Rotate counter-clockwise".into(),
         }
     }
 
@@ -54,6 +58,8 @@ impl Action {
             Self::UiScaleUp => "Increase the application UI scale",
             Self::UiScaleDown => "Decrease the application UI scale",
             Self::UiScaleReset => "Reset the application UI scale to 100%",
+            Self::RotateCw => "Rotate the image 90° clockwise",
+            Self::RotateCcw => "Rotate the image 90° counter-clockwise",
         }
     }
 
@@ -70,6 +76,8 @@ impl Action {
             Action::UiScaleUp,
             Action::UiScaleDown,
             Action::UiScaleReset,
+            Action::RotateCw,
+            Action::RotateCcw,
         ]
     }
 }
@@ -259,6 +267,8 @@ impl Default for Keymap {
         m.insert(Action::UiScaleUp, n(key::Code::Equal));
         m.insert(Action::UiScaleDown, n(key::Code::Minus));
         m.insert(Action::UiScaleReset, n(key::Code::Digit0));
+        m.insert(Action::RotateCw, n(key::Code::BracketRight));
+        m.insert(Action::RotateCcw, n(key::Code::BracketLeft));
         let digit_codes = [
             key::Code::Digit1,
             key::Code::Digit2,
@@ -325,6 +335,8 @@ pub(crate) struct KeymapFile {
     pub ui_scale_up: Option<String>,
     pub ui_scale_down: Option<String>,
     pub ui_scale_reset: Option<String>,
+    pub rotate_cw: Option<String>,
+    pub rotate_ccw: Option<String>,
 }
 
 impl From<&Keymap> for KeymapFile {
@@ -358,6 +370,8 @@ impl From<&Keymap> for KeymapFile {
             ui_scale_up: bind(Action::UiScaleUp),
             ui_scale_down: bind(Action::UiScaleDown),
             ui_scale_reset: bind(Action::UiScaleReset),
+            rotate_cw: bind(Action::RotateCw),
+            rotate_ccw: bind(Action::RotateCcw),
         }
     }
 }
@@ -393,6 +407,8 @@ impl From<KeymapFile> for Keymap {
             resolve(f.ui_scale_up, Action::UiScaleUp),
             resolve(f.ui_scale_down, Action::UiScaleDown),
             resolve(f.ui_scale_reset, Action::UiScaleReset),
+            resolve(f.rotate_cw, Action::RotateCw),
+            resolve(f.rotate_ccw, Action::RotateCcw),
         ]
         .into_iter()
         .flatten()

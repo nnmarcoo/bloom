@@ -110,7 +110,13 @@ impl ViewProgram {
         self.fit();
     }
 
+    pub fn rotate_ccw(&mut self) {
+        self.rotation = (self.rotation + 3) % 4;
+        self.fit();
+    }
+
     pub fn pan(&mut self, delta: Vec2) {
+        // 2.0 converts screen-pixel delta to NDC units (NDC spans [-1, 1] = 2 over viewport).
         self.offset += 2.0 * delta / self.scale.value();
         self.clamp_offset();
     }
@@ -146,6 +152,17 @@ impl ViewProgram {
 
     fn clamp_offset(&mut self) {
         self.offset = self.offset.clamp(-self.image_size, self.image_size);
+    }
+
+    fn build_transform(&self, viewport: Vec2) -> Mat4 {
+        let s = self.scale.value();
+        let aspect = self.aspect(viewport);
+        let pan_ndc = self.offset / viewport;
+        let angle = -(self.rotation as f32) * std::f32::consts::FRAC_PI_2;
+        Mat4::from_scale(vec3(s, s, 1.0))
+            * Mat4::from_translation(vec3(pan_ndc.x, pan_ndc.y, 0.0))
+            * Mat4::from_rotation_z(angle)
+            * Mat4::from_scale(vec3(aspect.x, aspect.y, 1.0))
     }
 
     // Returns aspect vec2 that maps the image quad to correct proportions given
@@ -271,14 +288,7 @@ impl ViewProgram {
             (screen_pos.x / viewport.x) * 2.0 - 1.0,
             1.0 - (screen_pos.y / viewport.y) * 2.0,
         );
-        let s = self.scale.value();
-        let aspect = self.aspect(viewport);
-        let pan_ndc = self.offset / viewport;
-        let angle = -(self.rotation as f32) * std::f32::consts::FRAC_PI_2;
-        let transform = Mat4::from_scale(vec3(s, s, 1.0))
-            * Mat4::from_translation(vec3(pan_ndc.x, pan_ndc.y, 0.0))
-            * Mat4::from_rotation_z(angle)
-            * Mat4::from_scale(vec3(aspect.x, aspect.y, 1.0));
+        let transform = self.build_transform(viewport);
         let img_ndc = (transform.inverse() * vec4(screen_ndc.x, screen_ndc.y, 0.0, 1.0))
             .truncate()
             .truncate();
@@ -310,17 +320,12 @@ impl Program<Message> for ViewProgram {
     fn draw(&self, _state: &Self::State, _cursor: Cursor, bounds: Rectangle) -> Self::Primitive {
         let viewport = vec2(bounds.width, bounds.height);
         let s = self.scale.value();
-        let aspect = self.aspect(viewport);
         let pan_ndc = self.offset / viewport;
-        let angle = -(self.rotation as f32) * std::f32::consts::FRAC_PI_2;
-
-        let transform = Mat4::from_scale(vec3(s, s, 1.0))
-            * Mat4::from_translation(vec3(pan_ndc.x, pan_ndc.y, 0.0))
-            * Mat4::from_rotation_z(angle)
-            * Mat4::from_scale(vec3(aspect.x, aspect.y, 1.0));
 
         ViewPrimitive {
-            uniforms: Uniforms { transform },
+            uniforms: Uniforms {
+                transform: self.build_transform(viewport),
+            },
             image: self.image.clone(),
             scale: s,
             pan_ndc,
