@@ -182,7 +182,7 @@ impl ViewProgram {
         self.image_size = vec2(data.width as f32, data.height as f32);
         self.image = Some(Arc::new(data));
         self.animation = None;
-        self.cursor_image_pos = None;
+        self.cursor_image_pos = Some(self.image_size / 2.0);
         self.panning = false;
         self.rotation = 0;
         self.uploaded_mipmap_zoom_out = self.mipmap_zoom_out;
@@ -204,7 +204,7 @@ impl ViewProgram {
         self.image_size = vec2(first.width as f32, first.height as f32);
         self.image = Some(first);
         self.animation = Some(anim);
-        self.cursor_image_pos = None;
+        self.cursor_image_pos = Some(self.image_size / 2.0);
         self.panning = false;
         self.rotation = 0;
         self.uploaded_mipmap_zoom_out = self.mipmap_zoom_out;
@@ -212,12 +212,14 @@ impl ViewProgram {
 
     pub fn set_cursor_pos(&mut self, pos: Option<Vec2>) {
         if !self.panning {
-            self.cursor_image_pos = pos.and_then(|p| {
+            if let Some(new_pos) = pos.and_then(|p| {
                 Some(
                     self.screen_to_image_coords(p)?
                         .clamp(Vec2::ZERO, self.image_size - Vec2::ONE),
                 )
-            });
+            }) {
+                self.cursor_image_pos = Some(new_pos);
+            }
         }
     }
 

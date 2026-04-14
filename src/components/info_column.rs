@@ -334,14 +334,15 @@ pub fn view<'a>(
     }
     push_section(&mut rows, "CURSOR", cursor_rows);
 
+    let mut histogram_rows: Vec<Element<'a, Message>> = Vec::new();
     if let Some(histogram) = program.histogram() {
-        rows.push(Space::new().height(PAD * 2.0).into());
-        rows.push(
+        histogram_rows.push(
             Histogram::new(histogram.0, histogram.1, histogram.2)
                 .height(142.0)
                 .into(),
         );
     }
+    push_section(&mut rows, "HISTOGRAM", histogram_rows);
 
     let content = column(rows).padding(PAD * 2.0);
 
