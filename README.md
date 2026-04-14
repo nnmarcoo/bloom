@@ -22,7 +22,7 @@
 - **Pan and zoom** — flexible zoom from 0.01× to 35×, with custom % input
 - **Clipboard import** — load an image directly from clipboard or file path (`Ctrl+V`)
 - **Info panel** — file metadata, dimensions, EXIF, pixel color under cursor, RGB histogram, and animation timing
-- **Image rotation** — rotate 90° clockwise
+- **Image rotation** — rotate 90° clockwise or counter-clockwise
 - **Checkerboard toggle** — visualize transparency
 - **Context menu** — right-click to copy pixel color or file path
 - **Customizable keybindings** — rebind any action via the preferences panel
@@ -74,6 +74,7 @@
   </thead>
   <tbody>
     <tr><td><code>←</code> / <code>→</code></td><td>Previous / next image in folder</td></tr>
+    <tr><td><code>]</code> / <code>[</code></td><td>Rotate clockwise / counter-clockwise</td></tr>
     <tr><td><code>Ctrl</code> <code>=</code></td><td>Zoom in</td></tr>
     <tr><td><code>Ctrl</code> <code>-</code></td><td>Zoom out</td></tr>
     <tr><td><code>Ctrl</code> <code>0</code></td><td>Fit to window</td></tr>

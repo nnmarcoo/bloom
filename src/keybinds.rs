@@ -68,16 +68,16 @@ impl Action {
             Action::Next,
             Action::Previous,
             Action::ToggleFullscreen,
-            Action::FocusScale,
             Action::PasteFromClipboard,
+            Action::RotateCw,
+            Action::RotateCcw,
             Action::ZoomIn,
             Action::ZoomOut,
             Action::ZoomFit,
+            Action::FocusScale,
             Action::UiScaleUp,
             Action::UiScaleDown,
             Action::UiScaleReset,
-            Action::RotateCw,
-            Action::RotateCcw,
         ]
     }
 }
