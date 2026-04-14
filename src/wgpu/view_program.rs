@@ -279,7 +279,9 @@ impl ViewProgram {
         })
     }
 
-    pub fn screen_to_image_pixel(&self, screen_pos: Vec2) -> Option<(u32, u32)> {
+    // Converts a screen position to a raw floating-point image coordinate, without
+    // clamping or bounds checking. Returns None only if the viewport or image is invalid.
+    fn screen_to_image_coords(&self, screen_pos: Vec2) -> Option<Vec2> {
         let viewport = vec2(self.bounds.width, self.bounds.height);
         if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
             return None;
@@ -288,12 +290,18 @@ impl ViewProgram {
             (screen_pos.x / viewport.x) * 2.0 - 1.0,
             1.0 - (screen_pos.y / viewport.y) * 2.0,
         );
-        let transform = self.build_transform(viewport);
-        let img_ndc = (transform.inverse() * vec4(screen_ndc.x, screen_ndc.y, 0.0, 1.0))
-            .truncate()
-            .truncate();
-        let img = (img_ndc + 1.0) * 0.5 * vec2(self.image_size.x, -self.image_size.y)
-            + vec2(0.0, self.image_size.y);
+        let img_ndc = (self.build_transform(viewport).inverse()
+            * vec4(screen_ndc.x, screen_ndc.y, 0.0, 1.0))
+        .truncate()
+        .truncate();
+        Some(
+            (img_ndc + 1.0) * 0.5 * vec2(self.image_size.x, -self.image_size.y)
+                + vec2(0.0, self.image_size.y),
+        )
+    }
+
+    pub fn screen_to_image_pixel(&self, screen_pos: Vec2) -> Option<(u32, u32)> {
+        let img = self.screen_to_image_coords(screen_pos)?;
         if img.x < 0.0 || img.y < 0.0 || img.x >= self.image_size.x || img.y >= self.image_size.y {
             return None;
         }
@@ -301,7 +309,14 @@ impl ViewProgram {
     }
 
     pub fn cursor_info(&self) -> Option<(u32, u32, [u8; 4])> {
-        self.color_at(self.cursor_pos?)
+        let img = self
+            .screen_to_image_coords(self.cursor_pos?)?
+            .clamp(Vec2::ZERO, self.image_size - Vec2::ONE);
+        let (px, py) = (img.x as u32, img.y as u32);
+        let image = self.image.as_ref()?;
+        let idx = (py as usize * image.width as usize + px as usize) * 4;
+        let p = image.pixels.get(idx..idx + 4)?;
+        Some((px, py, [p[0], p[1], p[2], p[3]]))
     }
 
     pub fn color_at(&self, pos: Vec2) -> Option<(u32, u32, [u8; 4])> {
