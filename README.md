@@ -42,7 +42,7 @@
     <tr><td>DICOM</td><td><code>.dcm</code> <code>.dicom</code></td><td>Medical imaging, first frame</td></tr>
     <tr><td>EPS / PostScript</td><td><code>.eps</code> <code>.ps</code> <code>.epsf</code></td><td>Requires Ghostscript on PATH</td></tr>
     <tr><td>Farbfeld</td><td><code>.ff</code></td><td></td></tr>
-    <tr><td>FITS</td><td><code>.fits</code> <code>.fit</code> <code>.fts</code></td><td>Astronomy imaging; linear normalised to greyscale</td></tr>
+    <tr><td>FITS</td><td><code>.fits</code> <code>.fit</code> <code>.fts</code></td><td>Astronomy imaging; linear normalized to greyscale</td></tr>
     <tr><td>GIF</td><td><code>.gif</code></td><td>Animated</td></tr>
     <tr><td>GIMP</td><td><code>.xcf</code></td><td>Layers composited top-to-bottom</td></tr>
     <tr><td>HDR (Radiance)</td><td><code>.hdr</code></td><td>Tonemapped (Reinhard)</td></tr>
