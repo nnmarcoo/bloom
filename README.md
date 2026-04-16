@@ -79,8 +79,15 @@
     <tr><td><code>Ctrl</code> <code>-</code></td><td>Zoom out</td></tr>
     <tr><td><code>Ctrl</code> <code>0</code></td><td>Fit to window</td></tr>
     <tr><td><code>Ctrl</code> <code>1</code>–<code>9</code></td><td>Fixed zoom (1×–9×)</td></tr>
+    <tr><td><code>=</code> / <code>-</code></td><td>UI scale up / down</td></tr>
+    <tr><td><code>0</code></td><td>Reset UI scale</td></tr>
     <tr><td><code>F</code></td><td>Toggle fullscreen</td></tr>
     <tr><td><code>Z</code></td><td>Focus zoom input</td></tr>
+    <tr><td><code>Space</code></td><td>Toggle animation playback</td></tr>
+    <tr><td><code>S</code></td><td>Select tool</td></tr>
+    <tr><td><code>C</code></td><td>Crop tool</td></tr>
+    <tr><td><code>D</code></td><td>Draw tool</td></tr>
+    <tr><td><code>T</code></td><td>Text tool</td></tr>
     <tr><td><code>Ctrl</code> <code>V</code></td><td>Import image or file path from clipboard</td></tr>
   </tbody>
 </table>
