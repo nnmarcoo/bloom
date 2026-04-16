@@ -8,19 +8,20 @@ use iced::widget::image::{self, FilterMethod};
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::tooltip::Position;
 use iced::widget::{Space, button, column, container, row, scrollable, stack, text};
-use iced::{
-    Background, Color, Element, Font, Length, Point, Rectangle, Renderer, Theme, border, mouse,
-};
+use iced::{Color, Element, Font, Length, Padding, Point, Rectangle, Renderer, Theme, mouse};
 
 use crate::app::Message;
 use crate::gallery::Gallery;
 use crate::styles::{
-    INFO_PANEL_WIDTH, PAD, RULE_HEIGHT, bar_style, info_section_header_style, panel_divider_style,
-    radius,
+    INFO_CHANNEL_COL_WIDTH, INFO_HEADER_ARROW_SIZE, INFO_HEADER_LABEL_SIZE, INFO_HISTOGRAM_HEIGHT,
+    INFO_PANEL_WIDTH, INFO_ROW_FONT_SIZE, INFO_SECTION_GAP, INFO_SECTION_SPACING, PAD, RULE_HEIGHT,
+    bar_style, color_swatch_style, info_section_header_style, panel_divider_style,
 };
 use crate::ui::{format_duration, with_tooltip_delay};
 use crate::wgpu::view_program::ViewProgram;
 use crate::widgets::histogram::Histogram;
+
+const FILENAME_MAX_CHARS: usize = 18;
 
 struct Crosshair {
     pixel_size: f32,
@@ -78,19 +79,19 @@ fn section_header(
 
     let content = row![
         text(arrow)
-            .size(14)
+            .size(INFO_HEADER_ARROW_SIZE)
             .color(header_color)
             .font(Font::MONOSPACE),
-        Space::new().width(4),
+        Space::new().width(PAD - 1.0),
         text(label)
-            .size(10)
+            .size(INFO_HEADER_LABEL_SIZE)
             .color(header_color)
             .font(Font::MONOSPACE),
-        Space::new().width(6),
+        Space::new().width(PAD + 1.0),
         rule,
     ]
     .align_y(Vertical::Center)
-    .padding([4, 0]);
+    .padding([2, 0]);
 
     button(content)
         .on_press(Message::ToggleInfoSection(label))
@@ -103,12 +104,12 @@ fn section_header(
 fn row_item<'a>(lbl: &'a str, val: impl ToString, muted: Color) -> Element<'a, Message> {
     row![
         text(lbl)
-            .size(12)
+            .size(INFO_ROW_FONT_SIZE)
             .color(muted)
             .font(Font::MONOSPACE)
             .width(Length::Fill),
         text(val.to_string())
-            .size(12)
+            .size(INFO_ROW_FONT_SIZE)
             .font(Font::MONOSPACE)
             .align_x(Horizontal::Right),
     ]
@@ -126,19 +127,22 @@ fn color_row<'a>(rgba: [u8; 4], muted: Color) -> Element<'a, Message> {
     let swatch = container(Space::new())
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(move |_: &_| container::Style {
-            background: Some(Background::Color(color)),
-            border: border::rounded(radius()),
-            ..Default::default()
-        });
+        .style(color_swatch_style(color));
     let ch = |v: u8| {
-        container(text(format!("{v}")).size(12).font(Font::MONOSPACE))
-            .width(Length::Fixed(30.0))
-            .align_x(Horizontal::Right)
+        container(
+            text(format!("{v}"))
+                .size(INFO_ROW_FONT_SIZE)
+                .font(Font::MONOSPACE),
+        )
+        .width(Length::Fixed(INFO_CHANNEL_COL_WIDTH))
+        .align_x(Horizontal::Right)
     };
     row![
-        text("RGBA").size(12).color(muted).font(Font::MONOSPACE),
-        Space::new().width(10),
+        text("RGBA")
+            .size(INFO_ROW_FONT_SIZE)
+            .color(muted)
+            .font(Font::MONOSPACE),
+        Space::new().width(PAD * 2.0),
         swatch,
         ch(r),
         ch(g),
@@ -228,7 +232,7 @@ pub fn view<'a>(
                             section: Vec<Element<'a, Message>>| {
         if !section.is_empty() {
             if !first_section {
-                rows.push(Space::new().height(PAD).into());
+                rows.push(Space::new().height(INFO_SECTION_GAP).into());
             }
             first_section = false;
             let collapsed = info_collapsed.contains(label);
@@ -236,7 +240,12 @@ pub fn view<'a>(
             if !collapsed {
                 block.extend(section);
             }
-            rows.push(column(block).spacing(6).width(Length::Fill).into());
+            rows.push(
+                column(block)
+                    .spacing(INFO_SECTION_SPACING)
+                    .width(Length::Fill)
+                    .into(),
+            );
         }
     };
 
@@ -245,7 +254,11 @@ pub fn view<'a>(
     let mut file_rows: Vec<Element<'a, Message>> = Vec::new();
     if let Some(p) = path {
         if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-            let filename_row = row_item("Filename", truncate_filename(name, 18), muted);
+            let filename_row = row_item(
+                "Filename",
+                truncate_filename(name, FILENAME_MAX_CHARS),
+                muted,
+            );
             file_rows.push(if let Some(path_str) = p.to_str() {
                 with_tooltip_delay(filename_row, path_str, Position::Right, Duration::ZERO)
             } else {
@@ -354,13 +367,19 @@ pub fn view<'a>(
     if let Some(histogram) = program.histogram() {
         histogram_rows.push(
             Histogram::new(histogram.0, histogram.1, histogram.2)
-                .height(142.0)
+                .height(INFO_HISTOGRAM_HEIGHT)
                 .into(),
         );
     }
     push_section(&mut rows, "HISTOGRAM", histogram_rows);
 
-    let content = column(rows).padding(PAD * 2.0);
+    let pad = PAD * 2.0;
+    let content = column(rows).padding(Padding {
+        top: 0.0,
+        right: pad,
+        bottom: pad,
+        left: pad,
+    });
 
     container(
         scrollable(content)

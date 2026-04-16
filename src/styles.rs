@@ -17,6 +17,14 @@ pub const RULE_HEIGHT: f32 = 2.0;
 pub const EDIT_PANEL_WIDTH: f32 = 240.0;
 pub const TOAST_WIDTH: f32 = 300.0;
 
+pub const INFO_ROW_FONT_SIZE: f32 = 12.0;
+pub const INFO_HEADER_LABEL_SIZE: f32 = 10.0;
+pub const INFO_HEADER_ARROW_SIZE: f32 = 20.0;
+pub const INFO_SECTION_SPACING: f32 = 6.0;
+pub const INFO_SECTION_GAP: f32 = 2.0;
+pub const INFO_HISTOGRAM_HEIGHT: f32 = 142.0;
+pub const INFO_CHANNEL_COL_WIDTH: f32 = 30.0;
+
 static ACTIVE_RADIUS: OnceLock<AtomicU32> = OnceLock::new();
 
 pub fn set_radius(rounded: bool) {
@@ -218,6 +226,14 @@ pub fn modifier_card_style(theme: &Theme) -> container::Style {
     let palette = theme.extended_palette();
     container::Style {
         background: Some(Background::Color(palette.background.base.color)),
+        border: iced::border::rounded(radius()),
+        ..Default::default()
+    }
+}
+
+pub fn color_swatch_style(color: Color) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(color)),
         border: iced::border::rounded(radius()),
         ..Default::default()
     }
