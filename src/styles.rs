@@ -12,7 +12,7 @@ pub const TOOLTIP_DELAY: Duration = Duration::from_millis(400);
 pub const BUTTON_SIZE: f32 = 20.0;
 pub const BAR_HEIGHT: f32 = 40.0;
 pub const RADIUS: f32 = 6.0;
-pub const INFO_COLUMN_WIDTH: f32 = 220.0;
+pub const INFO_PANEL_WIDTH: f32 = 220.0;
 pub const EDIT_PANEL_WIDTH: f32 = 240.0;
 pub const TOAST_WIDTH: f32 = 300.0;
 

@@ -14,7 +14,7 @@ use iced::{
 
 use crate::app::Message;
 use crate::gallery::Gallery;
-use crate::styles::{INFO_COLUMN_WIDTH, PAD, bar_style, info_section_header_style, radius};
+use crate::styles::{INFO_PANEL_WIDTH, PAD, bar_style, info_section_header_style, radius};
 use crate::ui::{format_duration, with_tooltip_delay};
 use crate::wgpu::view_program::ViewProgram;
 use crate::widgets::histogram::Histogram;
@@ -196,7 +196,7 @@ pub fn view<'a>(
         )
         .style(bar_style)
         .height(Length::Fill)
-        .width(Length::Fixed(INFO_COLUMN_WIDTH))
+        .width(Length::Fixed(INFO_PANEL_WIDTH))
         .align_x(Horizontal::Center)
         .align_y(Vertical::Center)
         .into();
@@ -311,7 +311,7 @@ pub fn view<'a>(
     let mut cursor_rows: Vec<Element<'a, Message>> = Vec::new();
     if let Some((px, py, rgba)) = program.cursor_info() {
         if let Some(pixels) = program.cursor_pixels(pixel_preview_size) {
-            let display_size = INFO_COLUMN_WIDTH - PAD * 4.0;
+            let display_size = INFO_PANEL_WIDTH - PAD * 4.0;
             let pixel_size = display_size / pixel_preview_size as f32;
             let handle = image::Handle::from_rgba(pixel_preview_size, pixel_preview_size, pixels);
             cursor_rows.push(
@@ -353,6 +353,6 @@ pub fn view<'a>(
     )
     .style(bar_style)
     .height(Length::Fill)
-    .width(Length::Fixed(INFO_COLUMN_WIDTH))
+    .width(Length::Fixed(INFO_PANEL_WIDTH))
     .into()
 }
