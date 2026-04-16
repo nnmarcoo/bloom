@@ -26,6 +26,7 @@ pub enum Action {
     ToolCrop,
     ToolDraw,
     ToolText,
+    TogglePlayback,
 }
 
 impl Action {
@@ -49,6 +50,7 @@ impl Action {
             Self::ToolCrop => "Crop tool".into(),
             Self::ToolDraw => "Draw tool".into(),
             Self::ToolText => "Text tool".into(),
+            Self::TogglePlayback => "Toggle playback".into(),
         }
     }
 
@@ -72,6 +74,7 @@ impl Action {
             Self::ToolCrop => "Switch to the crop tool",
             Self::ToolDraw => "Switch to the draw tool",
             Self::ToolText => "Switch to the text tool",
+            Self::TogglePlayback => "Pause or resume animation playback",
         }
     }
 
@@ -94,6 +97,7 @@ impl Action {
             Action::ToolCrop,
             Action::ToolDraw,
             Action::ToolText,
+            Action::TogglePlayback,
         ]
     }
 }
@@ -289,6 +293,7 @@ impl Default for Keymap {
         m.insert(Action::ToolCrop, n(key::Code::KeyC));
         m.insert(Action::ToolDraw, n(key::Code::KeyD));
         m.insert(Action::ToolText, n(key::Code::KeyT));
+        m.insert(Action::TogglePlayback, n(key::Code::Space));
         let digit_codes = [
             key::Code::Digit1,
             key::Code::Digit2,
@@ -361,6 +366,7 @@ pub(crate) struct KeymapFile {
     pub tool_crop: Option<String>,
     pub tool_draw: Option<String>,
     pub tool_text: Option<String>,
+    pub toggle_playback: Option<String>,
 }
 
 impl From<&Keymap> for KeymapFile {
@@ -400,6 +406,7 @@ impl From<&Keymap> for KeymapFile {
             tool_crop: bind(Action::ToolCrop),
             tool_draw: bind(Action::ToolDraw),
             tool_text: bind(Action::ToolText),
+            toggle_playback: bind(Action::TogglePlayback),
         }
     }
 }
@@ -441,6 +448,7 @@ impl From<KeymapFile> for Keymap {
             resolve(f.tool_crop, Action::ToolCrop),
             resolve(f.tool_draw, Action::ToolDraw),
             resolve(f.tool_text, Action::ToolText),
+            resolve(f.toggle_playback, Action::TogglePlayback),
         ]
         .into_iter()
         .flatten()

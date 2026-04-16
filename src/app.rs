@@ -501,6 +501,13 @@ impl App {
             Some(Action::ToolCrop) => Task::done(Message::SelectTool(Tool::Crop)),
             Some(Action::ToolDraw) => Task::done(Message::SelectTool(Tool::Draw)),
             Some(Action::ToolText) => Task::done(Message::SelectTool(Tool::Text)),
+            Some(Action::TogglePlayback) => {
+                if self.program.animation_info().is_some() {
+                    Task::done(Message::TogglePlayback)
+                } else {
+                    Task::none()
+                }
+            }
             None => Task::none(),
         }
     }
