@@ -153,7 +153,12 @@ impl ViewProgram {
     }
 
     fn clamp_offset(&mut self) {
-        self.offset = self.offset.clamp(-self.image_size, self.image_size);
+        let size = if self.rotation % 2 == 0 {
+            self.image_size
+        } else {
+            vec2(self.image_size.y, self.image_size.x)
+        };
+        self.offset = self.offset.clamp(-size, size);
     }
 
     fn build_transform(&self, viewport: Vec2) -> Mat4 {
