@@ -126,6 +126,7 @@ pub fn view<'a>(notifications: &'a [NotificationEntry]) -> Element<'a, Message> 
             bottom: PAD * 2.0,
             left: 0.0,
         })
+        .clip(true)
         .into()
 }
 

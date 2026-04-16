@@ -63,21 +63,23 @@ where
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        advanced::Renderer::with_translation(
-            renderer,
-            Vector::new(self.offset_x, 0.0),
-            |renderer| {
-                self.content.as_widget().draw(
-                    &tree.children[0],
-                    renderer,
-                    theme,
-                    style,
-                    layout,
-                    shift_cursor(cursor, self.offset_x),
-                    viewport,
-                );
-            },
-        );
+        advanced::Renderer::with_layer(renderer, *viewport, |renderer| {
+            advanced::Renderer::with_translation(
+                renderer,
+                Vector::new(self.offset_x, 0.0),
+                |renderer| {
+                    self.content.as_widget().draw(
+                        &tree.children[0],
+                        renderer,
+                        theme,
+                        style,
+                        layout,
+                        shift_cursor(cursor, self.offset_x),
+                        viewport,
+                    );
+                },
+            );
+        });
     }
 
     fn update(

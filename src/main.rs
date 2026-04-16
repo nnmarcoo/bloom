@@ -37,7 +37,7 @@ fn main() -> iced::Result {
     iced::application(move || App::new(media.clone()), App::update, App::view)
         .title(App::title)
         .window(window::Settings {
-            min_size: Some(Size::new(440.0, 220.0)),
+            min_size: Some(Size::new(460.0, 220.0)),
             decorations: config.decorations,
             level,
             icon: app_icon(),
