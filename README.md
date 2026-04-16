@@ -94,8 +94,6 @@
   </tbody>
 </table>
 
-Drag to pan · Scroll to zoom · Drop files to open
-
 ## Build
 
 ```sh
