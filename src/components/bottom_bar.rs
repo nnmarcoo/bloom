@@ -1,11 +1,11 @@
 use iced::alignment::Vertical;
 use iced::widget::tooltip::Position;
-use iced::widget::{Space, column, container, row};
+use iced::widget::{Column, Space, column, container, row};
 use iced::window::Mode;
 use iced::{Element, Length};
 
 use crate::app::Message;
-use crate::styles::{BAR_HEIGHT, PAD, bar_style};
+use crate::styles::{BAR_HEIGHT, PAD, bar_style, panel_divider_style};
 use crate::ui::{svg_button, svg_button_active, svg_button_maybe, with_tooltip};
 use crate::widgets::menu::{menu_item, menu_separator, styled_menu};
 use crate::widgets::menu_button::{MenuAlign, MenuButton};
@@ -167,7 +167,11 @@ pub fn view<'a>(
     .spacing(2)
     .align_y(Vertical::Center);
 
-    container(
+    let divider = container(Space::new().height(Length::Fixed(2.0)))
+        .width(Length::Fill)
+        .style(panel_divider_style);
+
+    let bar_content = container(
         row![
             left_buttons,
             Space::new().width(Length::Fill),
@@ -178,7 +182,9 @@ pub fn view<'a>(
         .align_y(Vertical::Center)
         .spacing(PAD),
     )
-    .padding([0.0, PAD])
-    .style(bar_style)
-    .into()
+    .padding([0.0, PAD]);
+
+    container(Column::new().push(divider).push(bar_content))
+        .style(bar_style)
+        .into()
 }

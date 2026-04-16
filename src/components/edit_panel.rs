@@ -65,7 +65,8 @@ pub fn view<'a>(selected_tool: &Tool) -> Element<'a, Message> {
     .width(Length::Shrink)
     .height(Length::Fill);
 
-    let divider = container(Space::new().width(Length::Fixed(1.0)))
+    let divider = container(Space::new())
+        .width(Length::Fixed(2.0))
         .height(Length::Fill)
         .style(panel_divider_style);
 
