@@ -111,7 +111,7 @@ fn modifier_entry<'a>(name: &'a str) -> Element<'a, Message> {
 
 fn add_effect_row<'a>() -> Element<'a, Message> {
     button(
-        text("+ Add Effect")
+        text("+ Modify")
             .size(11)
             .align_x(Horizontal::Center)
             .width(Length::Fill),

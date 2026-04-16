@@ -39,8 +39,7 @@ impl Notification {
 
     fn timeout(&self) -> Option<Duration> {
         match self.kind {
-            NotificationKind::Warning => Some(Duration::from_secs(8)),
-            NotificationKind::Error => None,
+            NotificationKind::Warning | NotificationKind::Error => Some(Duration::from_secs(8)),
         }
     }
 }
