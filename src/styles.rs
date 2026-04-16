@@ -13,6 +13,7 @@ pub const BUTTON_SIZE: f32 = 20.0;
 pub const BAR_HEIGHT: f32 = 40.0;
 pub const RADIUS: f32 = 6.0;
 pub const INFO_PANEL_WIDTH: f32 = 220.0;
+pub const RULE_HEIGHT: f32 = 2.0;
 pub const EDIT_PANEL_WIDTH: f32 = 240.0;
 pub const TOAST_WIDTH: f32 = 300.0;
 
@@ -166,27 +167,10 @@ pub fn capturing_chip_style(theme: &Theme, _status: button::Status) -> button::S
     }
 }
 
-pub fn info_section_header_style(theme: &Theme, status: button::Status) -> button::Style {
-    let palette = theme.extended_palette();
-    let (background, border_color) = match status {
-        button::Status::Hovered => (
-            palette.background.strong.color,
-            palette.background.base.text.scale_alpha(0.2),
-        ),
-        button::Status::Pressed => (
-            palette.background.weak.color,
-            palette.background.base.text.scale_alpha(0.3),
-        ),
-        _ => (palette.background.base.color, Color::TRANSPARENT),
-    };
+pub fn info_section_header_style(_theme: &Theme, _status: button::Status) -> button::Style {
     button::Style {
-        background: Some(Background::Color(background)),
-        border: iced::Border {
-            color: border_color,
-            width: 1.0,
-            radius: radius().into(),
-        },
-        text_color: palette.background.base.text,
+        background: None,
+        border: iced::Border::default(),
         ..Default::default()
     }
 }

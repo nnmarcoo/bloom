@@ -14,7 +14,10 @@ use iced::{
 
 use crate::app::Message;
 use crate::gallery::Gallery;
-use crate::styles::{INFO_PANEL_WIDTH, PAD, bar_style, info_section_header_style, radius};
+use crate::styles::{
+    INFO_PANEL_WIDTH, PAD, RULE_HEIGHT, bar_style, info_section_header_style, panel_divider_style,
+    radius,
+};
 use crate::ui::{format_duration, with_tooltip_delay};
 use crate::wgpu::view_program::ViewProgram;
 use crate::widgets::histogram::Histogram;
@@ -62,17 +65,32 @@ impl canvas::Program<Message> for Crosshair {
     }
 }
 
-fn section_header(label: &'static str, header_color: Color) -> Element<'static, Message> {
-    let content = container(
-        text(label)
-            .size(11)
+fn section_header(
+    label: &'static str,
+    header_color: Color,
+    collapsed: bool,
+) -> Element<'static, Message> {
+    let arrow = if collapsed { "▸" } else { "▾" };
+    let rule = container(Space::new())
+        .width(Length::Fill)
+        .height(Length::Fixed(RULE_HEIGHT))
+        .style(panel_divider_style);
+
+    let content = row![
+        text(arrow)
+            .size(14)
             .color(header_color)
             .font(Font::MONOSPACE),
-    )
-    .padding([2, 5])
-    .width(Length::Fill)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center);
+        Space::new().width(4),
+        text(label)
+            .size(10)
+            .color(header_color)
+            .font(Font::MONOSPACE),
+        Space::new().width(6),
+        rule,
+    ]
+    .align_y(Vertical::Center)
+    .padding([4, 0]);
 
     button(content)
         .on_press(Message::ToggleInfoSection(label))
@@ -202,7 +220,7 @@ pub fn view<'a>(
         .into();
     }
 
-    let header_color = palette.background.base.text.scale_alpha(0.75);
+    let header_color = palette.background.base.text;
 
     let mut first_section = true;
     let mut push_section = |rows: &mut Vec<Element<'a, Message>>,
@@ -210,11 +228,11 @@ pub fn view<'a>(
                             section: Vec<Element<'a, Message>>| {
         if !section.is_empty() {
             if !first_section {
-                rows.push(Space::new().height(PAD * 2.0).into());
+                rows.push(Space::new().height(PAD).into());
             }
             first_section = false;
             let collapsed = info_collapsed.contains(label);
-            let mut block = vec![section_header(label, header_color)];
+            let mut block = vec![section_header(label, header_color, collapsed)];
             if !collapsed {
                 block.extend(section);
             }
