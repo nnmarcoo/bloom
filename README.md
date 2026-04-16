@@ -20,11 +20,13 @@
 - **Gallery** — browse every image in a folder seamlessly
 - **Tiled texture system** — handles images larger than GPU texture limits
 - **Pan and zoom** — flexible zoom from 0.01× to 35×, with custom % input
-- **Clipboard import** — load an image directly from clipboard or file path (`Ctrl+V`)
+- **Clipboard import** — load an image directly from clipboard or file path
+- **Drag and drop** — drop any supported file onto the window to open it
 - **Info panel** — file metadata, dimensions, EXIF, pixel color under cursor, RGB histogram, and animation timing
 - **Image rotation** — rotate 90° clockwise or counter-clockwise
 - **Checkerboard toggle** — visualize transparency
 - **Context menu** — right-click to copy pixel color or file path
+- **Themes** — 22 built-in themes including Catppuccin, Tokyo Night, Nord, Dracula, Gruvbox, and Kanagawa
 - **Customizable keybindings** — rebind any action via the preferences panel
 
 ## Supported Formats
@@ -92,7 +94,7 @@
   </tbody>
 </table>
 
-Drag to pan. Scroll wheel to zoom.
+Drag to pan · Scroll to zoom · Drop files to open
 
 ## Build
 
