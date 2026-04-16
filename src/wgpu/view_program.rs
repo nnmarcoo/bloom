@@ -345,9 +345,11 @@ impl ViewProgram {
                     3 => (cx + half - row, cy - half + col),
                     _ => unreachable!(),
                 };
-                let x = x.clamp(0, w - 1) as usize;
-                let y = y.clamp(0, h - 1) as usize;
-                let idx = (y * w as usize + x) * 4;
+                if x < 0 || y < 0 || x >= w || y >= h {
+                    pixels.extend_from_slice(&[0, 0, 0, 0]);
+                    continue;
+                }
+                let idx = (y as usize * w as usize + x as usize) * 4;
                 pixels.extend_from_slice(&image.pixels[idx..idx + 4]);
             }
         }
