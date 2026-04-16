@@ -12,6 +12,9 @@ pub const TOOLTIP_DELAY: Duration = Duration::from_millis(400);
 pub const BUTTON_SIZE: f32 = 20.0;
 pub const BAR_HEIGHT: f32 = 40.0;
 pub const RADIUS: f32 = 6.0;
+pub const INFO_COLUMN_WIDTH: f32 = 220.0;
+pub const EDIT_PANEL_WIDTH: f32 = 240.0;
+pub const TOAST_WIDTH: f32 = 300.0;
 
 static ACTIVE_RADIUS: OnceLock<AtomicU32> = OnceLock::new();
 
@@ -224,6 +227,25 @@ pub fn toast_container_style(theme: &Theme, accent: Color, alpha: f32) -> contai
             blur_radius: 6.0,
         },
         snap: false,
+    }
+}
+
+pub fn modifier_card_style(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(palette.background.base.color)),
+        border: iced::border::rounded(radius()),
+        ..Default::default()
+    }
+}
+
+pub fn panel_divider_style(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(
+            palette.background.base.text.scale_alpha(0.06),
+        )),
+        ..Default::default()
     }
 }
 

@@ -10,7 +10,7 @@ use iced_aw::ContextMenu;
 use crate::{
     app::Message,
     components::notifications::NotificationEntry,
-    components::{edit_column, info_column, notifications},
+    components::{edit_panel, info_column, notifications},
     gallery::Gallery,
     styles::{PAD, spinner_bg_style},
     wgpu::view_program::ViewProgram,
@@ -88,7 +88,7 @@ pub fn view<'a>(
                 pixel_preview_size
             ),
             viewer_with_menu,
-            edit_column::view(),
+            edit_panel::view(),
         ]
         .height(Length::Fill)
         .into(),
@@ -105,7 +105,7 @@ pub fn view<'a>(
         ]
         .height(Length::Fill)
         .into(),
-        (false, true) => row![viewer_with_menu, edit_column::view()]
+        (false, true) => row![viewer_with_menu, edit_panel::view()]
             .height(Length::Fill)
             .into(),
         (false, false) => viewer_with_menu,

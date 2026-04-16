@@ -106,12 +106,12 @@ pub fn view<'a>(
         with_tooltip(
             if show_edit {
                 svg_button_active(
-                    include_bytes!("../../assets/icons/edit.svg"),
+                    include_bytes!("../../assets/icons/pencil.svg"),
                     Message::ToggleEditPanel,
                 )
             } else {
                 svg_button(
-                    include_bytes!("../../assets/icons/edit.svg"),
+                    include_bytes!("../../assets/icons/pencil.svg"),
                     Message::ToggleEditPanel,
                 )
             },

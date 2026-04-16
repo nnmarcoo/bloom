@@ -14,12 +14,10 @@ use iced::{
 
 use crate::app::Message;
 use crate::gallery::Gallery;
-use crate::styles::{PAD, bar_style, info_section_header_style, radius};
+use crate::styles::{INFO_COLUMN_WIDTH, PAD, bar_style, info_section_header_style, radius};
 use crate::ui::{format_duration, with_tooltip_delay};
 use crate::wgpu::view_program::ViewProgram;
 use crate::widgets::histogram::Histogram;
-
-const INFO_COLUMN_WIDTH: f32 = 220.0;
 
 struct Crosshair {
     pixel_size: f32,

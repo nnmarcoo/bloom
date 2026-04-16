@@ -20,7 +20,7 @@ use crate::{
         notifications::{Notification, NotificationEntry},
         preferences,
         preferences::{PreferenceMessage, PreferenceOutcome},
-        timeline_bar, tool_bar, viewer,
+        timeline_bar, viewer,
     },
     config::{Config, UI_SCALE_DEFAULT, UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP},
     gallery::Gallery,
@@ -494,9 +494,6 @@ impl App {
             return preferences::view(pending, &self.config.theme, &self.preference_state);
         }
         let mut col = column![];
-        if self.config.show_edit {
-            col = col.push(tool_bar::view());
-        }
         col = col.push(viewer::view(
             self.program.clone(),
             self.loading.as_deref(),

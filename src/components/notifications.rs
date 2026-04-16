@@ -5,11 +5,10 @@ use iced::widget::{button, column, container, row, svg, text};
 use iced::{Alignment, Color, Element, Length, Padding};
 
 use crate::app::Message;
-use crate::styles::{BUTTON_SIZE, PAD, toast_container_style, toast_dismiss_style};
+use crate::styles::{BUTTON_SIZE, PAD, TOAST_WIDTH, toast_container_style, toast_dismiss_style};
 use crate::widgets::slide_in::SlideIn;
 
 const ANIM_SECS: f32 = 0.25;
-const TOAST_WIDTH: f32 = 300.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotificationKind {
