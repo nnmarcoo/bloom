@@ -497,6 +497,10 @@ impl App {
             Some(Action::UiScaleReset) => Task::done(Message::UiScaleReset),
             Some(Action::RotateCw) => Task::done(Message::RotateCw),
             Some(Action::RotateCcw) => Task::done(Message::RotateCcw),
+            Some(Action::ToolSelect) => Task::done(Message::SelectTool(Tool::Select)),
+            Some(Action::ToolCrop) => Task::done(Message::SelectTool(Tool::Crop)),
+            Some(Action::ToolDraw) => Task::done(Message::SelectTool(Tool::Draw)),
+            Some(Action::ToolText) => Task::done(Message::SelectTool(Tool::Text)),
             None => Task::none(),
         }
     }

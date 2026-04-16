@@ -22,6 +22,10 @@ pub enum Action {
     UiScaleReset,
     RotateCw,
     RotateCcw,
+    ToolSelect,
+    ToolCrop,
+    ToolDraw,
+    ToolText,
 }
 
 impl Action {
@@ -41,6 +45,10 @@ impl Action {
             Self::UiScaleReset => "UI scale reset".into(),
             Self::RotateCw => "Rotate clockwise".into(),
             Self::RotateCcw => "Rotate counter-clockwise".into(),
+            Self::ToolSelect => "Select tool".into(),
+            Self::ToolCrop => "Crop tool".into(),
+            Self::ToolDraw => "Draw tool".into(),
+            Self::ToolText => "Text tool".into(),
         }
     }
 
@@ -60,6 +68,10 @@ impl Action {
             Self::UiScaleReset => "Reset the application UI scale to 100%",
             Self::RotateCw => "Rotate the image 90° clockwise",
             Self::RotateCcw => "Rotate the image 90° counter-clockwise",
+            Self::ToolSelect => "Switch to the select tool",
+            Self::ToolCrop => "Switch to the crop tool",
+            Self::ToolDraw => "Switch to the draw tool",
+            Self::ToolText => "Switch to the text tool",
         }
     }
 
@@ -78,6 +90,10 @@ impl Action {
             Action::UiScaleUp,
             Action::UiScaleDown,
             Action::UiScaleReset,
+            Action::ToolSelect,
+            Action::ToolCrop,
+            Action::ToolDraw,
+            Action::ToolText,
         ]
     }
 }
@@ -269,6 +285,10 @@ impl Default for Keymap {
         m.insert(Action::UiScaleReset, n(key::Code::Digit0));
         m.insert(Action::RotateCw, n(key::Code::BracketRight));
         m.insert(Action::RotateCcw, n(key::Code::BracketLeft));
+        m.insert(Action::ToolSelect, n(key::Code::KeyS));
+        m.insert(Action::ToolCrop, n(key::Code::KeyC));
+        m.insert(Action::ToolDraw, n(key::Code::KeyD));
+        m.insert(Action::ToolText, n(key::Code::KeyT));
         let digit_codes = [
             key::Code::Digit1,
             key::Code::Digit2,
@@ -337,6 +357,10 @@ pub(crate) struct KeymapFile {
     pub ui_scale_reset: Option<String>,
     pub rotate_cw: Option<String>,
     pub rotate_ccw: Option<String>,
+    pub tool_select: Option<String>,
+    pub tool_crop: Option<String>,
+    pub tool_draw: Option<String>,
+    pub tool_text: Option<String>,
 }
 
 impl From<&Keymap> for KeymapFile {
@@ -372,6 +396,10 @@ impl From<&Keymap> for KeymapFile {
             ui_scale_reset: bind(Action::UiScaleReset),
             rotate_cw: bind(Action::RotateCw),
             rotate_ccw: bind(Action::RotateCcw),
+            tool_select: bind(Action::ToolSelect),
+            tool_crop: bind(Action::ToolCrop),
+            tool_draw: bind(Action::ToolDraw),
+            tool_text: bind(Action::ToolText),
         }
     }
 }
@@ -409,6 +437,10 @@ impl From<KeymapFile> for Keymap {
             resolve(f.ui_scale_reset, Action::UiScaleReset),
             resolve(f.rotate_cw, Action::RotateCw),
             resolve(f.rotate_ccw, Action::RotateCcw),
+            resolve(f.tool_select, Action::ToolSelect),
+            resolve(f.tool_crop, Action::ToolCrop),
+            resolve(f.tool_draw, Action::ToolDraw),
+            resolve(f.tool_text, Action::ToolText),
         ]
         .into_iter()
         .flatten()
