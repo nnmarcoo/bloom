@@ -46,6 +46,15 @@ pub struct App {
     paused: bool,
     scrubbing: bool,
     notifications: Vec<NotificationEntry>,
+    pub selected_tool: Tool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Tool {
+    Select,
+    Crop,
+    Draw,
+    Text,
 }
 
 impl Default for App {
@@ -78,6 +87,7 @@ impl App {
             paused: false,
             scrubbing: false,
             notifications: Vec::new(),
+            selected_tool: Tool::Select,
         }
     }
 }
@@ -115,6 +125,7 @@ pub enum Message {
     RotateCcw,
     Exit,
     ToggleEditPanel,
+    SelectTool(Tool),
     ToggleCheckerboard,
     TogglePlayback,
     FrameFirst,
@@ -397,6 +408,7 @@ impl App {
                 }
                 self.notifications.retain(|entry| !entry.is_gone(now));
             }
+            Message::SelectTool(tool) => self.selected_tool = tool,
             Message::Noop => {}
             Message::Event(event) => return self.handle_event(event),
         }
@@ -505,6 +517,7 @@ impl App {
             &self.config.info_collapsed,
             &self.notifications,
             self.config.pixel_preview_size,
+            &self.selected_tool,
         ));
 
         if let Some((frame, total)) = self.program.animation_info() {

@@ -8,7 +8,7 @@ use iced::{
 use iced_aw::ContextMenu;
 
 use crate::{
-    app::Message,
+    app::{Message, Tool},
     components::notifications::NotificationEntry,
     components::{edit_panel, info_column, notifications},
     gallery::Gallery,
@@ -31,6 +31,7 @@ pub fn view<'a>(
     info_collapsed: &'a HashSet<String>,
     notifs: &'a [NotificationEntry],
     pixel_preview_size: u32,
+    selected_tool: &'a Tool,
 ) -> Element<'a, Message> {
     let base = shader(program.clone())
         .height(Length::Fill)
@@ -88,7 +89,7 @@ pub fn view<'a>(
                 pixel_preview_size
             ),
             viewer_with_menu,
-            edit_panel::view(),
+            edit_panel::view(selected_tool),
         ]
         .height(Length::Fill)
         .into(),
@@ -105,7 +106,7 @@ pub fn view<'a>(
         ]
         .height(Length::Fill)
         .into(),
-        (false, true) => row![viewer_with_menu, edit_panel::view()]
+        (false, true) => row![viewer_with_menu, edit_panel::view(selected_tool)]
             .height(Length::Fill)
             .into(),
         (false, false) => viewer_with_menu,

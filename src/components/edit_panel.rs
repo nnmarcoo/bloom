@@ -3,39 +3,58 @@ use iced::widget::tooltip::Position;
 use iced::widget::{Space, button, column, container, row, text};
 use iced::{Element, Length};
 
-use crate::app::Message;
+use crate::app::{Message, Tool};
 use crate::styles::{
     EDIT_PANEL_WIDTH, PAD, bar_style, modifier_card_style, panel_divider_style,
     plain_icon_button_style,
 };
-use crate::ui::{svg_button_plain, with_tooltip};
+use crate::ui::{svg_button_active, svg_button_plain, with_tooltip};
 
-pub fn view<'a>() -> Element<'a, Message> {
+fn tool_button<'a>(icon: &'static [u8], tool: Tool, selected_tool: &Tool) -> Element<'a, Message> {
+    let msg = Message::SelectTool(tool.clone());
+    if &tool == selected_tool {
+        svg_button_active(icon, msg)
+    } else {
+        svg_button_plain(icon, msg)
+    }
+}
+
+pub fn view<'a>(selected_tool: &Tool) -> Element<'a, Message> {
     let tool_strip = container(
         column![
             with_tooltip(
-                svg_button_plain(
+                tool_button(
                     include_bytes!("../../assets/icons/cursor.svg"),
-                    Message::Noop
+                    Tool::Select,
+                    selected_tool,
                 ),
                 "Select",
                 Position::Left,
             ),
             with_tooltip(
-                svg_button_plain(include_bytes!("../../assets/icons/crop.svg"), Message::Noop),
+                tool_button(
+                    include_bytes!("../../assets/icons/crop.svg"),
+                    Tool::Crop,
+                    selected_tool,
+                ),
                 "Crop",
                 Position::Left,
             ),
             with_tooltip(
-                svg_button_plain(
+                tool_button(
                     include_bytes!("../../assets/icons/pencil.svg"),
-                    Message::Noop
+                    Tool::Draw,
+                    selected_tool,
                 ),
                 "Draw",
                 Position::Left,
             ),
             with_tooltip(
-                svg_button_plain(include_bytes!("../../assets/icons/text.svg"), Message::Noop),
+                tool_button(
+                    include_bytes!("../../assets/icons/text.svg"),
+                    Tool::Text,
+                    selected_tool,
+                ),
                 "Text",
                 Position::Left,
             ),
