@@ -12,6 +12,7 @@ use crate::{
     components::notifications::NotificationEntry,
     components::{edit_panel, info_panel, notifications},
     gallery::Gallery,
+    modifiers::Modifier,
     styles::{PAD, spinner_bg_style},
     wgpu::view_program::ViewProgram,
     widgets::{
@@ -32,6 +33,9 @@ pub fn view<'a>(
     notifs: &'a [NotificationEntry],
     pixel_preview_size: u32,
     selected_tool: &'a Tool,
+    modifiers: &'a [Modifier],
+    dragging_modifier: Option<usize>,
+    drag_hover_target: Option<usize>,
 ) -> Element<'a, Message> {
     let base = shader(program.clone())
         .height(Length::Fill)
@@ -89,7 +93,12 @@ pub fn view<'a>(
                 pixel_preview_size
             ),
             viewer_with_menu,
-            edit_panel::view(selected_tool),
+            edit_panel::view(
+                selected_tool,
+                modifiers,
+                dragging_modifier,
+                drag_hover_target
+            ),
         ]
         .height(Length::Fill)
         .into(),
@@ -106,9 +115,17 @@ pub fn view<'a>(
         ]
         .height(Length::Fill)
         .into(),
-        (false, true) => row![viewer_with_menu, edit_panel::view(selected_tool)]
-            .height(Length::Fill)
-            .into(),
+        (false, true) => row![
+            viewer_with_menu,
+            edit_panel::view(
+                selected_tool,
+                modifiers,
+                dragging_modifier,
+                drag_hover_target
+            )
+        ]
+        .height(Length::Fill)
+        .into(),
         (false, false) => viewer_with_menu,
     }
 }

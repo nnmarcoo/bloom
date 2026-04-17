@@ -6,16 +6,17 @@ use iced::alignment::{Horizontal, Vertical};
 use iced::widget::canvas::{self, Canvas, Frame, Stroke};
 use iced::widget::image::{self, FilterMethod};
 use iced::widget::scrollable::{Direction, Scrollbar};
+use iced::widget::svg::Handle;
 use iced::widget::tooltip::Position;
-use iced::widget::{Space, button, column, container, row, scrollable, stack, text};
+use iced::widget::{Space, button, column, container, row, scrollable, stack, svg, text};
 use iced::{Color, Element, Font, Length, Padding, Point, Rectangle, Renderer, Theme, mouse};
 
 use crate::app::Message;
 use crate::gallery::Gallery;
 use crate::styles::{
-    INFO_CHANNEL_COL_WIDTH, INFO_HEADER_ARROW_SIZE, INFO_HEADER_LABEL_SIZE, INFO_HISTOGRAM_HEIGHT,
-    INFO_PANEL_WIDTH, INFO_ROW_FONT_SIZE, INFO_SECTION_GAP, INFO_SECTION_SPACING, PAD, RULE_HEIGHT,
-    bar_style, color_swatch_style, info_section_header_style, panel_divider_style,
+    INFO_CHANNEL_COL_WIDTH, INFO_HEADER_LABEL_SIZE, INFO_HISTOGRAM_HEIGHT, INFO_PANEL_WIDTH,
+    INFO_ROW_FONT_SIZE, INFO_SECTION_GAP, INFO_SECTION_SPACING, PAD, RULE_HEIGHT, bar_style,
+    color_swatch_style, info_section_header_style, panel_divider_style, svg_color_style,
 };
 use crate::ui::{format_duration, with_tooltip_delay};
 use crate::wgpu::view_program::ViewProgram;
@@ -71,17 +72,21 @@ fn section_header(
     header_color: Color,
     collapsed: bool,
 ) -> Element<'static, Message> {
-    let arrow = if collapsed { "▸" } else { "▾" };
+    let arrow_bytes: &'static [u8] = if collapsed {
+        include_bytes!("../../assets/icons/right.svg")
+    } else {
+        include_bytes!("../../assets/icons/down.svg")
+    };
     let rule = container(Space::new())
         .width(Length::Fill)
         .height(Length::Fixed(RULE_HEIGHT))
         .style(panel_divider_style);
 
     let content = row![
-        text(arrow)
-            .size(INFO_HEADER_ARROW_SIZE)
-            .color(header_color)
-            .font(Font::MONOSPACE),
+        svg(Handle::from_memory(arrow_bytes))
+            .style(svg_color_style(header_color))
+            .width(Length::Fixed(20.0))
+            .height(Length::Fixed(20.0)),
         Space::new().width(PAD - 1.0),
         text(label)
             .size(INFO_HEADER_LABEL_SIZE)

@@ -19,7 +19,6 @@ pub const TOAST_WIDTH: f32 = 300.0;
 
 pub const INFO_ROW_FONT_SIZE: f32 = 12.0;
 pub const INFO_HEADER_LABEL_SIZE: f32 = 10.0;
-pub const INFO_HEADER_ARROW_SIZE: f32 = 20.0;
 pub const INFO_SECTION_SPACING: f32 = 6.0;
 pub const INFO_SECTION_GAP: f32 = 2.0;
 pub const INFO_HISTOGRAM_HEIGHT: f32 = 142.0;
@@ -61,6 +60,10 @@ pub fn svg_style(theme: &Theme, status: svg::Status) -> svg::Style {
     };
 
     svg::Style { color: Some(color) }
+}
+
+pub fn svg_color_style(color: Color) -> impl Fn(&Theme, svg::Status) -> svg::Style {
+    move |_, _| svg::Style { color: Some(color) }
 }
 
 pub fn spinner_bg_style(theme: &Theme) -> container::Style {
@@ -227,6 +230,14 @@ pub fn modifier_card_style(theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(palette.background.base.color)),
         border: iced::border::rounded(radius()),
+        ..Default::default()
+    }
+}
+
+pub fn modifier_drop_indicator_style(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(palette.primary.base.color)),
         ..Default::default()
     }
 }

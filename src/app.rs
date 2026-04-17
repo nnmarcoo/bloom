@@ -25,6 +25,7 @@ use crate::{
     config::{Config, UI_SCALE_DEFAULT, UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP},
     gallery::Gallery,
     keybinds::{Action, KeyBinding},
+    modifiers::{Modifier, ModifierKind, ModifierParam, ModifierType},
     styles, tasks,
     wgpu::{
         media::image_data::MediaData, passes::checkerboard::CheckerboardUniforms,
@@ -47,6 +48,9 @@ pub struct App {
     scrubbing: bool,
     notifications: Vec<NotificationEntry>,
     pub selected_tool: Tool,
+    pub modifiers: Vec<Modifier>,
+    pub dragging_modifier: Option<usize>,
+    pub drag_hover_target: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +92,9 @@ impl App {
             scrubbing: false,
             notifications: Vec::new(),
             selected_tool: Tool::Select,
+            modifiers: Vec::new(),
+            dragging_modifier: None,
+            drag_hover_target: None,
         }
     }
 }
@@ -141,6 +148,14 @@ pub enum Message {
     Notify(Notification),
     DismissNotification(usize),
     NotificationTick(Instant),
+    AddModifier(ModifierType),
+    RemoveModifier(usize),
+    ToggleModifierExpanded(usize),
+    ToggleModifierEnabled(usize),
+    UpdateModifier(usize, ModifierParam),
+    StartModifierDrag(usize),
+    ModifierDragHover(usize),
+    ModifierDragEnd,
     Noop,
 }
 
@@ -409,6 +424,63 @@ impl App {
                 self.notifications.retain(|entry| !entry.is_gone(now));
             }
             Message::SelectTool(tool) => self.selected_tool = tool,
+            Message::StartModifierDrag(i) => {
+                self.dragging_modifier = Some(i);
+                self.drag_hover_target = Some(i);
+            }
+            Message::ModifierDragHover(i) => {
+                if self.dragging_modifier.is_some() {
+                    self.drag_hover_target = Some(i);
+                }
+            }
+            Message::ModifierDragEnd => {
+                let source = self.dragging_modifier.take();
+                let target = self.drag_hover_target.take();
+                if let (Some(src), Some(tgt)) = (source, target) {
+                    if src != tgt {
+                        let m = self.modifiers.remove(src);
+                        let insert_at = if tgt > src { tgt - 1 } else { tgt };
+                        self.modifiers.insert(insert_at, m);
+                    }
+                }
+            }
+            Message::AddModifier(t) => {
+                self.modifiers.push(Modifier::new(ModifierKind::from(t)));
+            }
+            Message::RemoveModifier(i) => {
+                if i < self.modifiers.len() {
+                    self.modifiers.remove(i);
+                }
+            }
+            Message::ToggleModifierExpanded(i) => {
+                if let Some(m) = self.modifiers.get_mut(i) {
+                    m.expanded = !m.expanded;
+                }
+            }
+            Message::ToggleModifierEnabled(i) => {
+                if let Some(m) = self.modifiers.get_mut(i) {
+                    m.enabled = !m.enabled;
+                }
+            }
+            Message::UpdateModifier(i, param) => {
+                if let Some(m) = self.modifiers.get_mut(i) {
+                    match (&mut m.kind, param) {
+                        (ModifierKind::Mosaic { size }, ModifierParam::MosaicSize(v)) => *size = v,
+                        (ModifierKind::Levels { shadows, .. }, ModifierParam::LevelsShadows(v)) => {
+                            *shadows = v
+                        }
+                        (
+                            ModifierKind::Levels { midtones, .. },
+                            ModifierParam::LevelsMidtones(v),
+                        ) => *midtones = v,
+                        (
+                            ModifierKind::Levels { highlights, .. },
+                            ModifierParam::LevelsHighlights(v),
+                        ) => *highlights = v,
+                        _ => {}
+                    }
+                }
+            }
             Message::Noop => {}
             Message::Event(event) => return self.handle_event(event),
         }
@@ -427,6 +499,11 @@ impl App {
 
     fn handle_event(&mut self, event: Event) -> Task<Message> {
         match event {
+            Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left))
+                if self.dragging_modifier.is_some() =>
+            {
+                Task::done(Message::ModifierDragEnd)
+            }
             Event::Window(window::Event::FileDropped(path)) => {
                 Task::done(Message::MediaSelected(path))
             }
@@ -529,6 +606,9 @@ impl App {
             &self.notifications,
             self.config.pixel_preview_size,
             &self.selected_tool,
+            &self.modifiers,
+            self.dragging_modifier,
+            self.drag_hover_target,
         ));
 
         if let Some((frame, total)) = self.program.animation_info() {

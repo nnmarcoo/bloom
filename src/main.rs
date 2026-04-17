@@ -6,6 +6,7 @@ mod components;
 mod config;
 mod gallery;
 mod keybinds;
+mod modifiers;
 mod styles;
 mod tasks;
 mod ui;

@@ -1,13 +1,11 @@
-use iced::alignment::{Horizontal, Vertical};
 use iced::widget::tooltip::Position;
-use iced::widget::{Space, button, column, container, row, text};
+use iced::widget::{Space, container, row};
 use iced::{Element, Length};
 
 use crate::app::{Message, Tool};
-use crate::styles::{
-    EDIT_PANEL_WIDTH, PAD, bar_style, modifier_card_style, panel_divider_style,
-    plain_icon_button_style,
-};
+use crate::components::modifier_stack;
+use crate::modifiers::Modifier;
+use crate::styles::{EDIT_PANEL_WIDTH, PAD, bar_style, panel_divider_style};
 use crate::ui::{svg_button_active, svg_button_plain, with_tooltip};
 
 fn tool_button<'a>(icon: &'static [u8], tool: Tool, selected_tool: &Tool) -> Element<'a, Message> {
@@ -19,7 +17,14 @@ fn tool_button<'a>(icon: &'static [u8], tool: Tool, selected_tool: &Tool) -> Ele
     }
 }
 
-pub fn view<'a>(selected_tool: &Tool) -> Element<'a, Message> {
+pub fn view<'a>(
+    selected_tool: &Tool,
+    modifiers: &'a [Modifier],
+    dragging_modifier: Option<usize>,
+    drag_hover_target: Option<usize>,
+) -> Element<'a, Message> {
+    use iced::widget::column;
+
     let tool_strip = container(
         column![
             with_tooltip(
@@ -70,56 +75,17 @@ pub fn view<'a>(selected_tool: &Tool) -> Element<'a, Message> {
         .height(Length::Fill)
         .style(panel_divider_style);
 
-    let modifier_stack = container(
-        column![
-            modifier_entry("Levels"),
-            modifier_entry("Mosaic"),
-            Space::new().height(Length::Fill),
-            add_effect_row(),
-        ]
-        .spacing(2)
-        .padding(PAD),
-    )
+    let stack = container(modifier_stack::view(
+        modifiers,
+        dragging_modifier,
+        drag_hover_target,
+    ))
     .width(Length::Fill)
     .height(Length::Fill);
 
-    container(row![tool_strip, divider, modifier_stack].height(Length::Fill))
+    container(row![tool_strip, divider, stack].height(Length::Fill))
         .style(bar_style)
         .height(Length::Fill)
         .width(Length::Fixed(EDIT_PANEL_WIDTH))
         .into()
-}
-
-fn modifier_entry<'a>(name: &'a str) -> Element<'a, Message> {
-    container(
-        row![
-            text("▶").size(10),
-            text(name).size(11),
-            Space::new().width(Length::Fill),
-            svg_button_plain(
-                include_bytes!("../../assets/icons/close.svg"),
-                Message::Noop,
-            ),
-        ]
-        .align_y(Vertical::Center)
-        .spacing(PAD),
-    )
-    .style(modifier_card_style)
-    .padding([2.0, PAD])
-    .width(Length::Fill)
-    .into()
-}
-
-fn add_effect_row<'a>() -> Element<'a, Message> {
-    button(
-        text("+ Modify")
-            .size(11)
-            .align_x(Horizontal::Center)
-            .width(Length::Fill),
-    )
-    .width(Length::Fill)
-    .padding(PAD)
-    .style(plain_icon_button_style)
-    .on_press(Message::Noop)
-    .into()
 }
