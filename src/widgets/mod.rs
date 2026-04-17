@@ -2,6 +2,7 @@ pub mod histogram;
 pub mod loading_spinner;
 pub mod menu;
 pub mod menu_button;
+pub mod modifier_picker;
 pub mod scale_entry;
 pub mod slide_in;
 pub mod theme_picker;

@@ -3,15 +3,16 @@ use iced::widget::rule;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::svg::Handle;
 use iced::widget::{
-    Space, button, column, container, mouse_area, pick_list, row, scrollable, slider, svg, text,
+    Space, button, column, container, mouse_area, row, scrollable, slider, svg, text,
 };
 use iced::{Element, Length, Padding, mouse, padding};
 
 use crate::app::Message;
-use crate::modifiers::{MODIFIER_TYPES, Modifier, ModifierKind, ModifierParam, ModifierType};
+use crate::modifiers::{Modifier, ModifierKind, ModifierParam};
 use crate::styles::{
     PAD, modifier_card_style, modifier_drop_indicator_style, plain_icon_button_style, svg_style,
 };
+use crate::widgets::modifier_picker::ModifierPicker;
 
 pub fn view<'a>(
     modifiers: &'a [Modifier],
@@ -40,7 +41,7 @@ pub fn view<'a>(
             .direction(Direction::Vertical(
                 Scrollbar::new().width(4).scroller_width(4),
             )),
-        add_row(),
+        container(add_row()).padding(PAD).width(Length::Fill),
     ]
     .height(Length::Fill)
     .into()
@@ -218,10 +219,5 @@ fn param_row<'a>(
 }
 
 fn add_row<'a>() -> Element<'a, Message> {
-    pick_list(MODIFIER_TYPES, None::<ModifierType>, Message::AddModifier)
-        .placeholder("+ Add Modifier")
-        .width(Length::Fill)
-        .text_size(11)
-        .padding([PAD, PAD])
-        .into()
+    ModifierPicker::new(Message::AddModifier).into()
 }
