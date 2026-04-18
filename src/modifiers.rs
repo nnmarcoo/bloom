@@ -1,7 +1,5 @@
 use std::fmt;
 
-pub static MODIFIER_TYPES: &[ModifierType] = &[ModifierType::Levels, ModifierType::Mosaic];
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModifierType {
     Levels,

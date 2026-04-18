@@ -204,6 +204,26 @@ pub fn icon_button_active_style(theme: &Theme, status: button::Status) -> button
     }
 }
 
+pub fn modifier_add_button_style(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = theme.extended_palette();
+    let background = match status {
+        button::Status::Hovered | button::Status::Pressed => {
+            Some(Background::Color(palette.background.weak.color))
+        }
+        _ => Some(Background::Color(palette.background.base.color)),
+    };
+    button::Style {
+        background,
+        border: iced::Border {
+            color: palette.background.strong.color,
+            width: 1.0,
+            radius: radius().into(),
+        },
+        text_color: palette.background.base.text,
+        ..Default::default()
+    }
+}
+
 pub fn toast_container_style(theme: &Theme, accent: Color, alpha: f32) -> container::Style {
     let palette = theme.extended_palette();
     container::Style {

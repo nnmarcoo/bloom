@@ -11,6 +11,8 @@ use iced::{Background, Color, Element, Event, Length, Radians, Rectangle, Render
 use std::f32::consts::PI;
 use std::time::Duration;
 
+use crate::animation::ease_in_out_cubic;
+
 pub struct Circular<Theme = iced::Theme>
 where
     Theme: StyleSheet,
@@ -584,13 +586,5 @@ where
 {
     fn from(linear: Linear<Theme>) -> Self {
         Self::new(linear)
-    }
-}
-
-fn ease_in_out_cubic(t: f32) -> f32 {
-    if t < 0.5 {
-        4.0 * t * t * t
-    } else {
-        1.0 - ((-2.0 * t + 2.0).powi(3)) / 2.0
     }
 }

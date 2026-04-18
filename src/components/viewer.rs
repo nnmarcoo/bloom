@@ -73,12 +73,15 @@ pub fn view<'a>(
     };
 
     let viewer_with_menu: Element<'a, Message> = ContextMenu::new(viewer, || {
-        styled_menu(column![
-            menu_item("Copy Color", Message::CopyColor),
-            menu_item("Copy File Path", Message::CopyPath),
-            menu_separator(),
-            menu_item("Fit", Message::Fit),
-        ])
+        styled_menu(
+            column![
+                menu_item("Copy Color", Message::CopyColor),
+                menu_item("Copy File Path", Message::CopyPath),
+                menu_separator(),
+                menu_item("Fit", Message::Fit),
+            ],
+            180,
+        )
     })
     .into();
 

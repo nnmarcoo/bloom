@@ -4,6 +4,7 @@ use iced::widget::svg::Handle;
 use iced::widget::{button, column, container, row, svg, text};
 use iced::{Alignment, Color, Element, Length, Padding};
 
+use crate::animation::{ease_in_cubic, ease_out_cubic};
 use crate::app::Message;
 use crate::styles::{BUTTON_SIZE, PAD, TOAST_WIDTH, toast_container_style, toast_dismiss_style};
 use crate::widgets::slide_in::SlideIn;
@@ -88,14 +89,6 @@ impl NotificationEntry {
         });
         fade_in * fade_out
     }
-}
-
-fn ease_out_cubic(t: f32) -> f32 {
-    1.0 - (1.0 - t).powi(3)
-}
-
-fn ease_in_cubic(t: f32) -> f32 {
-    t.powi(3)
 }
 
 pub fn view<'a>(notifications: &'a [NotificationEntry]) -> Element<'a, Message> {

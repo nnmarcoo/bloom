@@ -1,15 +1,11 @@
 use iced::advanced::layout;
 use iced::advanced::renderer;
-use iced::advanced::svg::Svg;
 use iced::advanced::widget::tree::{self, Tree};
-use iced::advanced::{self, Clipboard, Layout, Overlay, Shell, Widget};
+use iced::advanced::{Clipboard, Layout, Overlay, Shell, Widget};
 use iced::mouse;
 use iced::overlay;
-use iced::widget::button::Status;
-use iced::widget::svg::{self, Handle};
-use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Vector};
-
-use crate::styles::{BUTTON_SIZE, PAD, icon_button_active_style, icon_button_style, svg_style};
+use iced::widget::button;
+use iced::{Element, Event, Length, Padding, Point, Rectangle, Renderer, Size, Theme, Vector};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MenuAlign {
@@ -25,29 +21,53 @@ struct State {
 }
 
 pub struct MenuButton<'a, Message> {
-    icon: &'static [u8],
-    menu: Element<'a, Message, iced::Theme, Renderer>,
-    active: bool,
+    content: Element<'a, Message, Theme, Renderer>,
+    menu: Element<'a, Message, Theme, Renderer>,
+    style: Box<dyn Fn(&Theme, button::Status) -> button::Style>,
+    width: Length,
+    height: Length,
+    padding: Padding,
     align: MenuAlign,
     gap: f32,
 }
 
 impl<'a, Message: Clone + 'a> MenuButton<'a, Message> {
     pub fn new(
-        icon: &'static [u8],
-        menu: impl Into<Element<'a, Message, iced::Theme, Renderer>>,
+        content: impl Into<Element<'a, Message, Theme, Renderer>>,
+        menu: impl Into<Element<'a, Message, Theme, Renderer>>,
     ) -> Self {
         Self {
-            icon,
+            content: content.into(),
             menu: menu.into(),
-            active: false,
+            style: Box::new(|_, _| button::Style::default()),
+            width: Length::Shrink,
+            height: Length::Shrink,
+            padding: Padding::ZERO,
             align: MenuAlign::TopEnd,
             gap: 4.0,
         }
     }
 
-    pub fn active(mut self, active: bool) -> Self {
-        self.active = active;
+    pub fn style(
+        mut self,
+        style: impl Fn(&Theme, button::Status) -> button::Style + 'static,
+    ) -> Self {
+        self.style = Box::new(style);
+        self
+    }
+
+    pub fn width(mut self, width: impl Into<Length>) -> Self {
+        self.width = width.into();
+        self
+    }
+
+    pub fn height(mut self, height: impl Into<Length>) -> Self {
+        self.height = height.into();
+        self
+    }
+
+    pub fn padding(mut self, padding: impl Into<Padding>) -> Self {
+        self.padding = padding.into();
         self
     }
 
@@ -62,7 +82,7 @@ impl<'a, Message: Clone + 'a> MenuButton<'a, Message> {
     }
 }
 
-impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for MenuButton<'a, Message> {
+impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for MenuButton<'a, Message> {
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<State>()
     }
@@ -71,29 +91,60 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for MenuBut
         tree::State::new(State::default())
     }
 
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content), Tree::new(&self.menu)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(&[&self.content, &self.menu]);
+    }
+
     fn size(&self) -> Size<Length> {
-        let side = BUTTON_SIZE + PAD * 2.0;
         Size {
-            width: Length::Fixed(side),
-            height: Length::Fixed(side),
+            width: self.width,
+            height: self.height,
         }
     }
 
     fn layout(
         &mut self,
-        _tree: &mut Tree,
-        _renderer: &Renderer,
+        tree: &mut Tree,
+        renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        layout::atomic(limits, BUTTON_SIZE + PAD * 2.0, BUTTON_SIZE + PAD * 2.0)
-    }
+        let limits = limits.width(self.width).height(self.height);
+        let max = limits.max();
+        let pad = self.padding;
+        let pad_w = pad.left + pad.right;
+        let pad_h = pad.top + pad.bottom;
 
-    fn children(&self) -> Vec<Tree> {
-        vec![Tree::new(&self.menu)]
-    }
+        let inner_limits = layout::Limits::new(
+            Size::ZERO,
+            Size::new((max.width - pad_w).max(0.0), (max.height - pad_h).max(0.0)),
+        );
 
-    fn diff(&self, tree: &mut Tree) {
-        tree.diff_children(&[&self.menu]);
+        let content_node =
+            self.content
+                .as_widget_mut()
+                .layout(&mut tree.children[0], renderer, &inner_limits);
+        let content_size = content_node.bounds().size();
+
+        let button_w = match self.width {
+            Length::Shrink => content_size.width + pad_w,
+            _ => max.width,
+        };
+        let button_h = match self.height {
+            Length::Shrink => content_size.height + pad_h,
+            _ => max.height,
+        };
+
+        let offset_x = pad.left + ((button_w - pad_w - content_size.width) / 2.0).max(0.0);
+        let offset_y = pad.top + ((button_h - pad_h - content_size.height) / 2.0).max(0.0);
+
+        layout::Node::with_children(
+            Size::new(button_w, button_h),
+            vec![content_node.move_to(Point::new(offset_x, offset_y))],
+        )
     }
 
     fn update(
@@ -121,63 +172,48 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for MenuBut
         &self,
         tree: &Tree,
         renderer: &mut Renderer,
-        theme: &iced::Theme,
+        theme: &Theme,
         _style: &renderer::Style,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        use advanced::Renderer as _;
-        use advanced::svg::Renderer as _;
+        use iced::advanced::Renderer as _;
 
         let state = tree.state.downcast_ref::<State>();
         let bounds = layout.bounds();
-        let is_hovered = cursor.is_over(bounds) || state.expanded;
-        let status = if is_hovered {
-            Status::Hovered
+        let status = if cursor.is_over(bounds) || state.expanded {
+            button::Status::Hovered
         } else {
-            Status::Active
+            button::Status::Active
         };
-
-        let btn_style = if self.active {
-            icon_button_active_style(theme, status)
-        } else {
-            icon_button_style(theme, status)
-        };
+        let btn_style = (self.style)(theme, status);
 
         if let Some(bg) = btn_style.background {
             renderer.fill_quad(
                 renderer::Quad {
                     bounds,
                     border: btn_style.border,
-                    ..renderer::Quad::default()
+                    shadow: btn_style.shadow,
+                    snap: true,
                 },
                 bg,
             );
         }
 
-        let icon_bounds = Rectangle {
-            x: bounds.x + (bounds.width - BUTTON_SIZE) / 2.0,
-            y: bounds.y + (bounds.height - BUTTON_SIZE) / 2.0,
-            width: BUTTON_SIZE,
-            height: BUTTON_SIZE,
+        let content_layout = layout.children().next().unwrap();
+        let content_style = renderer::Style {
+            text_color: btn_style.text_color,
         };
-
-        let svg_appearance = svg_style(
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
             theme,
-            if is_hovered {
-                svg::Status::Hovered
-            } else {
-                svg::Status::Idle
-            },
+            &content_style,
+            content_layout,
+            cursor,
+            viewport,
         );
-
-        let mut svg_image = Svg::new(Handle::from_memory(self.icon));
-        if let Some(color) = svg_appearance.color {
-            svg_image = svg_image.color(color);
-        }
-
-        renderer.draw_svg(svg_image, icon_bounds, *viewport);
     }
 
     fn mouse_interaction(
@@ -202,7 +238,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for MenuBut
         _renderer: &Renderer,
         _viewport: &Rectangle,
         translation: Vector,
-    ) -> Option<overlay::Element<'b, Message, iced::Theme, Renderer>> {
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
         if !tree.state.downcast_ref::<State>().expanded {
             return None;
         }
@@ -211,7 +247,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for MenuBut
         let bounds = layout.bounds();
 
         Some(overlay::Element::new(Box::new(MenuOverlay {
-            menu_tree: &mut tree.children[0],
+            menu_tree: &mut tree.children[1],
             widget_state: &mut tree.state,
             menu: &mut self.menu,
             button_bounds: Rectangle {
@@ -227,7 +263,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for MenuBut
 }
 
 impl<'a, Message: Clone + 'a> From<MenuButton<'a, Message>>
-    for Element<'a, Message, iced::Theme, Renderer>
+    for Element<'a, Message, Theme, Renderer>
 {
     fn from(w: MenuButton<'a, Message>) -> Self {
         Self::new(w)
@@ -237,13 +273,13 @@ impl<'a, Message: Clone + 'a> From<MenuButton<'a, Message>>
 struct MenuOverlay<'a, 'b, Message> {
     menu_tree: &'b mut Tree,
     widget_state: &'b mut tree::State,
-    menu: &'b mut Element<'a, Message, iced::Theme, Renderer>,
+    menu: &'b mut Element<'a, Message, Theme, Renderer>,
     button_bounds: Rectangle,
     align: MenuAlign,
     gap: f32,
 }
 
-impl<Message: Clone> Overlay<Message, iced::Theme, Renderer> for MenuOverlay<'_, '_, Message> {
+impl<Message: Clone> Overlay<Message, Theme, Renderer> for MenuOverlay<'_, '_, Message> {
     fn layout(&mut self, renderer: &Renderer, bounds: Size) -> layout::Node {
         let node = self.menu.as_widget_mut().layout(
             self.menu_tree,
@@ -277,7 +313,7 @@ impl<Message: Clone> Overlay<Message, iced::Theme, Renderer> for MenuOverlay<'_,
     fn draw(
         &self,
         renderer: &mut Renderer,
-        theme: &iced::Theme,
+        theme: &Theme,
         style: &renderer::Style,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
@@ -338,5 +374,16 @@ impl<Message: Clone> Overlay<Message, iced::Theme, Renderer> for MenuOverlay<'_,
         self.menu
             .as_widget()
             .mouse_interaction(self.menu_tree, layout, cursor, &viewport, renderer)
+    }
+
+    fn overlay<'c>(
+        &'c mut self,
+        layout: Layout<'c>,
+        renderer: &Renderer,
+    ) -> Option<overlay::Element<'c, Message, Theme, Renderer>> {
+        let viewport = layout.bounds();
+        self.menu
+            .as_widget_mut()
+            .overlay(self.menu_tree, layout, renderer, &viewport, Vector::ZERO)
     }
 }

@@ -8,11 +8,13 @@ use iced::widget::{
 use iced::{Element, Length, Padding, mouse, padding};
 
 use crate::app::Message;
-use crate::modifiers::{Modifier, ModifierKind, ModifierParam};
+use crate::modifiers::{Modifier, ModifierKind, ModifierParam, ModifierType};
 use crate::styles::{
-    PAD, modifier_card_style, modifier_drop_indicator_style, plain_icon_button_style, svg_style,
+    PAD, modifier_add_button_style, modifier_card_style, modifier_drop_indicator_style,
+    plain_icon_button_style, svg_style,
 };
-use crate::widgets::modifier_picker::ModifierPicker;
+use crate::widgets::menu::{SubMenuSide, menu_item, styled_menu, sub_menu};
+use crate::widgets::menu_button::{MenuAlign, MenuButton};
 
 pub fn view<'a>(
     modifiers: &'a [Modifier],
@@ -219,5 +221,39 @@ fn param_row<'a>(
 }
 
 fn add_row<'a>() -> Element<'a, Message> {
-    ModifierPicker::new(Message::AddModifier).into()
+    MenuButton::new(
+        text("+ Add Modifier").size(11),
+        styled_menu(
+            column![
+                sub_menu(
+                    "Adjustments",
+                    styled_menu(
+                        column![menu_item(
+                            "Levels",
+                            Message::AddModifier(ModifierType::Levels)
+                        )],
+                        160,
+                    ),
+                )
+                .side(SubMenuSide::Left),
+                sub_menu(
+                    "Effects",
+                    styled_menu(
+                        column![menu_item(
+                            "Mosaic",
+                            Message::AddModifier(ModifierType::Mosaic)
+                        )],
+                        160,
+                    ),
+                )
+                .side(SubMenuSide::Left),
+            ],
+            180,
+        ),
+    )
+    .width(Length::Fill)
+    .height(Length::Fixed(28.0))
+    .style(modifier_add_button_style)
+    .align(MenuAlign::TopStart)
+    .into()
 }

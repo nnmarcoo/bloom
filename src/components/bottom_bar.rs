@@ -1,11 +1,14 @@
 use iced::alignment::Vertical;
+use iced::widget::svg::Handle;
 use iced::widget::tooltip::Position;
-use iced::widget::{Column, Space, column, container, row};
+use iced::widget::{Column, Space, column, container, row, svg};
 use iced::window::Mode;
 use iced::{Element, Length};
 
 use crate::app::Message;
-use crate::styles::{BAR_HEIGHT, PAD, bar_style, panel_divider_style};
+use crate::styles::{
+    BAR_HEIGHT, BUTTON_SIZE, PAD, bar_style, icon_button_style, panel_divider_style, svg_style,
+};
 use crate::ui::{svg_button, svg_button_active, svg_button_maybe, with_tooltip};
 use crate::widgets::menu::{menu_item, menu_separator, styled_menu};
 use crate::widgets::menu_button::{MenuAlign, MenuButton};
@@ -148,17 +151,27 @@ pub fn view<'a>(
         ),
         with_tooltip(
             MenuButton::new(
-                include_bytes!("../../assets/icons/kebab.svg"),
-                styled_menu(column![
-                    menu_item("Preferences", Message::TogglePreferences),
-                    menu_separator(),
-                    menu_item("Copy file path", Message::CopyPath),
-                    menu_item("Export", Message::Noop),
-                    menu_separator(),
-                    menu_item("About", Message::Noop),
-                    menu_item("Exit", Message::Exit),
-                ]),
+                svg(Handle::from_memory(include_bytes!(
+                    "../../assets/icons/kebab.svg"
+                )))
+                .style(svg_style)
+                .width(BUTTON_SIZE)
+                .height(BUTTON_SIZE),
+                styled_menu(
+                    column![
+                        menu_item("Preferences", Message::TogglePreferences),
+                        menu_separator(),
+                        menu_item("Copy file path", Message::CopyPath),
+                        menu_item("Export", Message::Noop),
+                        menu_separator(),
+                        menu_item("About", Message::Noop),
+                        menu_item("Exit", Message::Exit),
+                    ],
+                    180
+                ),
             )
+            .padding(PAD)
+            .style(icon_button_style)
             .align(MenuAlign::TopEnd),
             "More actions",
             Position::Top,
