@@ -25,7 +25,7 @@ use crate::{
     config::{Config, UI_SCALE_DEFAULT, UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP},
     gallery::Gallery,
     keybinds::{Action, KeyBinding},
-    modifiers::{Modifier, ModifierKind, ModifierParam, ModifierType},
+    modifiers::{MaskParam, Modifier, ModifierKind, ModifierParam, ModifierType},
     styles, tasks,
     wgpu::{
         media::image_data::MediaData, passes::checkerboard::CheckerboardUniforms,
@@ -59,6 +59,7 @@ pub enum Tool {
     Crop,
     Draw,
     Text,
+    Mask,
 }
 
 impl Default for App {
@@ -153,6 +154,8 @@ pub enum Message {
     ToggleModifierExpanded(usize),
     ToggleModifierEnabled(usize),
     UpdateModifier(usize, ModifierParam),
+    ToggleModifierMask(usize),
+    UpdateModifierMask(usize, MaskParam),
     StartModifierDrag(usize),
     ModifierDragHover(usize),
     ModifierDragEnd,
@@ -462,10 +465,25 @@ impl App {
                     m.enabled = !m.enabled;
                 }
             }
+            Message::ToggleModifierMask(i) => {
+                if let Some(m) = self.modifiers.get_mut(i) {
+                    m.mask_enabled = !m.mask_enabled;
+                }
+            }
+            Message::UpdateModifierMask(i, param) => {
+                if let Some(m) = self.modifiers.get_mut(i) {
+                    match param {
+                        MaskParam::X(v) => m.mask_x = v,
+                        MaskParam::Y(v) => m.mask_y = v,
+                        MaskParam::Width(v) => m.mask_w = v,
+                        MaskParam::Height(v) => m.mask_h = v,
+                        MaskParam::Feather(v) => m.feather = v,
+                    }
+                }
+            }
             Message::UpdateModifier(i, param) => {
                 if let Some(m) = self.modifiers.get_mut(i) {
                     match (&mut m.kind, param) {
-                        (ModifierKind::Mosaic { size }, ModifierParam::MosaicSize(v)) => *size = v,
                         (ModifierKind::Levels { shadows, .. }, ModifierParam::LevelsShadows(v)) => {
                             *shadows = v
                         }
@@ -477,6 +495,177 @@ impl App {
                             ModifierKind::Levels { highlights, .. },
                             ModifierParam::LevelsHighlights(v),
                         ) => *highlights = v,
+                        (
+                            ModifierKind::BrightnessContrast { brightness, .. },
+                            ModifierParam::Brightness(v),
+                        ) => *brightness = v,
+                        (
+                            ModifierKind::BrightnessContrast { contrast, .. },
+                            ModifierParam::Contrast(v),
+                        ) => *contrast = v,
+                        (ModifierKind::HueSaturation { hue, .. }, ModifierParam::Hue(v)) => {
+                            *hue = v
+                        }
+                        (
+                            ModifierKind::HueSaturation { saturation, .. },
+                            ModifierParam::Saturation(v),
+                        ) => *saturation = v,
+                        (
+                            ModifierKind::HueSaturation { lightness, .. },
+                            ModifierParam::Lightness(v),
+                        ) => *lightness = v,
+                        (ModifierKind::Exposure { exposure }, ModifierParam::Exposure(v)) => {
+                            *exposure = v
+                        }
+                        (ModifierKind::Vibrance { vibrance, .. }, ModifierParam::Vibrance(v)) => {
+                            *vibrance = v
+                        }
+                        (
+                            ModifierKind::Vibrance { saturation, .. },
+                            ModifierParam::VibranceSaturation(v),
+                        ) => *saturation = v,
+                        (
+                            ModifierKind::ColorBalance { cyan_red, .. },
+                            ModifierParam::ColorBalanceCyanRed(v),
+                        ) => *cyan_red = v,
+                        (
+                            ModifierKind::ColorBalance { magenta_green, .. },
+                            ModifierParam::ColorBalanceMagentaGreen(v),
+                        ) => *magenta_green = v,
+                        (
+                            ModifierKind::ColorBalance { yellow_blue, .. },
+                            ModifierParam::ColorBalanceYellowBlue(v),
+                        ) => *yellow_blue = v,
+                        (
+                            ModifierKind::GaussianBlur { radius },
+                            ModifierParam::GaussianBlurRadius(v),
+                        ) => *radius = v,
+                        (
+                            ModifierKind::MotionBlur { angle, .. },
+                            ModifierParam::MotionBlurAngle(v),
+                        ) => *angle = v,
+                        (
+                            ModifierKind::MotionBlur { distance, .. },
+                            ModifierParam::MotionBlurDistance(v),
+                        ) => *distance = v,
+                        (
+                            ModifierKind::RadialBlur { amount },
+                            ModifierParam::RadialBlurAmount(v),
+                        ) => *amount = v,
+                        (ModifierKind::Ripple { amount, .. }, ModifierParam::RippleAmount(v)) => {
+                            *amount = v
+                        }
+                        (ModifierKind::Ripple { size, .. }, ModifierParam::RippleSize(v)) => {
+                            *size = v
+                        }
+                        (ModifierKind::Twirl { angle, .. }, ModifierParam::TwirlAngle(v)) => {
+                            *angle = v
+                        }
+                        (ModifierKind::Twirl { radius, .. }, ModifierParam::TwirlRadius(v)) => {
+                            *radius = v
+                        }
+                        (ModifierKind::Wave { amplitude, .. }, ModifierParam::WaveAmplitude(v)) => {
+                            *amplitude = v
+                        }
+                        (ModifierKind::Wave { frequency, .. }, ModifierParam::WaveFrequency(v)) => {
+                            *frequency = v
+                        }
+                        (ModifierKind::Wave { angle, .. }, ModifierParam::WaveAngle(v)) => {
+                            *angle = v
+                        }
+                        (ModifierKind::Mosaic { size }, ModifierParam::MosaicSize(v)) => *size = v,
+                        (ModifierKind::Halftone { size, .. }, ModifierParam::HalftoneSize(v)) => {
+                            *size = v
+                        }
+                        (ModifierKind::Halftone { angle, .. }, ModifierParam::HalftoneAngle(v)) => {
+                            *angle = v
+                        }
+                        (
+                            ModifierKind::PixelSort { threshold, .. },
+                            ModifierParam::PixelSortThreshold(v),
+                        ) => *threshold = v,
+                        (
+                            ModifierKind::PixelSort { angle, .. },
+                            ModifierParam::PixelSortAngle(v),
+                        ) => *angle = v,
+                        (
+                            ModifierKind::Vignette { strength, .. },
+                            ModifierParam::VignetteStrength(v),
+                        ) => *strength = v,
+                        (ModifierKind::Vignette { size, .. }, ModifierParam::VignetteSize(v)) => {
+                            *size = v
+                        }
+                        (
+                            ModifierKind::Vignette { softness, .. },
+                            ModifierParam::VignetteSoftness(v),
+                        ) => *softness = v,
+                        (
+                            ModifierKind::ChromaticAberration { amount, .. },
+                            ModifierParam::ChromaticAberrationAmount(v),
+                        ) => *amount = v,
+                        (
+                            ModifierKind::ChromaticAberration { angle, .. },
+                            ModifierParam::ChromaticAberrationAngle(v),
+                        ) => *angle = v,
+                        (ModifierKind::Posterize { levels }, ModifierParam::PosterizeLevels(v)) => {
+                            *levels = v
+                        }
+                        (ModifierKind::Threshold { cutoff }, ModifierParam::ThresholdCutoff(v)) => {
+                            *cutoff = v
+                        }
+                        (ModifierKind::Glitch { amount, .. }, ModifierParam::GlitchAmount(v)) => {
+                            *amount = v
+                        }
+                        (ModifierKind::Glitch { slices, .. }, ModifierParam::GlitchSlices(v)) => {
+                            *slices = v
+                        }
+                        (ModifierKind::Grain { amount, .. }, ModifierParam::GrainAmount(v)) => {
+                            *amount = v
+                        }
+                        (ModifierKind::Grain { size, .. }, ModifierParam::GrainSize(v)) => {
+                            *size = v
+                        }
+                        (
+                            ModifierKind::Grain { roughness, .. },
+                            ModifierParam::GrainRoughness(v),
+                        ) => *roughness = v,
+                        (ModifierKind::Crop { x, .. }, ModifierParam::CropX(v)) => *x = v,
+                        (ModifierKind::Crop { y, .. }, ModifierParam::CropY(v)) => *y = v,
+                        (ModifierKind::Crop { width, .. }, ModifierParam::CropWidth(v)) => {
+                            *width = v
+                        }
+                        (ModifierKind::Crop { height, .. }, ModifierParam::CropHeight(v)) => {
+                            *height = v
+                        }
+                        (ModifierKind::Crop { rotation, .. }, ModifierParam::CropRotation(v)) => {
+                            *rotation = v
+                        }
+                        (ModifierKind::Text { content, .. }, ModifierParam::TextContent(v)) => {
+                            *content = v
+                        }
+                        (ModifierKind::Text { x, .. }, ModifierParam::TextX(v)) => *x = v,
+                        (ModifierKind::Text { y, .. }, ModifierParam::TextY(v)) => *y = v,
+                        (ModifierKind::Text { size, .. }, ModifierParam::TextSize(v)) => *size = v,
+                        (ModifierKind::Text { rotation, .. }, ModifierParam::TextRotation(v)) => {
+                            *rotation = v
+                        }
+                        (ModifierKind::Text { opacity, .. }, ModifierParam::TextOpacity(v)) => {
+                            *opacity = v
+                        }
+                        (ModifierKind::Text { r, .. }, ModifierParam::TextR(v)) => *r = v,
+                        (ModifierKind::Text { g, .. }, ModifierParam::TextG(v)) => *g = v,
+                        (ModifierKind::Text { b, .. }, ModifierParam::TextB(v)) => *b = v,
+                        (
+                            ModifierKind::Drawing { opacity, .. },
+                            ModifierParam::DrawingOpacity(v),
+                        ) => *opacity = v,
+                        (ModifierKind::Drawing { size, .. }, ModifierParam::DrawingSize(v)) => {
+                            *size = v
+                        }
+                        (
+                            ModifierKind::Drawing { hardness, .. },
+                            ModifierParam::DrawingHardness(v),
+                        ) => *hardness = v,
                         _ => {}
                     }
                 }
