@@ -204,6 +204,18 @@ impl ViewProgram {
         self.image.as_deref().map(|d| &d.exif)
     }
 
+    pub fn bit_depth(&self) -> Option<u8> {
+        self.image.as_deref().map(|d| d.bit_depth)
+    }
+
+    pub fn color_space(&self) -> Option<&str> {
+        self.image.as_deref().and_then(|d| {
+            d.color_space
+                .map(|s| s as &str)
+                .or(d.exif.color_space.as_deref())
+        })
+    }
+
     pub fn set_animation(&mut self, anim: Animation) {
         let first = Arc::clone(anim.current_image());
         self.image_size = vec2(first.width as f32, first.height as f32);

@@ -14,6 +14,8 @@ pub struct ExifData {
     pub iso: Option<String>,
     pub focal_length: Option<String>,
     pub gps: Option<String>,
+    pub dpi: Option<String>,
+    pub color_space: Option<String>,
 }
 
 impl ExifData {
@@ -33,6 +35,8 @@ impl ExifData {
             iso: str_field(&exif, Tag::PhotographicSensitivity),
             focal_length: focal_length_str(&exif),
             gps: gps_str(&exif),
+            dpi: dpi_str(&exif),
+            color_space: color_space_str(&exif),
         }
     }
 }
@@ -89,6 +93,56 @@ fn focal_length_str(exif: &Exif) -> Option<String> {
         return Some(format!("{:.0} mm", r.to_f64()));
     }
     None
+}
+
+fn resolution_rational(exif: &Exif, tag: Tag) -> Option<f64> {
+    if let Value::Rational(ref v) = rational_field(exif, tag)?.value {
+        let r = v.first()?;
+        if r.denom == 0 {
+            return None;
+        }
+        Some(r.to_f64()).filter(|&v| v > 0.5)
+    } else {
+        None
+    }
+}
+
+fn dpi_str(exif: &Exif) -> Option<String> {
+    let unit = exif
+        .get_field(Tag::ResolutionUnit, In::PRIMARY)
+        .and_then(|f| {
+            if let Value::Short(ref v) = f.value {
+                v.first().copied()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(2);
+
+    if unit == 1 {
+        return None;
+    }
+
+    let x = resolution_rational(exif, Tag::XResolution)?;
+    let y = resolution_rational(exif, Tag::YResolution);
+    let suffix = if unit == 3 { "DPCM" } else { "DPI" };
+
+    Some(match y.filter(|&y| (y - x).abs() > 0.5) {
+        Some(y) => format!("{:.0} × {:.0} {}", x, y, suffix),
+        None => format!("{:.0} {}", x, suffix),
+    })
+}
+
+fn color_space_str(exif: &Exif) -> Option<String> {
+    if let Value::Short(ref v) = exif.get_field(Tag::ColorSpace, In::PRIMARY)?.value {
+        match v.first().copied()? {
+            1 => Some("sRGB".to_string()),
+            65535 => Some("Uncalibrated".to_string()),
+            _ => None,
+        }
+    } else {
+        None
+    }
 }
 
 fn rational_to_degrees(v: &[exif::Rational]) -> Option<f64> {

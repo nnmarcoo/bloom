@@ -53,6 +53,8 @@ pub struct ImageData {
     pub id: ImageId,
     pub histogram: ([u32; 256], [u32; 256], [u32; 256]),
     pub exif: ExifData,
+    pub bit_depth: u8,
+    pub color_space: Option<&'static str>,
 }
 
 impl ImageData {
@@ -70,6 +72,8 @@ impl ImageData {
             id,
             histogram,
             exif: ExifData::default(),
+            bit_depth: 8,
+            color_space: None,
         }
     }
 
@@ -104,9 +108,17 @@ impl ImageData {
     pub fn load(path: &Path) -> Result<Self, ImageError> {
         let mut reader = ImageReader::open(path)?.with_guessed_format()?;
         reader.no_limits();
-        let img = reader.decode()?.into_rgba8();
+        let dyn_img = reader.decode()?;
+        let bit_depth = match dyn_img.color() {
+            ColorType::L16 | ColorType::La16 | ColorType::Rgb16 | ColorType::Rgba16 => 16,
+            ColorType::Rgb32F | ColorType::Rgba32F => 32,
+            _ => 8,
+        };
+        let img = dyn_img.into_rgba8();
         let (width, height) = img.dimensions();
-        Ok(Self::new(img.into_raw(), width, height))
+        let mut data = Self::new(img.into_raw(), width, height);
+        data.bit_depth = bit_depth;
+        Ok(data)
     }
 
     pub fn load_gif(path: &Path) -> Result<Animation, ImageError> {
@@ -172,7 +184,10 @@ impl ImageData {
             pixels.push(255);
         }
 
-        Ok(Self::new(pixels, width, height))
+        let mut data = Self::new(pixels, width, height);
+        data.bit_depth = 32;
+        data.color_space = Some("Linear");
+        Ok(data)
     }
 
     pub fn load_exr(path: &Path) -> Result<Self, ImageError> {
@@ -211,7 +226,10 @@ impl ImageData {
             _ => return Self::load(path),
         }
 
-        Ok(Self::new(pixels, width, height))
+        let mut data = Self::new(pixels, width, height);
+        data.bit_depth = 32;
+        data.color_space = Some("Linear");
+        Ok(data)
     }
 
     pub fn load_jxl(path: &Path) -> Result<Self, ImageError> {
@@ -366,6 +384,13 @@ impl ImageData {
             .map_err(|e| ImageError::IoError(Error::other(e)))?;
         let width = img_data.width;
         let height = img_data.height;
+        let bit_depth = match &img_data.data {
+            jpeg2k::ImagePixelData::Rgba16(_)
+            | jpeg2k::ImagePixelData::Rgb16(_)
+            | jpeg2k::ImagePixelData::La16(_)
+            | jpeg2k::ImagePixelData::L16(_) => 16u8,
+            _ => 8u8,
+        };
         let pixels = match img_data.data {
             jpeg2k::ImagePixelData::Rgba8(p) => p,
             jpeg2k::ImagePixelData::Rgb8(p) => p
@@ -400,7 +425,9 @@ impl ImageData {
                 })
                 .collect(),
         };
-        Ok(Self::new(pixels, width, height))
+        let mut data = Self::new(pixels, width, height);
+        data.bit_depth = bit_depth;
+        Ok(data)
     }
 
     pub fn load_dicom(path: &Path) -> Result<Self, ImageError> {
@@ -520,7 +547,9 @@ impl ImageData {
             .ok_or_else(|| ImageError::IoError(Error::other("failed to convert RAW to image")))?
             .into_rgba8();
         let (width, height) = img.dimensions();
-        Ok(Self::new(img.into_raw(), width, height))
+        let mut data = Self::new(img.into_raw(), width, height);
+        data.bit_depth = 16;
+        Ok(data)
     }
 
     #[cfg(feature = "heif")]

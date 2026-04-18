@@ -294,6 +294,23 @@ pub fn view<'a>(
         format!("{:.0}%", program.scale() * 100.0),
         muted,
     ));
+    if let Some(bd) = program.bit_depth() {
+        image_rows.push(row_item(
+            "Bit depth",
+            match bd {
+                32 => "32-bit float",
+                16 => "16-bit",
+                _ => "8-bit",
+            },
+            muted,
+        ));
+    }
+    if let Some(cs) = program.color_space() {
+        image_rows.push(row_item("Profile", cs, muted));
+    }
+    if let Some(dpi) = program.exif().and_then(|e| e.dpi.as_deref()) {
+        image_rows.push(row_item("DPI", dpi, muted));
+    }
     if let Some(size) = gallery.file_size() {
         image_rows.push(row_item("File size", format_size(size), muted));
     }
