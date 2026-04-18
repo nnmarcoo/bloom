@@ -339,7 +339,7 @@ impl<Message: Clone> Overlay<Message, Theme, Renderer> for MenuOverlay<'_, '_, M
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<Message>,
     ) {
-        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
+        if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) = event {
             if !cursor.is_over(layout.bounds()) && !cursor.is_over(self.button_bounds) {
                 self.widget_state.downcast_mut::<State>().expanded = false;
                 shell.request_redraw();
