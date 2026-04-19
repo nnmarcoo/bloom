@@ -20,6 +20,7 @@ fn tool_button<'a>(icon: &'static [u8], tool: Tool, selected_tool: &Tool) -> Ele
 pub fn view<'a>(
     selected_tool: &Tool,
     modifiers: &'a [Modifier],
+    active_modifier: Option<usize>,
     dragging_modifier: Option<usize>,
     drag_hover_target: Option<usize>,
 ) -> Element<'a, Message> {
@@ -86,6 +87,7 @@ pub fn view<'a>(
 
     let stack = container(modifier_stack::view(
         modifiers,
+        active_modifier,
         dragging_modifier,
         drag_hover_target,
     ))

@@ -254,6 +254,19 @@ pub fn modifier_card_style(theme: &Theme) -> container::Style {
     }
 }
 
+pub fn modifier_active_card_style(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(palette.background.base.color)),
+        border: iced::Border {
+            color: palette.primary.base.color,
+            width: 1.0,
+            radius: radius().into(),
+        },
+        ..Default::default()
+    }
+}
+
 pub fn modifier_drop_indicator_style(theme: &Theme) -> container::Style {
     let palette = theme.extended_palette();
     container::Style {

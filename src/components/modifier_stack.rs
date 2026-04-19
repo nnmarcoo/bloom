@@ -10,14 +10,15 @@ use iced::{Element, Length, Padding, mouse, padding};
 use crate::app::Message;
 use crate::modifiers::{MaskParam, Modifier, ModifierKind, ModifierParam, ModifierType};
 use crate::styles::{
-    PAD, modifier_add_button_style, modifier_card_style, modifier_drop_indicator_style,
-    plain_icon_button_style, svg_style,
+    PAD, modifier_active_card_style, modifier_add_button_style, modifier_card_style,
+    modifier_drop_indicator_style, plain_icon_button_style, svg_style,
 };
 use crate::widgets::menu::{SubMenuSide, menu_item, styled_menu, sub_menu};
 use crate::widgets::menu_button::{MenuAlign, MenuButton};
 
 pub fn view<'a>(
     modifiers: &'a [Modifier],
+    active: Option<usize>,
     dragging: Option<usize>,
     drag_target: Option<usize>,
 ) -> Element<'a, Message> {
@@ -27,7 +28,7 @@ pub fn view<'a>(
         let show_indicator = matches!((dragging, drag_target),
             (Some(src), Some(tgt)) if tgt == i && src != i);
         stack_col = stack_col.push(gap(show_indicator));
-        stack_col = stack_col.push(card(i, modifier, dragging.is_some()));
+        stack_col = stack_col.push(card(i, modifier, active == Some(i), dragging.is_some()));
     }
     let show_trailing = matches!((dragging, drag_target),
         (Some(_), Some(tgt)) if tgt == n);
@@ -37,15 +38,18 @@ pub fn view<'a>(
             .on_enter(Message::ModifierDragHover(n)),
     );
 
-    column![
-        scrollable(stack_col.padding(PAD))
-            .height(Length::Fill)
-            .direction(Direction::Vertical(
-                Scrollbar::new().width(4).scroller_width(4),
-            )),
-        container(add_row()).padding(PAD).width(Length::Fill),
-    ]
-    .height(Length::Fill)
+    mouse_area(
+        column![
+            scrollable(stack_col.padding(PAD))
+                .height(Length::Fill)
+                .direction(Direction::Vertical(
+                    Scrollbar::new().width(4).scroller_width(4),
+                )),
+            container(add_row()).padding(PAD).width(Length::Fill),
+        ]
+        .height(Length::Fill),
+    )
+    .on_press(Message::ClearActiveModifier)
     .into()
 }
 
@@ -77,7 +81,12 @@ fn icon_btn<'a>(icon: &'static [u8], msg: Message) -> Element<'a, Message> {
     .into()
 }
 
-fn card<'a>(index: usize, modifier: &'a Modifier, dragging: bool) -> Element<'a, Message> {
+fn card<'a>(
+    index: usize,
+    modifier: &'a Modifier,
+    is_active: bool,
+    dragging: bool,
+) -> Element<'a, Message> {
     let arrow_icon: &'static [u8] = if modifier.expanded {
         include_bytes!("../../assets/icons/down.svg")
     } else {
@@ -131,10 +140,15 @@ fn card<'a>(index: usize, modifier: &'a Modifier, dragging: bool) -> Element<'a,
 
     let card_area = mouse_area(
         container(card_col)
-            .style(modifier_card_style)
+            .style(if is_active {
+                modifier_active_card_style
+            } else {
+                modifier_card_style
+            })
             .padding([3.0, PAD])
             .width(Length::Fill),
     )
+    .on_release(Message::SetActiveModifier(index))
     .on_enter(Message::ModifierDragHover(index));
 
     if dragging {

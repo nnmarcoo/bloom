@@ -35,6 +35,7 @@ pub fn view<'a>(
     pixel_preview_size: u32,
     selected_tool: &'a Tool,
     modifiers: &'a [Modifier],
+    active_modifier: Option<usize>,
     dragging_modifier: Option<usize>,
     drag_hover_target: Option<usize>,
 ) -> Element<'a, Message> {
@@ -100,6 +101,7 @@ pub fn view<'a>(
             edit_panel::view(
                 selected_tool,
                 modifiers,
+                active_modifier,
                 dragging_modifier,
                 drag_hover_target
             ),
@@ -124,6 +126,7 @@ pub fn view<'a>(
             edit_panel::view(
                 selected_tool,
                 modifiers,
+                active_modifier,
                 dragging_modifier,
                 drag_hover_target
             )

@@ -49,6 +49,7 @@ pub struct App {
     notifications: Vec<NotificationEntry>,
     pub selected_tool: Tool,
     pub modifiers: Vec<Modifier>,
+    pub active_modifier: Option<usize>,
     pub dragging_modifier: Option<usize>,
     pub drag_hover_target: Option<usize>,
 }
@@ -94,6 +95,7 @@ impl App {
             notifications: Vec::new(),
             selected_tool: Tool::Select,
             modifiers: Vec::new(),
+            active_modifier: None,
             dragging_modifier: None,
             drag_hover_target: None,
         }
@@ -156,6 +158,8 @@ pub enum Message {
     UpdateModifier(usize, ModifierParam),
     ToggleModifierMask(usize),
     UpdateModifierMask(usize, MaskParam),
+    SetActiveModifier(usize),
+    ClearActiveModifier,
     StartModifierDrag(usize),
     ModifierDragHover(usize),
     ModifierDragEnd,
@@ -426,6 +430,14 @@ impl App {
                 self.notifications.retain(|entry| !entry.is_gone(now));
             }
             Message::SelectTool(tool) => self.selected_tool = tool,
+            Message::SetActiveModifier(i) => {
+                if i < self.modifiers.len() {
+                    self.active_modifier = Some(i);
+                }
+            }
+            Message::ClearActiveModifier => {
+                self.active_modifier = None;
+            }
             Message::StartModifierDrag(i) => {
                 self.dragging_modifier = Some(i);
                 self.drag_hover_target = Some(i);
@@ -444,14 +456,32 @@ impl App {
                     let m = self.modifiers.remove(src);
                     let insert_at = if tgt > src { tgt - 1 } else { tgt };
                     self.modifiers.insert(insert_at, m);
+                    if let Some(active) = self.active_modifier {
+                        self.active_modifier = Some(if active == src {
+                            insert_at
+                        } else {
+                            let after_remove = if active > src { active - 1 } else { active };
+                            if after_remove >= insert_at {
+                                after_remove + 1
+                            } else {
+                                after_remove
+                            }
+                        });
+                    }
                 }
             }
             Message::AddModifier(t) => {
                 self.modifiers.push(Modifier::new(ModifierKind::from(t)));
+                self.active_modifier = Some(self.modifiers.len() - 1);
             }
             Message::RemoveModifier(i) => {
                 if i < self.modifiers.len() {
                     self.modifiers.remove(i);
+                    self.active_modifier = match self.active_modifier {
+                        Some(a) if a == i => None,
+                        Some(a) if a > i => Some(a - 1),
+                        other => other,
+                    };
                 }
             }
             Message::ToggleModifierExpanded(i) => {
@@ -797,6 +827,7 @@ impl App {
             self.config.pixel_preview_size,
             &self.selected_tool,
             &self.modifiers,
+            self.active_modifier,
             self.dragging_modifier,
             self.drag_hover_target,
         ));
