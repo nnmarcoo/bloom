@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::{BufReader, Error};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -51,7 +52,7 @@ pub struct ImageData {
     pub width: u32,
     pub height: u32,
     pub id: ImageId,
-    pub histogram: ([u32; 256], [u32; 256], [u32; 256]),
+    histogram: OnceLock<([u32; 256], [u32; 256], [u32; 256])>,
     pub exif: ExifData,
     pub bit_depth: u8,
     pub color_space: Option<&'static str>,
@@ -64,17 +65,21 @@ impl ImageData {
 
     pub fn new(pixels: Vec<u8>, width: u32, height: u32) -> Self {
         let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
-        let histogram = Self::compute_histogram(&pixels);
         Self {
             pixels,
             width,
             height,
             id,
-            histogram,
+            histogram: OnceLock::new(),
             exif: ExifData::default(),
             bit_depth: 8,
             color_space: None,
         }
+    }
+
+    pub fn histogram(&self) -> &([u32; 256], [u32; 256], [u32; 256]) {
+        self.histogram
+            .get_or_init(|| Self::compute_histogram(&self.pixels))
     }
 
     fn compute_histogram(pixels: &[u8]) -> ([u32; 256], [u32; 256], [u32; 256]) {

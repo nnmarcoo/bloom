@@ -197,7 +197,7 @@ impl ViewProgram {
         if let Some(anim) = &self.animation {
             return Some(anim.current_histogram());
         }
-        self.image.as_deref().map(|d| &d.histogram)
+        self.image.as_deref().map(|d| d.histogram())
     }
 
     pub fn exif(&self) -> Option<&ExifData> {
