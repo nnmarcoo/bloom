@@ -125,7 +125,7 @@ pub fn view<'a>(notifications: &'a [NotificationEntry]) -> Element<'a, Message> 
 fn toast_view(index: usize, n: &Notification, alpha: f32) -> Element<'_, Message> {
     let (icon_bytes, accent_fn): (&'static [u8], fn(&iced::Theme) -> Color) = match n.kind {
         NotificationKind::Warning => (
-            include_bytes!("../../assets/icons/error.svg"),
+            include_bytes!("../../assets/icons/info.svg"),
             |t: &iced::Theme| t.extended_palette().warning.base.color,
         ),
         NotificationKind::Error => (

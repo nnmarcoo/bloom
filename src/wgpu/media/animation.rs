@@ -1,5 +1,8 @@
+use std::io::Error;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use image::ImageError;
 
 use super::image_data::ImageData;
 
@@ -19,16 +22,19 @@ pub struct Animation {
 }
 
 impl Animation {
-    pub fn new(frames: Vec<Frame>) -> Self {
+    pub fn new(frames: Vec<Frame>) -> Result<Self, ImageError> {
+        let first_delay = frames
+            .first()
+            .ok_or_else(|| ImageError::IoError(Error::other("animation has no frames")))?
+            .delay;
         let total_duration = frames.iter().map(|f| f.delay).sum();
-        let first_delay = frames[0].delay;
-        Self {
+        Ok(Self {
             frames: Arc::new(frames),
             total_duration,
             current: 0,
             current_timestamp: Duration::ZERO,
             deadline: Instant::now() + first_delay,
-        }
+        })
     }
 
     pub fn current_image(&self) -> &Arc<ImageData> {

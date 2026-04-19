@@ -152,7 +152,7 @@ impl ImageData {
             });
         }
 
-        Ok(Animation::new(frames))
+        Animation::new(frames)
     }
 
     fn tonemap_scale(r: f32, g: f32, b: f32) -> f32 {
@@ -337,7 +337,7 @@ impl ImageData {
                 delay,
             });
         }
-        Ok(Animation::new(frames))
+        Animation::new(frames)
     }
 
     pub fn load_webp_animated(path: &Path) -> Result<Animation, ImageError> {
@@ -373,7 +373,7 @@ impl ImageData {
                 delay,
             });
         }
-        Ok(Animation::new(frames))
+        Animation::new(frames)
     }
 
     pub fn load_jp2(path: &Path) -> Result<Self, ImageError> {
@@ -509,7 +509,9 @@ impl ImageData {
             _ => level.data.to_vec(),
         };
 
-        let fmt = header.format.unwrap();
+        let fmt = header
+            .format
+            .ok_or_else(|| ImageError::IoError(Error::other("KTX2: missing format field")))?;
         let pixels: Vec<u8> = match fmt {
             f if f == Format::R8G8B8A8_UNORM || f == Format::R8G8B8A8_SRGB => raw,
             f if f == Format::B8G8R8A8_UNORM || f == Format::B8G8R8A8_SRGB => raw
