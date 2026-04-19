@@ -184,16 +184,16 @@ where
                 _ => {}
             },
 
-            Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
-                if !state.is_editing() {
-                    let lines = match delta {
-                        mouse::ScrollDelta::Lines { y, .. } => *y,
-                        mouse::ScrollDelta::Pixels { y, .. } => *y / 16.0,
-                    };
-                    let new_pct = ((self.value * 100.0).round() + lines).round().max(1.0);
-                    shell.publish((self.on_change)(new_pct / 100.0));
-                    shell.capture_event();
-                }
+            Event::Mouse(mouse::Event::WheelScrolled { delta })
+                if cursor.is_over(bounds) && !state.is_editing() =>
+            {
+                let lines = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } => *y,
+                    mouse::ScrollDelta::Pixels { y, .. } => *y / 16.0,
+                };
+                let new_pct = ((self.value * 100.0).round() + lines).round().max(1.0);
+                shell.publish((self.on_change)(new_pct / 100.0));
+                shell.capture_event();
             }
 
             Event::Keyboard(keyboard::Event::KeyPressed { key, text, .. })

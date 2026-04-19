@@ -626,12 +626,14 @@ impl ImageData {
                     let sa = src[3] as u32;
                     let da = canvas[dst + 3] as u32;
                     let out_a = sa + da * (255 - sa) / 255;
-                    if out_a > 0 {
-                        for c in 0..3 {
-                            canvas[dst + c] = ((src[c] as u32 * sa
-                                + canvas[dst + c] as u32 * da * (255 - sa) / 255)
-                                / out_a) as u8;
+                    for c in 0..3 {
+                        let num =
+                            src[c] as u32 * sa + canvas[dst + c] as u32 * da * (255 - sa) / 255;
+                        if let Some(v) = num.checked_div(out_a) {
+                            canvas[dst + c] = v as u8;
                         }
+                    }
+                    if out_a > 0 {
                         canvas[dst + 3] = out_a as u8;
                     }
                 }

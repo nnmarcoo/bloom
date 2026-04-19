@@ -122,21 +122,19 @@ where
                     shell.request_redraw();
                 }
             }
-            Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                if state.drag_x.is_some() {
-                    state.drag_x = Some(position.x);
-                    shell.publish((self.on_seek)(frame_from_x(position.x)));
-                    shell.capture_event();
-                    shell.request_redraw();
-                }
+            Event::Mouse(mouse::Event::CursorMoved { position }) if state.drag_x.is_some() => {
+                state.drag_x = Some(position.x);
+                shell.publish((self.on_seek)(frame_from_x(position.x)));
+                shell.capture_event();
+                shell.request_redraw();
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                if state.drag_x.take().is_some() {
-                    if let Some(msg) = self.on_drag_end.clone() {
-                        shell.publish(msg);
-                    }
-                    shell.capture_event();
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if state.drag_x.take().is_some() =>
+            {
+                if let Some(msg) = self.on_drag_end.clone() {
+                    shell.publish(msg);
                 }
+                shell.capture_event();
             }
             _ => {}
         }

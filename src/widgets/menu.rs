@@ -66,11 +66,9 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for MenuItem<'a, 
         let is_over = cursor.is_over(layout.bounds());
 
         match event {
-            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if state.is_hovered != is_over {
-                    state.is_hovered = is_over;
-                    shell.request_redraw();
-                }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) if state.is_hovered != is_over => {
+                state.is_hovered = is_over;
+                shell.request_redraw();
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) if is_over => {
                 shell.publish(self.on_press.clone());
