@@ -35,19 +35,24 @@ fn main() -> iced::Result {
     } else {
         window::Level::Normal
     };
+    let decorations = config.decorations;
 
-    iced::application(move || App::new(media.clone()), App::update, App::view)
-        .title(App::title)
-        .window(window::Settings {
-            min_size: Some(Size::new(460.0, 220.0)),
-            decorations: config.decorations,
-            level,
-            icon: app_icon(),
-            ..Default::default()
-        })
-        .centered()
-        .theme(App::theme)
-        .subscription(App::subscription)
-        .scale_factor(App::scale_factor)
-        .run()
+    iced::application(
+        move || App::new(media.clone(), config.clone()),
+        App::update,
+        App::view,
+    )
+    .title(App::title)
+    .window(window::Settings {
+        min_size: Some(Size::new(460.0, 220.0)),
+        decorations,
+        level,
+        icon: app_icon(),
+        ..Default::default()
+    })
+    .centered()
+    .theme(App::theme)
+    .subscription(App::subscription)
+    .scale_factor(App::scale_factor)
+    .run()
 }

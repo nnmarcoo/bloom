@@ -163,8 +163,7 @@ pub enum Message {
 }
 
 impl App {
-    pub fn new(path: Option<PathBuf>) -> (Self, Task<Message>) {
-        let config = Config::load();
+    pub fn new(path: Option<PathBuf>, config: Config) -> (Self, Task<Message>) {
         let effective_path = path.or_else(|| {
             if config.remember_last {
                 config.last_image.as_ref().filter(|p| p.exists()).cloned()
