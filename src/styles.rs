@@ -260,7 +260,7 @@ pub fn modifier_active_card_style(theme: &Theme) -> container::Style {
         background: Some(Background::Color(palette.background.base.color)),
         border: iced::Border {
             color: palette.primary.base.color,
-            width: 1.0,
+            width: 2.0,
             radius: radius().into(),
         },
         ..Default::default()
