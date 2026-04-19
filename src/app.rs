@@ -348,7 +348,10 @@ impl App {
                     clipboard::write_text(&path.to_string_lossy());
                 }
             }
-            Message::Exit => return tasks::close_window(),
+            Message::Exit => {
+                self.config.save();
+                return tasks::close_window();
+            }
             Message::TogglePlayback => {
                 self.paused = !self.paused;
                 if !self.paused {
@@ -393,15 +396,12 @@ impl App {
             }
             Message::UiScaleUp => {
                 self.config.ui_scale = (self.config.ui_scale + UI_SCALE_STEP).min(UI_SCALE_MAX);
-                self.config.save();
             }
             Message::UiScaleDown => {
                 self.config.ui_scale = (self.config.ui_scale - UI_SCALE_STEP).max(UI_SCALE_MIN);
-                self.config.save();
             }
             Message::UiScaleReset => {
                 self.config.ui_scale = UI_SCALE_DEFAULT;
-                self.config.save();
             }
             Message::ToggleCheckerboard => {
                 self.program.show_checkerboard = !self.program.show_checkerboard;
@@ -691,6 +691,10 @@ impl App {
                 if self.dragging_modifier.is_some() =>
             {
                 Task::done(Message::ModifierDragEnd)
+            }
+            Event::Window(window::Event::CloseRequested) => {
+                self.config.save();
+                return tasks::close_window();
             }
             Event::Window(window::Event::FileDropped(path)) => {
                 Task::done(Message::MediaSelected(path))
