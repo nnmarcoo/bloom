@@ -287,8 +287,16 @@ impl Default for Keymap {
         m.insert(Action::UiScaleUp, n(key::Code::Equal));
         m.insert(Action::UiScaleDown, n(key::Code::Minus));
         m.insert(Action::UiScaleReset, n(key::Code::Digit0));
-        m.insert(Action::RotateCw, n(key::Code::BracketRight));
-        m.insert(Action::RotateCcw, n(key::Code::BracketLeft));
+        m.insert(Action::RotateCw, n(key::Code::KeyR));
+        m.insert(
+            Action::RotateCcw,
+            KeyBinding {
+                ctrl: false,
+                shift: true,
+                alt: false,
+                code: key::Code::KeyR,
+            },
+        );
         m.insert(Action::ToolSelect, n(key::Code::KeyS));
         m.insert(Action::ToolCrop, n(key::Code::KeyC));
         m.insert(Action::ToolDraw, n(key::Code::KeyD));
