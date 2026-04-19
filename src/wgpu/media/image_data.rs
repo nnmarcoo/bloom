@@ -697,7 +697,8 @@ impl ImageData {
         use std::process::Command;
 
         let tmp = std::env::temp_dir().join(format!(
-            "bloom_eps_{}.png",
+            "bloom_eps_{}_{}.png",
+            std::process::id(),
             path.file_stem().and_then(|s| s.to_str()).unwrap_or("out")
         ));
 
