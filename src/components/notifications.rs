@@ -71,12 +71,11 @@ impl NotificationEntry {
     }
 
     pub fn expire_if_due(&mut self, now: Instant) {
-        if self.dismissing_at.is_none() {
-            if let Some(timeout) = self.notification.timeout() {
-                if now.duration_since(self.pushed_at) >= timeout {
-                    self.dismissing_at = Some(now);
-                }
-            }
+        if self.dismissing_at.is_none()
+            && let Some(timeout) = self.notification.timeout()
+            && now.duration_since(self.pushed_at) >= timeout
+        {
+            self.dismissing_at = Some(now);
         }
     }
 

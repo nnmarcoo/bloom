@@ -245,11 +245,12 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for SubMenuItem<'
     ) {
         let state = tree.state.downcast_mut::<SubMenuState>();
         let is_over = cursor.is_over(layout.bounds());
-        if let Event::Mouse(mouse::Event::CursorMoved { .. }) = event {
-            if is_over && !state.is_hovered {
-                state.is_hovered = true;
-                shell.request_redraw();
-            }
+        if let Event::Mouse(mouse::Event::CursorMoved { .. }) = event
+            && is_over
+            && !state.is_hovered
+        {
+            state.is_hovered = true;
+            shell.request_redraw();
         }
     }
 

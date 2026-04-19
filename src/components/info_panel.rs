@@ -59,7 +59,7 @@ impl canvas::Program<Message> for Crosshair {
                 ..Stroke::default()
             };
             for (from, to) in arms {
-                frame.stroke(&canvas::Path::line(from, to), stroke.clone());
+                frame.stroke(&canvas::Path::line(from, to), stroke);
             }
         }
 

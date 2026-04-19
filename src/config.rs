@@ -206,11 +206,11 @@ impl Config {
             eprintln!("bloom: could not determine config directory");
             return;
         };
-        if let Some(parent) = path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                eprintln!("bloom: could not create config dir: {e}");
-                return;
-            }
+        if let Some(parent) = path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            eprintln!("bloom: could not create config dir: {e}");
+            return;
         }
         match toml::to_string_pretty(&ConfigFile::from(self)) {
             Ok(text) => {

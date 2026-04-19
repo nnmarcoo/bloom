@@ -39,13 +39,12 @@ impl Primitive for ViewPrimitive {
         viewport: &Viewport,
     ) {
         pipeline.mipmap_zoom_out = self.mipmap_zoom_out;
-        if let Some(image) = &self.image {
-            if pipeline.needs_upload(image.id) {
-                if let Err(e) = pipeline.upload_image(device, queue, image) {
-                    eprintln!("upload_image failed: {e}");
-                    return;
-                }
-            }
+        if let Some(image) = &self.image
+            && pipeline.needs_upload(image.id)
+            && let Err(e) = pipeline.upload_image(device, queue, image)
+        {
+            eprintln!("upload_image failed: {e}");
+            return;
         }
         pipeline.update(
             device,

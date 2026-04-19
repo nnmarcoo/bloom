@@ -35,6 +35,7 @@ pub struct TiledSource {
 }
 
 impl TiledSource {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         device: &Device,
         queue: &Queue,
@@ -55,8 +56,8 @@ impl TiledSource {
         }
 
         let max_dim = device.limits().max_texture_dimension_2d;
-        let cols = (image.width + max_dim - 1) / max_dim;
-        let rows = (image.height + max_dim - 1) / max_dim;
+        let cols = image.width.div_ceil(max_dim);
+        let rows = image.height.div_ceil(max_dim);
         let src_stride = (image.width * 4) as usize;
 
         let mut tiles = Vec::with_capacity((cols * rows) as usize);

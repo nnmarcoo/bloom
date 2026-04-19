@@ -336,10 +336,10 @@ impl App {
             }
             Message::PanEnded => self.program.set_panning(false),
             Message::CopyColor => {
-                if let Some(pos) = self.context_menu_pos.take() {
-                    if let Some((_, _, [r, g, b, _])) = self.program.color_at(pos) {
-                        clipboard::write_text(&format!("#{r:02X}{g:02X}{b:02X}"));
-                    }
+                if let Some(pos) = self.context_menu_pos.take()
+                    && let Some((_, _, [r, g, b, _])) = self.program.color_at(pos)
+                {
+                    clipboard::write_text(&format!("#{r:02X}{g:02X}{b:02X}"));
                 }
             }
             Message::CopyPath => {
@@ -438,12 +438,12 @@ impl App {
             Message::ModifierDragEnd => {
                 let source = self.dragging_modifier.take();
                 let target = self.drag_hover_target.take();
-                if let (Some(src), Some(tgt)) = (source, target) {
-                    if src != tgt {
-                        let m = self.modifiers.remove(src);
-                        let insert_at = if tgt > src { tgt - 1 } else { tgt };
-                        self.modifiers.insert(insert_at, m);
-                    }
+                if let (Some(src), Some(tgt)) = (source, target)
+                    && src != tgt
+                {
+                    let m = self.modifiers.remove(src);
+                    let insert_at = if tgt > src { tgt - 1 } else { tgt };
+                    self.modifiers.insert(insert_at, m);
                 }
             }
             Message::AddModifier(t) => {
@@ -677,7 +677,7 @@ impl App {
 
     fn apply_media(&mut self, media: MediaData) {
         match media {
-            MediaData::Image(data) => self.program.set_image(data),
+            MediaData::Image(data) => self.program.set_image(*data),
             MediaData::Animation(anim) => self.program.set_animation(anim),
         }
         self.paused = !self.config.autoplay;
@@ -694,7 +694,7 @@ impl App {
             }
             Event::Window(window::Event::CloseRequested) => {
                 self.config.save();
-                return tasks::close_window();
+                tasks::close_window()
             }
             Event::Window(window::Event::FileDropped(path)) => {
                 Task::done(Message::MediaSelected(path))
@@ -714,35 +714,33 @@ impl App {
         modifiers: keyboard::Modifiers,
     ) -> Task<Message> {
         if self.editing_config.is_some() {
-            if let Some(action) = self.preference_state.capturing {
-                if let Physical::Code(code) = physical_key {
-                    let is_modifier = matches!(
-                        code,
-                        key::Code::ControlLeft
-                            | key::Code::ControlRight
-                            | key::Code::ShiftLeft
-                            | key::Code::ShiftRight
-                            | key::Code::AltLeft
-                            | key::Code::AltRight
-                            | key::Code::SuperLeft
-                            | key::Code::SuperRight
-                    );
-                    if !is_modifier {
-                        if code == key::Code::Escape {
-                            return Task::done(Message::Preference(
-                                PreferenceMessage::CancelCapture,
-                            ));
-                        }
-                        let kb = KeyBinding {
-                            ctrl: modifiers.control(),
-                            shift: modifiers.shift(),
-                            alt: modifiers.alt(),
-                            code,
-                        };
-                        return Task::done(Message::Preference(PreferenceMessage::SetKeybinding(
-                            action, kb,
-                        )));
+            if let Some(action) = self.preference_state.capturing
+                && let Physical::Code(code) = physical_key
+            {
+                let is_modifier = matches!(
+                    code,
+                    key::Code::ControlLeft
+                        | key::Code::ControlRight
+                        | key::Code::ShiftLeft
+                        | key::Code::ShiftRight
+                        | key::Code::AltLeft
+                        | key::Code::AltRight
+                        | key::Code::SuperLeft
+                        | key::Code::SuperRight
+                );
+                if !is_modifier {
+                    if code == key::Code::Escape {
+                        return Task::done(Message::Preference(PreferenceMessage::CancelCapture));
                     }
+                    let kb = KeyBinding {
+                        ctrl: modifiers.control(),
+                        shift: modifiers.shift(),
+                        alt: modifiers.alt(),
+                        code,
+                    };
+                    return Task::done(Message::Preference(PreferenceMessage::SetKeybinding(
+                        action, kb,
+                    )));
                 }
             }
             return Task::none();

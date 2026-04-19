@@ -278,15 +278,11 @@ impl<Message> Widget<Message, Theme, Renderer> for Histogram {
         let bin_width = bar_area.width / 256.0;
         let max = self.max as f32;
         if max > 0.0 {
-            for ch in 0..4 {
+            for (ch, color) in CHANNEL_COLORS.iter().enumerate() {
                 if !state.channels[ch] {
                     continue;
                 }
-                let mut c = if is_dark {
-                    CHANNEL_COLORS[ch].dark
-                } else {
-                    CHANNEL_COLORS[ch].light
-                };
+                let mut c = if is_dark { color.dark } else { color.light };
                 c.a = BAR_ALPHA;
                 for i in 0..256usize {
                     let h = self.data[ch][i] as f32 / max * bar_area.height;
@@ -385,7 +381,7 @@ impl<Message> Widget<Message, Theme, Renderer> for Histogram {
                     line_height: text::LineHeight::default(),
                     font: Font::MONOSPACE,
                     align_x: Horizontal::Center.into(),
-                    align_y: Vertical::Center.into(),
+                    align_y: Vertical::Center,
                     shaping: text::Shaping::Basic,
                     wrapping: text::Wrapping::None,
                 },
@@ -413,7 +409,7 @@ impl<Message> Widget<Message, Theme, Renderer> for Histogram {
                         line_height: text::LineHeight::default(),
                         font: Font::MONOSPACE,
                         align_x: Horizontal::Left.into(),
-                        align_y: Vertical::Center.into(),
+                        align_y: Vertical::Center,
                         shaping: text::Shaping::Basic,
                         wrapping: text::Wrapping::None,
                     },
@@ -429,7 +425,7 @@ impl<Message> Widget<Message, Theme, Renderer> for Histogram {
                         line_height: text::LineHeight::default(),
                         font: Font::MONOSPACE,
                         align_x: Horizontal::Right.into(),
-                        align_y: Vertical::Center.into(),
+                        align_y: Vertical::Center,
                         shaping: text::Shaping::Basic,
                         wrapping: text::Wrapping::None,
                     },
@@ -497,7 +493,7 @@ impl<Message> Widget<Message, Theme, Renderer> for Histogram {
                     line_height: text::LineHeight::default(),
                     font: Font::MONOSPACE,
                     align_x: Horizontal::Center.into(),
-                    align_y: Vertical::Center.into(),
+                    align_y: Vertical::Center,
                     shaping: text::Shaping::Basic,
                     wrapping: text::Wrapping::None,
                 },

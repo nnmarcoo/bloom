@@ -221,20 +221,20 @@ where
                         shell.capture_event();
                     }
                     _ => {
-                        if let Some(ch) = text.as_ref().and_then(|s| s.chars().next()) {
-                            if ch.is_ascii_digit() {
-                                if let State::Editing { buffer, fresh } = state {
-                                    if *fresh {
-                                        buffer.clear();
-                                        *fresh = false;
-                                    }
-                                    if buffer.len() < 4 {
-                                        buffer.push(ch);
-                                    }
-                                    self.publish_buffer(buffer, shell);
+                        if let Some(ch) = text.as_ref().and_then(|s| s.chars().next())
+                            && ch.is_ascii_digit()
+                        {
+                            if let State::Editing { buffer, fresh } = state {
+                                if *fresh {
+                                    buffer.clear();
+                                    *fresh = false;
                                 }
-                                shell.capture_event();
+                                if buffer.len() < 4 {
+                                    buffer.push(ch);
+                                }
+                                self.publish_buffer(buffer, shell);
                             }
+                            shell.capture_event();
                         }
                     }
                 }
@@ -327,7 +327,7 @@ where
                 line_height: text::LineHeight::default(),
                 font: Font::DEFAULT,
                 align_x: Horizontal::Left.into(),
-                align_y: Vertical::Top.into(),
+                align_y: Vertical::Top,
                 shaping: text::Shaping::Basic,
                 wrapping: text::Wrapping::None,
             });
@@ -349,7 +349,7 @@ where
                 line_height: text::LineHeight::default(),
                 font: Font::DEFAULT,
                 align_x: Horizontal::Center.into(),
-                align_y: Vertical::Center.into(),
+                align_y: Vertical::Center,
                 shaping: text::Shaping::Basic,
                 wrapping: text::Wrapping::None,
             },
@@ -397,10 +397,10 @@ where
 
 impl<Message: Clone> ScaleEntry<Message> {
     fn publish_buffer(&self, buffer: &str, shell: &mut Shell<'_, Message>) {
-        if let Ok(pct) = buffer.parse::<u32>() {
-            if pct > 0 {
-                shell.publish((self.on_change)(pct as f32 / 100.0));
-            }
+        if let Ok(pct) = buffer.parse::<u32>()
+            && pct > 0
+        {
+            shell.publish((self.on_change)(pct as f32 / 100.0));
         }
     }
 

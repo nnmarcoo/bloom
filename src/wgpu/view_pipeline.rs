@@ -80,6 +80,7 @@ impl ViewPipeline {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         _device: &Device,
@@ -115,7 +116,7 @@ impl ViewPipeline {
         let full_h = source.full_height as f32;
         let angle = -(rotation as f32) * std::f32::consts::FRAC_PI_2;
         // At 90/270 each image dimension divides the opposite viewport dimension.
-        let inv_tile_vp = if rotation % 2 == 0 {
+        let inv_tile_vp = if rotation.is_multiple_of(2) {
             vec2(1.0 / viewport.x, 1.0 / viewport.y)
         } else {
             vec2(1.0 / viewport.y, 1.0 / viewport.x)
@@ -172,10 +173,10 @@ impl ViewPipeline {
         if let Some(source) = &self.source {
             for tile in &source.tiles {
                 // Viewport culling.
-                if let Some((min_ndc, max_ndc)) = tile.last_ndc_rect {
-                    if max_ndc.x < -1.0 || min_ndc.x > 1.0 || max_ndc.y < -1.0 || min_ndc.y > 1.0 {
-                        continue;
-                    }
+                if let Some((min_ndc, max_ndc)) = tile.last_ndc_rect
+                    && (max_ndc.x < -1.0 || min_ndc.x > 1.0 || max_ndc.y < -1.0 || min_ndc.y > 1.0)
+                {
+                    continue;
                 }
 
                 let zoomed_out = source.physical_scale < 1.0 - 1e-6;

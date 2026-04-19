@@ -14,6 +14,7 @@ use crate::widgets::menu::{menu_item, menu_separator, styled_menu};
 use crate::widgets::menu_button::{MenuAlign, MenuButton};
 use crate::widgets::scale_entry::ScaleEntry;
 
+#[allow(clippy::too_many_arguments)]
 pub fn view<'a>(
     mode: Mode,
     scale: f32,

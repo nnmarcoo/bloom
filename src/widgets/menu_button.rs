@@ -23,6 +23,7 @@ struct State {
 pub struct MenuButton<'a, Message> {
     content: Element<'a, Message, Theme, Renderer>,
     menu: Element<'a, Message, Theme, Renderer>,
+    #[allow(clippy::type_complexity)]
     style: Box<dyn Fn(&Theme, button::Status) -> button::Style>,
     width: Length,
     height: Length,
@@ -158,13 +159,13 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for MenuButton<'a
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) {
-        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
-            if cursor.is_over(layout.bounds()) {
-                let state = tree.state.downcast_mut::<State>();
-                state.expanded = !state.expanded;
-                shell.capture_event();
-                shell.request_redraw();
-            }
+        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event
+            && cursor.is_over(layout.bounds())
+        {
+            let state = tree.state.downcast_mut::<State>();
+            state.expanded = !state.expanded;
+            shell.capture_event();
+            shell.request_redraw();
         }
     }
 
@@ -339,12 +340,13 @@ impl<Message: Clone> Overlay<Message, Theme, Renderer> for MenuOverlay<'_, '_, M
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<Message>,
     ) {
-        if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) = event {
-            if !cursor.is_over(layout.bounds()) && !cursor.is_over(self.button_bounds) {
-                self.widget_state.downcast_mut::<State>().expanded = false;
-                shell.request_redraw();
-                return;
-            }
+        if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) = event
+            && !cursor.is_over(layout.bounds())
+            && !cursor.is_over(self.button_bounds)
+        {
+            self.widget_state.downcast_mut::<State>().expanded = false;
+            shell.request_redraw();
+            return;
         }
 
         let viewport = layout.bounds();

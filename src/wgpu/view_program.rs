@@ -98,7 +98,7 @@ impl ViewProgram {
         if self.image_size == Vec2::ZERO {
             return;
         }
-        let (fw, fh) = if self.rotation % 2 == 0 {
+        let (fw, fh) = if self.rotation.is_multiple_of(2) {
             (self.image_size.x, self.image_size.y)
         } else {
             (self.image_size.y, self.image_size.x)
@@ -153,7 +153,7 @@ impl ViewProgram {
     }
 
     fn clamp_offset(&mut self) {
-        let size = if self.rotation % 2 == 0 {
+        let size = if self.rotation.is_multiple_of(2) {
             self.image_size
         } else {
             vec2(self.image_size.y, self.image_size.x)
@@ -173,7 +173,7 @@ impl ViewProgram {
     }
 
     fn aspect(&self, viewport: Vec2) -> Vec2 {
-        if self.rotation % 2 == 0 {
+        if self.rotation.is_multiple_of(2) {
             self.image_size / viewport
         } else {
             vec2(
@@ -228,15 +228,15 @@ impl ViewProgram {
     }
 
     pub fn set_cursor_pos(&mut self, pos: Option<Vec2>) {
-        if !self.panning {
-            if let Some(new_pos) = pos.and_then(|p| {
+        if !self.panning
+            && let Some(new_pos) = pos.and_then(|p| {
                 Some(
                     self.screen_to_image_coords(p)?
                         .clamp(Vec2::ZERO, self.image_size - Vec2::ONE),
                 )
-            }) {
-                self.cursor_image_pos = Some(new_pos);
-            }
+            })
+        {
+            self.cursor_image_pos = Some(new_pos);
         }
     }
 
@@ -257,10 +257,10 @@ impl ViewProgram {
     }
 
     pub fn tick_animation(&mut self, now: Instant) {
-        if let Some(ref mut anim) = self.animation {
-            if let Some(frame) = anim.tick(now) {
-                self.image = Some(frame);
-            }
+        if let Some(ref mut anim) = self.animation
+            && let Some(frame) = anim.tick(now)
+        {
+            self.image = Some(frame);
         }
     }
 
@@ -418,63 +418,63 @@ impl Program<Message> for ViewProgram {
             return Some(Action::publish(Message::BoundsChanged(bounds)));
         }
 
-        if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
-            if let Some(pos) = cursor.position_in(bounds) {
-                let pos = Vec2::new(pos.x, pos.y);
-                let scale_msg = |y: f32| {
-                    if y > 0.0 {
-                        Message::ScaleUp(pos)
-                    } else {
-                        Message::ScaleDown(pos)
-                    }
-                };
-                let msg = match delta {
-                    mouse::ScrollDelta::Lines { y, .. } if *y != 0.0 => {
-                        state.last_scale = None;
-                        Some(scale_msg(*y))
-                    }
-                    mouse::ScrollDelta::Pixels { y, .. } if *y != 0.0 => {
-                        let now = Instant::now();
-                        if state
-                            .last_scale
-                            .map_or(true, |t| now.duration_since(t) >= SCALE_COOLDOWN)
-                        {
-                            state.last_scale = Some(now);
-                            Some(scale_msg(*y))
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                };
-                if let Some(msg) = msg {
-                    return Some(Action::publish(msg).and_capture());
+        if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
+            && let Some(pos) = cursor.position_in(bounds)
+        {
+            let pos = Vec2::new(pos.x, pos.y);
+            let scale_msg = |y: f32| {
+                if y > 0.0 {
+                    Message::ScaleUp(pos)
+                } else {
+                    Message::ScaleDown(pos)
                 }
-                return Some(Action::capture());
+            };
+            let msg = match delta {
+                mouse::ScrollDelta::Lines { y, .. } if *y != 0.0 => {
+                    state.last_scale = None;
+                    Some(scale_msg(*y))
+                }
+                mouse::ScrollDelta::Pixels { y, .. } if *y != 0.0 => {
+                    let now = Instant::now();
+                    if state
+                        .last_scale
+                        .is_none_or(|t| now.duration_since(t) >= SCALE_COOLDOWN)
+                    {
+                        state.last_scale = Some(now);
+                        Some(scale_msg(*y))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(msg) = msg {
+                return Some(Action::publish(msg).and_capture());
             }
+            return Some(Action::capture());
         }
 
         match state.drag {
             ViewDragState::Idle => {
-                if let Event::Mouse(mouse::Event::ButtonPressed(Button::Right)) = event {
-                    if let Some(pos) = cursor.position_in(bounds) {
-                        return Some(Action::publish(Message::ContextMenuOpened(Vec2::new(
-                            pos.x, pos.y,
-                        ))));
-                    }
+                if let Event::Mouse(mouse::Event::ButtonPressed(Button::Right)) = event
+                    && let Some(pos) = cursor.position_in(bounds)
+                {
+                    return Some(Action::publish(Message::ContextMenuOpened(Vec2::new(
+                        pos.x, pos.y,
+                    ))));
                 }
-                if let Event::Mouse(mouse::Event::ButtonPressed(Button::Left)) = event {
-                    if let Some(pos) = cursor.position_over(bounds) {
-                        state.drag = ViewDragState::Panning(pos);
-                        return Some(Action::publish(Message::PanStarted));
-                    }
+                if let Event::Mouse(mouse::Event::ButtonPressed(Button::Left)) = event
+                    && let Some(pos) = cursor.position_over(bounds)
+                {
+                    state.drag = ViewDragState::Panning(pos);
+                    return Some(Action::publish(Message::PanStarted));
                 }
-                if let Event::Mouse(mouse::Event::CursorMoved { .. }) = event {
-                    if let Some(pos) = cursor.position_in(bounds) {
-                        return Some(Action::publish(Message::CursorMoved(Vec2::new(
-                            pos.x, pos.y,
-                        ))));
-                    }
+                if let Event::Mouse(mouse::Event::CursorMoved { .. }) = event
+                    && let Some(pos) = cursor.position_in(bounds)
+                {
+                    return Some(Action::publish(Message::CursorMoved(Vec2::new(
+                        pos.x, pos.y,
+                    ))));
                 }
                 if let Event::Mouse(mouse::Event::CursorLeft) = event {
                     return Some(Action::publish(Message::CursorLeft));

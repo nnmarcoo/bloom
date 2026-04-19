@@ -37,7 +37,7 @@ use super::exif_data::ExifData;
 
 #[derive(Debug, Clone)]
 pub enum MediaData {
-    Image(ImageData),
+    Image(Box<ImageData>),
     Animation(Animation),
 }
 
@@ -764,10 +764,11 @@ impl ImageData {
                 if decoder.is_animated() {
                     MediaData::Animation(Self::load_webp_animated(path)?)
                 } else {
-                    MediaData::Image(Self::load(path)?)
+                    MediaData::Image(Box::new(Self::load(path)?))
                 }
             }
             _ => {
+                #[allow(clippy::type_complexity)]
                 static TABLE: &[(&[&str], fn(&Path) -> Result<ImageData, ImageError>)] = &[
                     (&["hdr"], ImageData::load_hdr),
                     (&["exr"], ImageData::load_exr),
@@ -802,7 +803,7 @@ impl ImageData {
                     .map(|(_, f)| *f)
                     .unwrap_or(ImageData::load);
 
-                MediaData::Image(loader(path)?)
+                MediaData::Image(Box::new(loader(path)?))
             }
         };
 

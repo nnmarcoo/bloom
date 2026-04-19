@@ -21,6 +21,7 @@ use crate::{
     },
 };
 
+#[allow(clippy::too_many_arguments)]
 pub fn view<'a>(
     program: ViewProgram,
     loading: Option<&'a str>,

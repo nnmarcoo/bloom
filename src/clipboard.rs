@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::{gallery::SUPPORTED, wgpu::media::image_data::ImageData};
 
 pub enum ClipboardImage {
-    Pixels(ImageData),
+    Pixels(Box<ImageData>),
     Path(PathBuf),
 }
 
@@ -12,11 +12,11 @@ pub fn read() -> Option<ClipboardImage> {
 
     if let Ok(img) = ctx.get_image() {
         let pixels = img.bytes.into_owned();
-        return Some(ClipboardImage::Pixels(ImageData::new(
+        return Some(ClipboardImage::Pixels(Box::new(ImageData::new(
             pixels,
             img.width as u32,
             img.height as u32,
-        )));
+        ))));
     }
 
     if let Ok(text) = ctx.get_text() {
