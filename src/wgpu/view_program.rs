@@ -118,7 +118,6 @@ impl ViewProgram {
     }
 
     pub fn pan(&mut self, delta: Vec2) {
-        // 2.0 converts screen-pixel delta to NDC units (NDC spans [-1, 1] = 2 over viewport).
         self.offset += 2.0 * delta / self.scale.value();
         self.clamp_offset();
     }

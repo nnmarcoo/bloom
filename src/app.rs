@@ -298,7 +298,7 @@ impl App {
                         if mipmap_changed {
                             self.notifications
                                 .push(NotificationEntry::new(Notification::warning(
-                                    "Restart required to apply mipmapping change.",
+                                    "Mipmapping change applies on next image load.",
                                 )));
                         }
                         if dec || aot {
