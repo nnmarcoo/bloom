@@ -14,8 +14,10 @@ use crate::styles::{
 pub fn format_duration(d: Duration) -> String {
     let ms = d.as_millis();
     let secs = ms / 1000;
+    let mins = secs / 60;
+    let secs = secs % 60;
     let rem = ms % 1000;
-    format!("{secs}.{rem:03}s")
+    format!("{mins}:{secs:02}.{rem:03}")
 }
 
 pub fn svg_button<'a>(icon: &'static [u8], msg: Message) -> Element<'a, Message> {

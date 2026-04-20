@@ -69,7 +69,7 @@ pub fn view<'a>(
         .on_drag_end(Message::TimelineScrubEnd);
 
     let label = timestamp
-        .map(|(ts, dur)| format!("{} / {}", format_duration(ts), format_duration(dur)))
+        .map(|(ts, dur)| format!("{} – {}", format_duration(ts), format_duration(dur)))
         .unwrap_or_default();
 
     let label_widget = container(text(label).size(12).font(Font::MONOSPACE))

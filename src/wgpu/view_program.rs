@@ -336,13 +336,14 @@ impl ViewProgram {
         Some((img.x as u32, img.y as u32))
     }
 
-    pub fn cursor_info(&self) -> Option<(u32, u32, [u8; 4])> {
+    pub fn cursor_info(&self) -> Option<(u32, u32, Vec2, [u8; 4])> {
         let img = self.cursor_image_pos?;
         let (px, py) = (img.x as u32, img.y as u32);
+        let uv = img / self.image_size;
         let image = self.image.as_ref()?;
         let idx = (py as usize * image.width as usize + px as usize) * 4;
         let p = image.pixels.get(idx..idx + 4)?;
-        Some((px, py, [p[0], p[1], p[2], p[3]]))
+        Some((px, py, uv, [p[0], p[1], p[2], p[3]]))
     }
 
     pub fn cursor_pixels(&self, size: u32) -> Option<Vec<u8>> {

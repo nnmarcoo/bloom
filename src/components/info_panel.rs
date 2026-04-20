@@ -336,7 +336,7 @@ pub fn view<'a>(
     {
         anim_rows.push(row_item(
             "Time",
-            format!("{} / {}", format_duration(ts), format_duration(dur)),
+            format!("{} – {}", format_duration(ts), format_duration(dur)),
             muted,
         ));
     }
@@ -362,7 +362,7 @@ pub fn view<'a>(
     push_section(&mut rows, "EXIF", camera_rows);
 
     let mut cursor_rows: Vec<Element<'a, Message>> = Vec::new();
-    if let Some((px, py, rgba)) = program.cursor_info() {
+    if let Some((px, py, uv, rgba)) = program.cursor_info() {
         if let Some(pixels) = program.cursor_pixels(pixel_preview_size) {
             let display_size = INFO_PANEL_WIDTH - PAD * 4.0;
             let pixel_size = display_size / pixel_preview_size as f32;
@@ -381,7 +381,18 @@ pub fn view<'a>(
             );
         }
         cursor_rows.push(color_row(rgba, muted));
+        let [r, g, b, a] = rgba;
+        cursor_rows.push(row_item(
+            "Hex",
+            if a == 255 {
+                format!("#{:02X}{:02X}{:02X}", r, g, b)
+            } else {
+                format!("#{:02X}{:02X}{:02X}{:02X}", r, g, b, a)
+            },
+            muted,
+        ));
         cursor_rows.push(row_item("Pixel", format!("({}, {})", px, py), muted));
+        cursor_rows.push(row_item("UV", format!("({:.3}, {:.3})", uv.x, uv.y), muted));
     }
     push_section(&mut rows, "CURSOR", cursor_rows);
 
