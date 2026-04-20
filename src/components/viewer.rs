@@ -3,7 +3,7 @@ use std::path::Path;
 
 use iced::{
     Center, Element, Length, Theme,
-    widget::{column, container, row, shader, stack, text},
+    widget::{column, container, shader, stack, text},
 };
 use iced_aw::ContextMenu;
 
@@ -87,52 +87,30 @@ pub fn view<'a>(
     })
     .into();
 
-    match (show_info, show_edit) {
-        (true, true) => row![
-            info_panel::view(
-                path,
-                gallery,
-                &program,
-                theme,
-                info_collapsed,
-                pixel_preview_size
-            ),
-            viewer_with_menu,
-            edit_panel::view(
-                selected_tool,
-                modifiers,
-                active_modifier,
-                dragging_modifier,
-                drag_hover_target
-            ),
-        ]
-        .height(Length::Fill)
-        .into(),
-        (true, false) => row![
-            info_panel::view(
-                path,
-                gallery,
-                &program,
-                theme,
-                info_collapsed,
-                pixel_preview_size
-            ),
-            viewer_with_menu,
-        ]
-        .height(Length::Fill)
-        .into(),
-        (false, true) => row![
-            viewer_with_menu,
-            edit_panel::view(
-                selected_tool,
-                modifiers,
-                active_modifier,
-                dragging_modifier,
-                drag_hover_target
-            )
-        ]
-        .height(Length::Fill)
-        .into(),
-        (false, false) => viewer_with_menu,
+    if !show_info && !show_edit {
+        return viewer_with_menu;
     }
+
+    let mut content = iced::widget::Row::new().height(Length::Fill);
+    if show_info {
+        content = content.push(info_panel::view(
+            path,
+            gallery,
+            &program,
+            theme,
+            info_collapsed,
+            pixel_preview_size,
+        ));
+    }
+    content = content.push(viewer_with_menu);
+    if show_edit {
+        content = content.push(edit_panel::view(
+            selected_tool,
+            modifiers,
+            active_modifier,
+            dragging_modifier,
+            drag_hover_target,
+        ));
+    }
+    content.into()
 }

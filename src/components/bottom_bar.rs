@@ -9,7 +9,7 @@ use crate::app::Message;
 use crate::styles::{
     BAR_HEIGHT, BUTTON_SIZE, PAD, bar_style, icon_button_style, panel_divider_style, svg_style,
 };
-use crate::ui::{svg_button, svg_button_active, svg_button_maybe, with_tooltip};
+use crate::ui::{svg_button, svg_button_toggle, with_tooltip};
 use crate::widgets::menu::{menu_item, menu_separator, styled_menu};
 use crate::widgets::menu_button::{MenuAlign, MenuButton};
 use crate::widgets::scale_entry::ScaleEntry;
@@ -51,17 +51,17 @@ pub fn view<'a>(
 
     let left_buttons = row![
         with_tooltip(
-            svg_button_maybe(
+            svg_button(
                 include_bytes!("../../assets/icons/left.svg"),
-                Some(Message::Previous)
+                Message::Previous
             ),
             "Previous media",
             Position::Top,
         ),
         with_tooltip(
-            svg_button_maybe(
+            svg_button(
                 include_bytes!("../../assets/icons/right.svg"),
-                Some(Message::Next)
+                Message::Next
             ),
             "Next media",
             Position::Top,
@@ -72,15 +72,12 @@ pub fn view<'a>(
             Position::Top,
         ),
         with_tooltip(
-            svg_button_maybe(
-                include_bytes!("../../assets/icons/fit.svg"),
-                Some(Message::Fit)
-            ),
+            svg_button(include_bytes!("../../assets/icons/fit.svg"), Message::Fit),
             "Fit to viewport",
             Position::Top,
         ),
         with_tooltip(
-            svg_button_maybe(rotation_icon, Some(Message::RotateCw)),
+            svg_button(rotation_icon, Message::RotateCw),
             [
                 "Rotate view (0°)",
                 "Rotate view (90°)",
@@ -93,59 +90,43 @@ pub fn view<'a>(
     .spacing(2)
     .align_y(Vertical::Center);
 
-    let info_btn = if show_info {
-        svg_button_active(
-            include_bytes!("../../assets/icons/info.svg"),
-            Message::ToggleInfoColumn,
-        )
-    } else {
-        svg_button(
-            include_bytes!("../../assets/icons/info.svg"),
-            Message::ToggleInfoColumn,
-        )
-    };
-
     let right_buttons = row![
-        with_tooltip(info_btn, "Information", Position::Top),
         with_tooltip(
-            if show_edit {
-                svg_button_active(
-                    include_bytes!("../../assets/icons/pencil.svg"),
-                    Message::ToggleEditPanel,
-                )
-            } else {
-                svg_button(
-                    include_bytes!("../../assets/icons/pencil.svg"),
-                    Message::ToggleEditPanel,
-                )
-            },
+            svg_button_toggle(
+                include_bytes!("../../assets/icons/info.svg"),
+                Message::ToggleInfoColumn,
+                show_info,
+            ),
+            "Information",
+            Position::Top,
+        ),
+        with_tooltip(
+            svg_button_toggle(
+                include_bytes!("../../assets/icons/pencil.svg"),
+                Message::ToggleEditPanel,
+                show_edit,
+            ),
             "Edit",
             Position::Top,
         ),
         with_tooltip(
-            if show_checkerboard {
-                svg_button_active(
-                    include_bytes!("../../assets/icons/checkerboard.svg"),
-                    Message::ToggleCheckerboard,
-                )
-            } else {
-                svg_button(
-                    include_bytes!("../../assets/icons/checkerboard.svg"),
-                    Message::ToggleCheckerboard,
-                )
-            },
+            svg_button_toggle(
+                include_bytes!("../../assets/icons/checkerboard.svg"),
+                Message::ToggleCheckerboard,
+                show_checkerboard,
+            ),
             "Checkerboard background",
             Position::Top,
         ),
         with_tooltip(
-            svg_button_maybe(fullscreen_icon, Some(Message::ToggleFullscreen)),
+            svg_button(fullscreen_icon, Message::ToggleFullscreen),
             fullscreen_tooltip,
             Position::Top,
         ),
         with_tooltip(
-            svg_button_maybe(
+            svg_button(
                 include_bytes!("../../assets/icons/folder.svg"),
-                Some(Message::SelectMedia)
+                Message::SelectMedia
             ),
             "Select media",
             Position::Top,

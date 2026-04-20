@@ -86,15 +86,14 @@ pub fn with_tooltip_delay<'a>(
     .into()
 }
 
-pub fn svg_button_maybe<'a>(icon: &'static [u8], msg: Option<Message>) -> Element<'a, Message> {
-    button(
-        svg(Handle::from_memory(icon))
-            .style(svg_style)
-            .width(Length::Fixed(BUTTON_SIZE))
-            .height(Length::Fixed(BUTTON_SIZE)),
-    )
-    .padding(PAD)
-    .style(icon_button_style)
-    .on_press_maybe(msg)
-    .into()
+pub fn svg_button_toggle<'a>(
+    icon: &'static [u8],
+    msg: Message,
+    active: bool,
+) -> Element<'a, Message> {
+    if active {
+        svg_button_active(icon, msg)
+    } else {
+        svg_button(icon, msg)
+    }
 }
