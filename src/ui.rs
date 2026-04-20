@@ -15,11 +15,7 @@ pub fn format_duration(d: Duration) -> String {
     let ms = d.as_millis();
     let secs = ms / 1000;
     let rem = ms % 1000;
-    if rem == 0 {
-        format!("{secs}s")
-    } else {
-        format!("{secs}.{rem:03}s")
-    }
+    format!("{secs}.{rem:03}s")
 }
 
 pub fn svg_button<'a>(icon: &'static [u8], msg: Message) -> Element<'a, Message> {
