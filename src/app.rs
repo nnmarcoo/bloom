@@ -48,7 +48,6 @@ pub struct App {
     scrubbing: bool,
     notifications: Vec<NotificationEntry>,
     pub selected_tool: Tool,
-    pub modifiers: Vec<Modifier>,
     pub active_modifier: Option<usize>,
     pub dragging_modifier: Option<usize>,
     pub drag_hover_target: Option<usize>,
@@ -94,7 +93,6 @@ impl App {
             scrubbing: false,
             notifications: Vec::new(),
             selected_tool: Tool::Select,
-            modifiers: Vec::new(),
             active_modifier: None,
             dragging_modifier: None,
             drag_hover_target: None,
@@ -226,6 +224,7 @@ impl App {
                 if let Some(p) = self.gallery.set(path) {
                     self.loading = Some(Gallery::filename(p));
                     self.load_generation = self.load_generation.wrapping_add(1);
+                    self.program.release_image_pixels();
                     return tasks::load_media(p.clone(), self.load_generation);
                 }
             }
@@ -431,7 +430,7 @@ impl App {
             }
             Message::SelectTool(tool) => self.selected_tool = tool,
             Message::SetActiveModifier(i) => {
-                if i < self.modifiers.len() {
+                if i < self.program.modifiers.len() {
                     self.active_modifier = Some(i);
                 }
             }
@@ -453,9 +452,10 @@ impl App {
                 if let (Some(src), Some(tgt)) = (source, target)
                     && src != tgt
                 {
-                    let m = self.modifiers.remove(src);
+                    let m = self.program.modifiers.remove(src);
                     let insert_at = if tgt > src { tgt - 1 } else { tgt };
-                    self.modifiers.insert(insert_at, m);
+                    self.program.modifiers.insert(insert_at, m);
+                    self.program.mark_dirty(src.min(insert_at));
                     if let Some(active) = self.active_modifier {
                         self.active_modifier = Some(if active == src {
                             insert_at
@@ -471,12 +471,17 @@ impl App {
                 }
             }
             Message::AddModifier(t) => {
-                self.modifiers.push(Modifier::new(ModifierKind::from(t)));
-                self.active_modifier = Some(self.modifiers.len() - 1);
+                self.program
+                    .modifiers
+                    .push(Modifier::new(ModifierKind::from(t)));
+                let idx = self.program.modifiers.len() - 1;
+                self.active_modifier = Some(idx);
+                self.program.mark_dirty(idx);
             }
             Message::RemoveModifier(i) => {
-                if i < self.modifiers.len() {
-                    self.modifiers.remove(i);
+                if i < self.program.modifiers.len() {
+                    self.program.mark_dirty(i);
+                    self.program.modifiers.remove(i);
                     self.active_modifier = match self.active_modifier {
                         Some(a) if a == i => None,
                         Some(a) if a > i => Some(a - 1),
@@ -485,22 +490,24 @@ impl App {
                 }
             }
             Message::ToggleModifierExpanded(i) => {
-                if let Some(m) = self.modifiers.get_mut(i) {
+                if let Some(m) = self.program.modifiers.get_mut(i) {
                     m.expanded = !m.expanded;
                 }
             }
             Message::ToggleModifierEnabled(i) => {
-                if let Some(m) = self.modifiers.get_mut(i) {
+                if let Some(m) = self.program.modifiers.get_mut(i) {
                     m.enabled = !m.enabled;
                 }
+                self.program.mark_dirty(i);
             }
             Message::ToggleModifierMask(i) => {
-                if let Some(m) = self.modifiers.get_mut(i) {
+                if let Some(m) = self.program.modifiers.get_mut(i) {
                     m.mask_enabled = !m.mask_enabled;
                 }
+                self.program.mark_dirty(i);
             }
             Message::UpdateModifierMask(i, param) => {
-                if let Some(m) = self.modifiers.get_mut(i) {
+                if let Some(m) = self.program.modifiers.get_mut(i) {
                     match param {
                         MaskParam::X(v) => m.mask_x = v,
                         MaskParam::Y(v) => m.mask_y = v,
@@ -509,9 +516,10 @@ impl App {
                         MaskParam::Feather(v) => m.feather = v,
                     }
                 }
+                self.program.mark_dirty(i);
             }
             Message::UpdateModifier(i, param) => {
-                if let Some(m) = self.modifiers.get_mut(i) {
+                if let Some(m) = self.program.modifiers.get_mut(i) {
                     match (&mut m.kind, param) {
                         (ModifierKind::Levels { shadows, .. }, ModifierParam::LevelsShadows(v)) => {
                             *shadows = v
@@ -698,6 +706,7 @@ impl App {
                         _ => {}
                     }
                 }
+                self.program.mark_dirty(i);
             }
             Message::Noop => {}
             Message::Event(event) => return self.handle_event(event),
@@ -826,7 +835,7 @@ impl App {
             &self.notifications,
             self.config.pixel_preview_size,
             &self.selected_tool,
-            &self.modifiers,
+            &self.program.modifiers,
             self.active_modifier,
             self.dragging_modifier,
             self.drag_hover_target,

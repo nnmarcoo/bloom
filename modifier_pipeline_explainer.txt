@@ -1,0 +1,224 @@
+MODIFIER PIPELINE — CONTROL FLOW EXPLAINER
+==========================================
+
+
+OVERVIEW
+--------
+There are two distinct phases in iced's rendering architecture — update (CPU
+logic) and render (GPU). The modifiers touch both.
+
+
+PHASE 1: CPU — User moves a slider (App::update)
+-------------------------------------------------
+User drags brightness slider
+  -> Message::UpdateModifier(i, Brightness(0.3))
+  -> App::update()
+       self.program.modifiers[i].kind = BrightnessContrast { brightness: 0.3, ... }
+       self.program.mark_dirty(i)
+           -> dirty_from: Arc<Mutex<Option<usize>>>
+           -> stores Some(min(i, prev))  <- shared across all clones via Arc
+
+dirty_from is an Arc<Mutex<>> specifically so that when draw() later consumes
+it from a clone of the program, the original's value is actually cleared.
+
+
+PHASE 2: CPU — Building the frame (App::view -> Program::draw)
+--------------------------------------------------------------
+App::view()
+  -> self.program.clone()          <- clone shares the same Arc<Mutex>
+  -> shader(program_clone)
+
+iced calls program_clone.draw()
+  -> dirty_from = self.dirty_from.lock().take()   <- consumes Some(i), sets Arc to None
+  -> returns ViewPrimitive {
+         modifiers: [...],          <- current modifier state
+         dirty_from: Some(i),       <- the consumed index
+         uniforms: transform,
+         ...
+     }
+
+ViewPrimitive is a plain data snapshot — no GPU resources, just what the GPU
+needs to know.
+
+
+PHASE 3: GPU prep (ViewPrimitive::prepare -> ViewPipeline::prepare_modifiers)
+------------------------------------------------------------------------------
+iced wgpu renderer calls primitive.prepare(pipeline, device, queue, ...)
+  -> pipeline.update(...)
+       -> writes per-tile transform uniforms (pan/zoom) to each tile's uniform_buffer
+          (skips the write if the transform hasn't changed since last frame)
+  -> pipeline.prepare_modifiers(device, queue, &modifiers, dirty_from: Some(i))
+
+Inside prepare_modifiers -> ModifierPipeline::prepare():
+
+  1. Pass list mismatch? (modifier added / removed / reordered / type changed)
+       -> find first index where passes[i].kind_tag() != kind_tag_of(modifiers[i])
+       -> truncate passes vec to that index
+       -> rebuild tail: BrightnessContrastPass::new(), VignettePass::new(), etc.
+       -> any_dirty = true
+
+  2. any_dirty also becomes true if dirty_from.is_some()
+       -> invalidate all currently-allocated tile ping-pong caches (valid = false)
+
+  3. Per-tile loop (each tile is independent):
+
+     a. Visibility cull
+          -> check tile.last_ndc_rect against [-1,1]x[-1,1] NDC viewport
+          -> if off-screen: free tile_pong (drops GPU textures), clear bind groups, skip
+
+     b. Compute effective modifier resolution
+          -> eff_w = if physical_scale < 1.0:
+                         max(1, ceil(tile.width  * physical_scale))
+                     else:
+                         tile.width
+          -> eff_h = same for height
+          -> This means zoomed-out modifier textures match the display-pixel footprint,
+             not source resolution. A 7000x7000 tile at 4% zoom becomes ~280x280.
+
+     c. Allocate or reallocate ping-pong pair if missing or if eff size changed
+          -> TilePingPong { _tex_a, _tex_b, view_a, view_b, front_is_b, valid, w, h }
+          -> New allocations start with valid = false
+
+     d. If not valid (needs reprocess):
+
+        Zoom-out path (physical_scale < 1.0):
+          -> Blit source tile -> view_a at eff_w x eff_h
+               (trilinear sampler uses the source mip chain for quality downscale)
+          -> Modifier chain starts from view_a:
+               i=0: (view_a -> view_b)
+               i=1: (view_b -> view_a)
+               i=2: (view_a -> view_b) ...
+               front_is_b = passes.len() % 2 == 1
+
+        Zoom-in path (physical_scale >= 1.0):
+          -> Modifier chain starts from tile.source_view (full resolution):
+               i=0: (source_view -> view_a)
+               i=1: (view_a      -> view_b)
+               i=2: (view_b      -> view_a) ...
+               front_is_b = passes.len() % 2 == 0
+
+        passes[i].update_uniforms(queue, &modifiers[i], &tile_info)
+          -> writes uniform values (brightness, hue, vignette UV offset, etc.)
+          -> vignette receives tile_x/y/w/h and full_w/h so it can map tile-local
+             UV to full-image UV, keeping the vignette centered on the whole image
+        passes[i].run(encoder, src, dst, sampler)
+          -> draws a fullscreen quad into dst using the modifier's WGSL shader
+        mark valid = true; queue.submit(encoder)
+
+     e. Rebuild display bind groups (one linear, one nearest) pointing at the
+        front ping-pong view and the tile's own transform uniform_buffer.
+        The transform buffer is owned by TiledSource and kept current by
+        pipeline.update() — no extra synchronization needed.
+
+  queue.submit is called per-tile inside the reprocess block, so GPU work
+  for each tile is independent and can overlap with CPU work for the next tile.
+
+
+PHASE 4: GPU render (ViewPrimitive::render -> render_display)
+-------------------------------------------------------------
+iced calls primitive.render(pipeline, encoder, target, ...)
+  -> pipeline.render_display(encoder, target, clip_bounds, bounds, smooth_zoom_in)
+
+render_display:
+    if modifier_pipeline has passes:
+        zoomed_out = source.physical_scale < 1.0 - epsilon
+        nearest    = !smooth_zoom_in && !zoomed_out
+        for each tile (in order):
+            if tile is viewport-culled: skip
+            bind_group = mp.tile_display_bg(i, nearest)
+            draw_display_pass(encoder, target, bind_group)
+                -> one quad per tile using display.wgsl
+                -> uniform = tile's pan/zoom transform (from TiledSource)
+                -> texture = front ping-pong view (modifier chain output)
+        return
+
+    else (no modifiers):
+        for each tile: draw per-tile bind group  <- original unmodified path
+
+
+MEMORY MODEL
+------------
+Source textures (TiledSource):
+    One Rgba8Unorm texture per tile, with full mip chain if mipmap_zoom_out=true.
+    Tiles are at most max_texture_dimension_2d x max_texture_dimension_2d.
+    A 50000x50000 image on a device with max_dim=8192 produces 7x7 = 49 tiles.
+
+Modifier ping-pong (ModifierPipeline):
+    Two textures per visible tile, sized to the display footprint:
+        eff_w = ceil(tile.width  * physical_scale)  (or full size if zoomed in)
+        eff_h = ceil(tile.height * physical_scale)
+    Off-screen tiles have no textures allocated at all.
+    Textures are reallocated automatically when zoom level changes enough to
+    change eff_w or eff_h.
+
+    Worst-case VRAM for modifiers:
+        zoom-out: n_visible_tiles * 2 * eff_w * eff_h * 4 bytes
+                  (proportional to screen pixels, not source pixels)
+        zoom-in:  n_visible_tiles * 2 * tile_w * tile_h * 4 bytes
+                  (typically 1-4 tiles visible at 1:1 or above)
+
+Image transitions:
+    upload_image() frees modifier_pipeline then source before allocating the
+    new TiledSource, so peak memory during a transition equals only the new
+    image — not old + new simultaneously.
+
+
+THE FULL CHAIN VISUALIZED
+-------------------------
+Slider move
+    |
+    v
+App::update -> program.modifiers[i] mutated
+               dirty_from = Some(i)   (Arc, shared)
+    |
+    v
+App::view -> program.clone()
+             program.draw() -> ViewPrimitive { modifiers, dirty_from: Some(i) }
+                               dirty_from consumed from Arc -> Arc now None
+    |
+    v
+primitive.prepare()
+    -> pipeline.update() writes tile transform uniforms
+    -> prepare_modifiers(modifiers, dirty_from: Some(i))
+        -> any_dirty = true -> invalidate all tile pong.valid flags
+        -> per tile (visible only):
+            compute eff size, allocate if needed
+            if !valid: downscale blit (zoom-out) or direct chain (zoom-in)
+            rebuild display bind groups
+    |
+    v
+primitive.render()
+    -> render_display()
+        -> for each visible tile: draw quad with modifier output bind group
+        -> user sees updated image
+
+
+KEY DESIGN DECISIONS
+--------------------
+Arc<Mutex<>> on dirty_from:
+    Necessary because draw() runs on a *clone* of the program (iced's shader
+    widget stores the clone), so plain Cell would never clear the original.
+
+Ping-pong per tile (2 textures, not N):
+    Instead of caching the output of each individual pass (which would require
+    N textures per tile), we alternate between 2 textures for the whole chain.
+    Any change reruns the full chain — still fast on GPU — but memory is fixed
+    at 2 textures per tile regardless of how many modifiers are stacked.
+
+Display-resolution processing at zoom-out:
+    Modifier textures are sized to the tile's display footprint, not source
+    resolution. This is the key to handling 50000x50000+ images: at 4% zoom,
+    a 7000x7000 source tile only needs 280x280 ping-pong textures (~650KB
+    instead of ~196MB). All pixel-independent modifiers produce identical
+    results at any resolution. Vignette UV is normalized to full-image space
+    via tile_x/y/w/h uniforms, so it stays correct regardless of pong size.
+
+Per-tile transform uniforms (no shared output buffer):
+    Each tile has its own uniform_buffer in TiledSource that pipeline.update()
+    keeps current. The modifier pipeline's display bind groups reference these
+    directly — no separate synchronization is needed for the transform.
+
+Visibility culling:
+    Off-screen tiles are freed immediately. Combined with display-resolution
+    processing, this ensures VRAM usage scales with what the user can actually
+    see, not the total image size.

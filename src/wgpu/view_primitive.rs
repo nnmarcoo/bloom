@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use glam::{Vec2, vec2};
 use iced::{
@@ -7,10 +8,13 @@ use iced::{
     widget::shader::{Primitive, Viewport},
 };
 
-use crate::wgpu::{
-    media::image_data::ImageData,
-    passes::checkerboard::CheckerboardUniforms,
-    view_pipeline::{Uniforms, ViewPipeline},
+use crate::{
+    modifiers::Modifier,
+    wgpu::{
+        media::image_data::ImageData,
+        passes::checkerboard::CheckerboardUniforms,
+        view_pipeline::{Uniforms, ViewPipeline},
+    },
 };
 
 #[derive(Debug)]
@@ -25,6 +29,9 @@ pub struct ViewPrimitive {
     pub checker_uniforms: CheckerboardUniforms,
     pub mipmap_zoom_out: bool,
     pub smooth_zoom_in: bool,
+    pub modifiers: Vec<Modifier>,
+    pub dirty_from: Option<usize>,
+    pub pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Primitive for ViewPrimitive {
@@ -38,6 +45,14 @@ impl Primitive for ViewPrimitive {
         _bounds: &Rectangle,
         viewport: &Viewport,
     ) {
+        if self
+            .pre_clear_gpu
+            .compare_exchange(true, false, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+        {
+            pipeline.clear_source(device);
+        }
+
         pipeline.mipmap_zoom_out = self.mipmap_zoom_out;
         if let Some(image) = &self.image
             && pipeline.needs_upload(image.id)
@@ -59,6 +74,7 @@ impl Primitive for ViewPrimitive {
         if self.show_checkerboard {
             pipeline.update_checkerboard(queue, self.checker_uniforms);
         }
+        pipeline.prepare_modifiers(device, queue, &self.modifiers, self.dirty_from);
     }
 
     fn render(

@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::{BufReader, Error};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -46,9 +47,9 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageId(u64);
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ImageData {
-    pub pixels: Vec<u8>,
+    pub pixels: Mutex<Vec<u8>>,
     pub width: u32,
     pub height: u32,
     pub id: ImageId,
@@ -56,6 +57,21 @@ pub struct ImageData {
     pub exif: ExifData,
     pub bit_depth: u8,
     pub color_space: Option<&'static str>,
+}
+
+impl Clone for ImageData {
+    fn clone(&self) -> Self {
+        Self {
+            pixels: Mutex::new(self.pixels.lock().unwrap().clone()),
+            width: self.width,
+            height: self.height,
+            id: self.id,
+            histogram: OnceLock::new(),
+            exif: self.exif.clone(),
+            bit_depth: self.bit_depth,
+            color_space: self.color_space,
+        }
+    }
 }
 
 impl ImageData {
@@ -66,7 +82,7 @@ impl ImageData {
     pub fn new(pixels: Vec<u8>, width: u32, height: u32) -> Self {
         let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
         Self {
-            pixels,
+            pixels: Mutex::new(pixels),
             width,
             height,
             id,
@@ -77,9 +93,19 @@ impl ImageData {
         }
     }
 
+    pub fn pixels_available(&self) -> bool {
+        self.pixels.lock().unwrap().len() >= self.size_bytes()
+    }
+
+    pub fn release_pixels(&self) {
+        *self.pixels.lock().unwrap() = Vec::new();
+    }
+
     pub fn histogram(&self) -> &([u32; 256], [u32; 256], [u32; 256]) {
-        self.histogram
-            .get_or_init(|| Self::compute_histogram(&self.pixels))
+        self.histogram.get_or_init(|| {
+            let guard = self.pixels.lock().unwrap();
+            Self::compute_histogram(&guard)
+        })
     }
 
     fn compute_histogram(pixels: &[u8]) -> ([u32; 256], [u32; 256], [u32; 256]) {

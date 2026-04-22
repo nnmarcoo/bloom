@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use glam::{Mat4, Vec2, vec2, vec3, vec4};
@@ -10,6 +10,7 @@ use iced::{
 
 use crate::{
     app::Message,
+    modifiers::Modifier,
     wgpu::{
         media::animation::Animation, media::exif_data::ExifData, media::image_data::ImageData,
         passes::checkerboard::CheckerboardUniforms, scale::Scale, view_pipeline::Uniforms,
@@ -56,6 +57,9 @@ pub struct ViewProgram {
     cursor_image_pos: Option<Vec2>,
     panning: bool,
     rotation: u8,
+    pub modifiers: Vec<Modifier>,
+    dirty_from: Arc<Mutex<Option<usize>>>,
+    pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Default for ViewProgram {
@@ -80,11 +84,19 @@ impl Default for ViewProgram {
             mipmap_zoom_out: true,
             smooth_zoom_in: false,
             uploaded_mipmap_zoom_out: true,
+            modifiers: Vec::new(),
+            dirty_from: Arc::new(Mutex::new(None)),
+            pre_clear_gpu: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 }
 
 impl ViewProgram {
+    pub fn mark_dirty(&self, i: usize) {
+        let mut guard = self.dirty_from.lock().unwrap();
+        *guard = Some(guard.map_or(i, |p| p.min(i)));
+    }
+
     pub fn set_bounds(&mut self, bounds: Rectangle) {
         self.bounds = bounds;
         self.clamp_offset();
@@ -336,14 +348,185 @@ impl ViewProgram {
         Some((img.x as u32, img.y as u32))
     }
 
+    fn apply_modifiers_cpu(&self, uv: [f32; 2], mut c: [f32; 4]) -> [f32; 4] {
+        use crate::modifiers::ModifierKind;
+        for m in &self.modifiers {
+            if !m.enabled {
+                continue;
+            }
+            match &m.kind {
+                ModifierKind::BrightnessContrast {
+                    brightness,
+                    contrast,
+                } => {
+                    for i in 0..3 {
+                        c[i] = (c[i] + brightness - 0.5) * (1.0 + contrast) + 0.5;
+                    }
+                }
+                ModifierKind::Exposure { exposure } => {
+                    let scale = 2.0f32.powf(*exposure);
+                    c[0] *= scale;
+                    c[1] *= scale;
+                    c[2] *= scale;
+                }
+                ModifierKind::Levels {
+                    shadows,
+                    midtones,
+                    highlights,
+                } => {
+                    let hi = highlights.max(shadows + 0.001);
+                    let range = hi - shadows;
+                    for i in 0..3 {
+                        c[i] = ((c[i] - shadows) / range).clamp(0.0, 1.0);
+                    }
+                    let gamma = midtones.max(0.001);
+                    for i in 0..3 {
+                        c[i] = c[i].powf(1.0 / gamma);
+                    }
+                }
+                ModifierKind::HueSaturation {
+                    hue,
+                    saturation,
+                    lightness,
+                } => {
+                    let [h, s, l] = Self::rgb_to_hsl([c[0], c[1], c[2]]);
+                    let h2 = (h + hue / 360.0).fract();
+                    let s2 = (s + saturation).clamp(0.0, 1.0);
+                    let l2 = (l + lightness).clamp(0.0, 1.0);
+                    let rgb = Self::hsl_to_rgb([h2, s2, l2]);
+                    c[0] = rgb[0];
+                    c[1] = rgb[1];
+                    c[2] = rgb[2];
+                }
+                ModifierKind::Vignette {
+                    strength,
+                    size,
+                    softness,
+                } => {
+                    let dx = uv[0] - 0.5;
+                    let dy = uv[1] - 0.5;
+                    let dist = (dx * dx + dy * dy).sqrt() * 2.0;
+                    let inner = (size - softness).max(0.0);
+                    let outer = size + 0.0001;
+                    let t = ((dist - inner) / (outer - inner)).clamp(0.0, 1.0);
+                    let vignette = 1.0 - t * t * (3.0 - 2.0 * t);
+                    let factor = (1.0 - strength).max(0.0) * (1.0 - vignette) + vignette;
+                    c[0] *= factor;
+                    c[1] *= factor;
+                    c[2] *= factor;
+                }
+                ModifierKind::Threshold { cutoff } => {
+                    let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+                    let v = if luma >= *cutoff { 1.0 } else { 0.0 };
+                    c[0] = v;
+                    c[1] = v;
+                    c[2] = v;
+                }
+                ModifierKind::Posterize { levels } => {
+                    let l = (*levels as f32 - 1.0).max(1.0);
+                    for i in 0..3 {
+                        c[i] = (c[i] * l + 0.5).floor() / l;
+                    }
+                }
+                _ => {}
+            }
+            c[0] = c[0].clamp(0.0, 1.0);
+            c[1] = c[1].clamp(0.0, 1.0);
+            c[2] = c[2].clamp(0.0, 1.0);
+            c[3] = c[3].clamp(0.0, 1.0);
+        }
+        c
+    }
+
+    fn rgb_to_hsl(rgb: [f32; 3]) -> [f32; 3] {
+        let max_c = rgb[0].max(rgb[1]).max(rgb[2]);
+        let min_c = rgb[0].min(rgb[1]).min(rgb[2]);
+        let l = (max_c + min_c) * 0.5;
+        if max_c == min_c {
+            return [0.0, 0.0, l];
+        }
+        let d = max_c - min_c;
+        let s = if l < 0.5 {
+            d / (max_c + min_c)
+        } else {
+            d / (2.0 - max_c - min_c)
+        };
+        let h = if max_c == rgb[0] {
+            (rgb[1] - rgb[2]) / d + if rgb[1] >= rgb[2] { 0.0 } else { 6.0 }
+        } else if max_c == rgb[1] {
+            (rgb[2] - rgb[0]) / d + 2.0
+        } else {
+            (rgb[0] - rgb[1]) / d + 4.0
+        };
+        [h / 6.0, s, l]
+    }
+
+    fn hsl_to_rgb(hsl: [f32; 3]) -> [f32; 3] {
+        if hsl[1] == 0.0 {
+            return [hsl[2]; 3];
+        }
+        let q = if hsl[2] < 0.5 {
+            hsl[2] * (1.0 + hsl[1])
+        } else {
+            hsl[2] + hsl[1] - hsl[2] * hsl[1]
+        };
+        let p = 2.0 * hsl[2] - q;
+        [
+            Self::hue_to_rgb(p, q, hsl[0] + 1.0 / 3.0),
+            Self::hue_to_rgb(p, q, hsl[0]),
+            Self::hue_to_rgb(p, q, hsl[0] - 1.0 / 3.0),
+        ]
+    }
+
+    fn hue_to_rgb(p: f32, q: f32, t_in: f32) -> f32 {
+        let mut t = t_in;
+        if t < 0.0 {
+            t += 1.0;
+        }
+        if t > 1.0 {
+            t -= 1.0;
+        }
+        if t < 1.0 / 6.0 {
+            return p + (q - p) * 6.0 * t;
+        }
+        if t < 0.5 {
+            return q;
+        }
+        if t < 2.0 / 3.0 {
+            return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
+        }
+        p
+    }
+
+    fn pixel_to_f32(p: &[u8]) -> [f32; 4] {
+        [
+            p[0] as f32 / 255.0,
+            p[1] as f32 / 255.0,
+            p[2] as f32 / 255.0,
+            p[3] as f32 / 255.0,
+        ]
+    }
+
+    fn f32_to_pixel(c: [f32; 4]) -> [u8; 4] {
+        [
+            (c[0] * 255.0).round() as u8,
+            (c[1] * 255.0).round() as u8,
+            (c[2] * 255.0).round() as u8,
+            (c[3] * 255.0).round() as u8,
+        ]
+    }
+
     pub fn cursor_info(&self) -> Option<(u32, u32, Vec2, [u8; 4])> {
         let img = self.cursor_image_pos?;
         let (px, py) = (img.x as u32, img.y as u32);
         let uv = img / self.image_size;
         let image = self.image.as_ref()?;
         let idx = (py as usize * image.width as usize + px as usize) * 4;
-        let p = image.pixels.get(idx..idx + 4)?;
-        Some((px, py, uv, [p[0], p[1], p[2], p[3]]))
+        let guard = image.pixels.lock().unwrap();
+        let p = guard.get(idx..idx + 4)?;
+        let rgba =
+            Self::f32_to_pixel(self.apply_modifiers_cpu([uv.x, uv.y], Self::pixel_to_f32(p)));
+        Some((px, py, uv, rgba))
     }
 
     pub fn cursor_pixels(&self, size: u32) -> Option<Vec<u8>> {
@@ -352,6 +535,10 @@ impl ViewProgram {
         let half = (size / 2) as i64;
         let image = self.image.as_ref()?;
         let (w, h) = (image.width as i64, image.height as i64);
+        let guard = image.pixels.lock().unwrap();
+        if guard.is_empty() {
+            return None;
+        }
         let mut pixels = Vec::with_capacity((size * size * 4) as usize);
         for row in 0..size as i64 {
             for col in 0..size as i64 {
@@ -367,7 +554,10 @@ impl ViewProgram {
                     continue;
                 }
                 let idx = (y as usize * w as usize + x as usize) * 4;
-                pixels.extend_from_slice(&image.pixels[idx..idx + 4]);
+                let p = &guard[idx..idx + 4];
+                let uv = [x as f32 / w as f32, y as f32 / h as f32];
+                let rgba = Self::f32_to_pixel(self.apply_modifiers_cpu(uv, Self::pixel_to_f32(p)));
+                pixels.extend_from_slice(&rgba);
             }
         }
         Some(pixels)
@@ -377,8 +567,22 @@ impl ViewProgram {
         let (px, py) = self.screen_to_image_pixel(pos)?;
         let image = self.image.as_ref()?;
         let idx = (py as usize * image.width as usize + px as usize) * 4;
-        let p = image.pixels.get(idx..idx + 4)?;
-        Some((px, py, [p[0], p[1], p[2], p[3]]))
+        let guard = image.pixels.lock().unwrap();
+        let p = guard.get(idx..idx + 4)?;
+        let uv = [
+            px as f32 / image.width as f32,
+            py as f32 / image.height as f32,
+        ];
+        let rgba = Self::f32_to_pixel(self.apply_modifiers_cpu(uv, Self::pixel_to_f32(p)));
+        Some((px, py, rgba))
+    }
+
+    pub fn release_image_pixels(&self) {
+        if let Some(image) = &self.image {
+            image.release_pixels();
+        }
+        self.pre_clear_gpu
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -404,6 +608,9 @@ impl Program<Message> for ViewProgram {
             checker_uniforms: self.checker_uniforms,
             mipmap_zoom_out: self.mipmap_zoom_out,
             smooth_zoom_in: self.smooth_zoom_in,
+            modifiers: self.modifiers.clone(),
+            dirty_from: self.dirty_from.lock().unwrap().take(),
+            pre_clear_gpu: Arc::clone(&self.pre_clear_gpu),
         }
     }
 

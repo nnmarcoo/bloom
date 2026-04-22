@@ -300,7 +300,6 @@ pub fn generate_hw_mipmaps(
     }
 }
 
-// Standard formula: floor(log2(max(w,h))) + 1.
 pub fn hw_mip_count(w: u32, h: u32) -> u32 {
     let max_dim = w.max(h);
     if max_dim == 0 {

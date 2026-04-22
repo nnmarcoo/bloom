@@ -116,8 +116,7 @@ fn card<'a>(
     let header = row![
         grip,
         icon_btn(arrow_icon, Message::ToggleModifierExpanded(index)),
-        text(modifier.kind.name()).size(11),
-        Space::new().width(Length::Fill),
+        text(modifier.kind.name()).size(11).width(Length::Fill),
         icon_btn(circle_icon, Message::ToggleModifierEnabled(index)),
         icon_btn(
             include_bytes!("../../assets/icons/close.svg"),
@@ -173,6 +172,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::LevelsShadows(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", sh)
@@ -183,6 +183,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::LevelsMidtones(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", mi)
@@ -193,6 +194,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::LevelsHighlights(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", hi)
@@ -211,6 +213,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::Brightness(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:+.2}", br)
@@ -221,6 +224,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::Contrast(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:+.2}", co)
@@ -240,6 +244,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::Hue(v)
                     ))
+                    .step(0.5f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:+.0}°", hu)
@@ -250,6 +255,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::Saturation(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:+.2}", sa)
@@ -260,6 +266,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::Lightness(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:+.2}", li)
@@ -274,6 +281,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                     index,
                     ModifierParam::Exposure(v)
                 ))
+                .step(0.01f32)
                 .width(Length::Fill)
                 .into(),
                 format!("{:+.2}", ex)
@@ -291,6 +299,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::Vibrance(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:+.2}", vi)
@@ -301,6 +310,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::VibranceSaturation(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:+.2}", sa)
@@ -320,6 +330,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::ColorBalanceCyanRed(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:+.2}", cr)
@@ -330,6 +341,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::ColorBalanceMagentaGreen(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:+.2}", mg)
@@ -340,6 +352,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::ColorBalanceYellowBlue(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:+.2}", yb)
@@ -354,6 +367,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                     index,
                     ModifierParam::GaussianBlurRadius(v)
                 ))
+                .step(0.5f32)
                 .width(Length::Fill)
                 .into(),
                 format!("{:.1}", r)
@@ -368,6 +382,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::MotionBlurAngle(v)
                     ))
+                    .step(0.5f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.0}°", an)
@@ -378,6 +393,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::MotionBlurDistance(v)
                     ))
+                    .step(0.5f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.0}", di)
@@ -392,6 +408,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                     index,
                     ModifierParam::RadialBlurAmount(v)
                 ))
+                .step(0.5f32)
                 .width(Length::Fill)
                 .into(),
                 format!("{:.0}", am)
@@ -406,6 +423,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::RippleAmount(v)
                     ))
+                    .step(0.5f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.0}", am)
@@ -416,6 +434,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::RippleSize(v)
                     ))
+                    .step(0.5f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.0}", si)
@@ -431,6 +450,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::TwirlAngle(v)
                     ))
+                    .step(0.5f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.0}°", an)
@@ -441,6 +461,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::TwirlRadius(v)
                     ))
+                    .step(1.0f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.0}", ra)
@@ -460,6 +481,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::WaveAmplitude(v)
                     ))
+                    .step(0.5f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.0}", am)
@@ -470,6 +492,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::WaveFrequency(v)
                     ))
+                    .step(0.1f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.1}", fr)
@@ -480,6 +503,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::WaveAngle(v)
                     ))
+                    .step(0.5f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.0}°", an)
@@ -508,6 +532,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::HalftoneSize(v)
                     ))
+                    .step(0.1f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.0}", si)
@@ -518,6 +543,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::HalftoneAngle(v)
                     ))
+                    .step(0.5f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.0}°", an)
@@ -533,6 +559,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::PixelSortThreshold(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", th)
@@ -543,6 +570,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::PixelSortAngle(v)
                     ))
+                    .step(0.5f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.0}°", an)
@@ -562,6 +590,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::VignetteStrength(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", st)
@@ -572,6 +601,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::VignetteSize(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", si)
@@ -582,6 +612,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::VignetteSoftness(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", so)
@@ -597,6 +628,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::ChromaticAberrationAmount(v)
                     ))
+                    .step(0.1f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.1}", am)
@@ -607,6 +639,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::ChromaticAberrationAngle(v)
                     ))
+                    .step(0.5f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.0}°", an)
@@ -634,6 +667,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                     index,
                     ModifierParam::ThresholdCutoff(v)
                 ))
+                .step(0.01f32)
                 .width(Length::Fill)
                 .into(),
                 format!("{:.2}", cu)
@@ -648,6 +682,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::GlitchAmount(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", am)
@@ -677,6 +712,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::GrainAmount(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", am)
@@ -687,6 +723,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::GrainSize(v)
                     ))
+                    .step(0.1f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.1}", si)
@@ -697,6 +734,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::GrainRoughness(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", ro)
@@ -718,6 +756,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::CropX(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", cx)
@@ -728,6 +767,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::CropY(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", cy)
@@ -738,6 +778,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::CropWidth(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", cw)
@@ -748,6 +789,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::CropHeight(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", ch)
@@ -758,6 +800,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::CropRotation(v)
                     ))
+                    .step(0.1f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.1}°", ro)
@@ -791,6 +834,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::TextX(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", tx)
@@ -801,6 +845,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::TextY(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", ty)
@@ -811,6 +856,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::TextSize(v)
                     ))
+                    .step(0.5f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.0}", ts)
@@ -821,6 +867,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::TextRotation(v)
                     ))
+                    .step(0.5f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.0}°", tr)
@@ -831,6 +878,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::TextOpacity(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", to)
@@ -841,6 +889,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::TextR(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", cr)
@@ -851,6 +900,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::TextG(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", cg)
@@ -861,6 +911,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::TextB(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", cb)
@@ -880,6 +931,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::DrawingOpacity(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", op)
@@ -890,6 +942,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::DrawingSize(v)
                     ))
+                    .step(0.5f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.0}", si)
@@ -900,6 +953,7 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                         index,
                         ModifierParam::DrawingHardness(v)
                     ))
+                    .step(0.01f32)
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", ha)
@@ -942,6 +996,7 @@ fn mask_section<'a>(index: usize, modifier: &'a Modifier) -> Element<'a, Message
                 slider(0.0f32..=1.0f32, mx, move |v| {
                     Message::UpdateModifierMask(index, MaskParam::X(v))
                 })
+                .step(0.01f32)
                 .width(Length::Fill)
                 .into(),
                 format!("{:.2}", mx),
@@ -951,6 +1006,7 @@ fn mask_section<'a>(index: usize, modifier: &'a Modifier) -> Element<'a, Message
                 slider(0.0f32..=1.0f32, my, move |v| {
                     Message::UpdateModifierMask(index, MaskParam::Y(v))
                 })
+                .step(0.01f32)
                 .width(Length::Fill)
                 .into(),
                 format!("{:.2}", my),
@@ -960,6 +1016,7 @@ fn mask_section<'a>(index: usize, modifier: &'a Modifier) -> Element<'a, Message
                 slider(0.0f32..=1.0f32, mw, move |v| {
                     Message::UpdateModifierMask(index, MaskParam::Width(v))
                 })
+                .step(0.01f32)
                 .width(Length::Fill)
                 .into(),
                 format!("{:.2}", mw),
@@ -969,6 +1026,7 @@ fn mask_section<'a>(index: usize, modifier: &'a Modifier) -> Element<'a, Message
                 slider(0.0f32..=1.0f32, mh, move |v| {
                     Message::UpdateModifierMask(index, MaskParam::Height(v))
                 })
+                .step(0.01f32)
                 .width(Length::Fill)
                 .into(),
                 format!("{:.2}", mh),
@@ -978,9 +1036,10 @@ fn mask_section<'a>(index: usize, modifier: &'a Modifier) -> Element<'a, Message
                 slider(0.0f32..=100.0f32, fe, move |v| {
                     Message::UpdateModifierMask(index, MaskParam::Feather(v))
                 })
+                .step(0.5f32)
                 .width(Length::Fill)
                 .into(),
-                format!("{:.0}", fe),
+                format!("{:.1}", fe),
             ));
     }
 
@@ -1017,16 +1076,16 @@ fn add_row<'a>() -> Element<'a, Message> {
                     "Adjustments",
                     styled_menu(
                         column![
-                            menu_item("Levels", Message::AddModifier(ModifierType::Levels)),
+                            menu_item("✓ Levels", Message::AddModifier(ModifierType::Levels)),
                             menu_item(
-                                "Brightness / Contrast",
+                                "✓ Brightness / Contrast",
                                 Message::AddModifier(ModifierType::BrightnessContrast)
                             ),
                             menu_item(
-                                "Hue / Saturation",
+                                "✓ Hue / Saturation",
                                 Message::AddModifier(ModifierType::HueSaturation)
                             ),
-                            menu_item("Exposure", Message::AddModifier(ModifierType::Exposure)),
+                            menu_item("✓ Exposure", Message::AddModifier(ModifierType::Exposure)),
                             menu_item("Vibrance", Message::AddModifier(ModifierType::Vibrance)),
                             menu_item(
                                 "Color Balance",
@@ -1086,13 +1145,13 @@ fn add_row<'a>() -> Element<'a, Message> {
                     "Stylize",
                     styled_menu(
                         column![
-                            menu_item("Vignette", Message::AddModifier(ModifierType::Vignette)),
+                            menu_item("✓ Vignette", Message::AddModifier(ModifierType::Vignette)),
                             menu_item(
                                 "Chromatic Aberration",
                                 Message::AddModifier(ModifierType::ChromaticAberration)
                             ),
-                            menu_item("Posterize", Message::AddModifier(ModifierType::Posterize)),
-                            menu_item("Threshold", Message::AddModifier(ModifierType::Threshold)),
+                            menu_item("✓ Posterize", Message::AddModifier(ModifierType::Posterize)),
+                            menu_item("✓ Threshold", Message::AddModifier(ModifierType::Threshold)),
                             menu_item("Glitch", Message::AddModifier(ModifierType::Glitch)),
                         ],
                         200

@@ -11,15 +11,19 @@ use iced::{
     widget::shader::Pipeline,
 };
 
-use crate::wgpu::{
-    error::ViewError,
-    gpu,
-    media::image_data::{ImageData, ImageId},
-    passes::{
-        checkerboard::{CheckerboardPass, CheckerboardUniforms},
-        display::DisplayPass,
+use crate::{
+    modifiers::Modifier,
+    wgpu::{
+        error::ViewError,
+        gpu,
+        media::image_data::{ImageData, ImageId},
+        modifier_pipeline::ModifierPipeline,
+        passes::{
+            checkerboard::{CheckerboardPass, CheckerboardUniforms},
+            display::DisplayPass,
+        },
+        tiled_source::TiledSource,
     },
-    tiled_source::TiledSource,
 };
 
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -28,7 +32,6 @@ pub struct Uniforms {
     pub transform: Mat4,
 }
 
-/// Returns the NDC axis-aligned bounding box of a quad after `transform` is applied.
 fn ndc_rect_of_transform(transform: &Mat4) -> (Vec2, Vec2) {
     let corners = [
         vec4(-1.0, -1.0, 0.0, 1.0),
@@ -53,18 +56,42 @@ pub struct ViewPipeline {
     placeholder_bind_group: BindGroup,
     _placeholder_uniform: Buffer,
     source: Option<TiledSource>,
+    modifier_pipeline: Option<ModifierPipeline>,
     scale_factor: f32,
     last_checker_uniforms: Option<CheckerboardUniforms>,
     pub mipmap_zoom_out: bool,
+    format: TextureFormat,
 }
 
 impl ViewPipeline {
+    pub fn clear_source(&mut self, device: &Device) {
+        if self.source.is_none() {
+            return;
+        }
+        self.modifier_pipeline = None;
+        self.source = None;
+        let _ = device.poll(iced::wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
+    }
+
     pub fn upload_image(
         &mut self,
         device: &Device,
         queue: &Queue,
         image: &ImageData,
     ) -> Result<(), ViewError> {
+        if !image.pixels_available() {
+            return Ok(());
+        }
+        self.modifier_pipeline = None;
+        self.source = None;
+        let _ = device.poll(iced::wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
+
         self.source = Some(TiledSource::new(
             device,
             queue,
@@ -101,7 +128,6 @@ impl ViewPipeline {
         };
         source.physical_scale = physical_scale;
 
-        // Write per-tile transform uniforms, skipping redundant writes.
         if source.tiles.len() == 1 {
             let tile = &mut source.tiles[0];
             if tile.last_transform != Some(uniforms.transform) {
@@ -115,7 +141,6 @@ impl ViewPipeline {
         let full_w = source.full_width as f32;
         let full_h = source.full_height as f32;
         let angle = -(rotation as f32) * std::f32::consts::FRAC_PI_2;
-        // At 90/270 each image dimension divides the opposite viewport dimension.
         let inv_tile_vp = if rotation.is_multiple_of(2) {
             vec2(1.0 / viewport.x, 1.0 / viewport.y)
         } else {
@@ -151,6 +176,42 @@ impl ViewPipeline {
         }
     }
 
+    pub fn prepare_modifiers(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        modifiers: &[Modifier],
+        dirty_from: Option<usize>,
+    ) {
+        let source = match &self.source {
+            Some(s) => s,
+            None => {
+                self.modifier_pipeline = None;
+                return;
+            }
+        };
+
+        if !modifiers.iter().any(|m| m.has_visible_effect()) {
+            self.modifier_pipeline = None;
+            return;
+        }
+
+        let (w, h) = (source.full_width, source.full_height);
+
+        let needs_create = self
+            .modifier_pipeline
+            .as_ref()
+            .is_none_or(|mp| mp.width != w || mp.height != h);
+
+        if needs_create {
+            let mut mp = ModifierPipeline::new(device, self.format, w, h);
+            mp.prepare(device, queue, source, modifiers, None);
+            self.modifier_pipeline = Some(mp);
+        } else if let Some(mp) = &mut self.modifier_pipeline {
+            mp.prepare(device, queue, source, modifiers, dirty_from);
+        }
+    }
+
     pub fn render_checkerboard(
         &self,
         encoder: &mut CommandEncoder,
@@ -170,9 +231,31 @@ impl ViewPipeline {
         bounds: &Rectangle,
         smooth_zoom_in: bool,
     ) {
+        if let Some(mp) = &self.modifier_pipeline
+            && mp.has_passes()
+        {
+            if let Some(source) = &self.source {
+                let zoomed_out = source.physical_scale < 1.0 - 1e-6;
+                let nearest = !smooth_zoom_in && !zoomed_out;
+                for (i, tile) in source.tiles.iter().enumerate() {
+                    if let Some((min_ndc, max_ndc)) = tile.last_ndc_rect
+                        && (max_ndc.x < -1.0
+                            || min_ndc.x > 1.0
+                            || max_ndc.y < -1.0
+                            || min_ndc.y > 1.0)
+                    {
+                        continue;
+                    }
+                    if let Some(bg) = mp.tile_display_bg(i, nearest) {
+                        self.draw_display_pass(encoder, target, clip_bounds, bounds, bg);
+                    }
+                }
+            }
+            return;
+        }
+
         if let Some(source) = &self.source {
             for tile in &source.tiles {
-                // Viewport culling.
                 if let Some((min_ndc, max_ndc)) = tile.last_ndc_rect
                     && (max_ndc.x < -1.0 || min_ndc.x > 1.0 || max_ndc.y < -1.0 || min_ndc.y > 1.0)
                 {
@@ -335,8 +418,10 @@ impl Pipeline for ViewPipeline {
             placeholder_bind_group,
             _placeholder_uniform: placeholder_uniform,
             source: None,
+            modifier_pipeline: None,
             scale_factor: 1.0,
             last_checker_uniforms: None,
+            format,
         }
     }
 }

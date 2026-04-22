@@ -1,7 +1,7 @@
 use glam::{Mat4, Vec2};
 use iced::wgpu::{
     BindGroup, BindGroupLayout, Buffer, Device, Extent3d, Queue, RenderPipeline, Sampler,
-    TexelCopyBufferLayout, Texture, TextureFormat, TextureUsages,
+    TexelCopyBufferLayout, Texture, TextureFormat, TextureUsages, TextureView,
 };
 
 use crate::wgpu::{
@@ -14,6 +14,7 @@ use crate::wgpu::{
 
 pub struct Tile {
     pub _source_texture: Texture,
+    pub source_view: TextureView,
     pub uniform_buffer: Buffer,
     pub zoom_out_bind_group: BindGroup,
     pub nearest_bind_group: BindGroup,
@@ -48,10 +49,12 @@ impl TiledSource {
         blit_pipeline: &RenderPipeline,
         blit_bgl: &BindGroupLayout,
     ) -> Result<Self, ViewError> {
-        if image.pixels.len() < image.size_bytes() {
+        let image_pixels = image.pixels.lock().unwrap();
+
+        if image_pixels.len() < image.size_bytes() {
             return Err(ViewError::ImageDataMismatch {
                 expected: image.size_bytes(),
-                actual: image.pixels.len(),
+                actual: image_pixels.len(),
             });
         }
 
@@ -59,6 +62,9 @@ impl TiledSource {
         let cols = image.width.div_ceil(max_dim);
         let rows = image.height.div_ceil(max_dim);
         let src_stride = (image.width * 4) as usize;
+
+        let max_tile_bytes = (max_dim * max_dim * 4) as usize;
+        let mut tile_pixels = Vec::with_capacity(max_tile_bytes);
 
         let mut tiles = Vec::with_capacity((cols * rows) as usize);
 
@@ -92,13 +98,19 @@ impl TiledSource {
                     Some(&format!("{label}:source")),
                 );
 
-                let offset = ty as usize * src_stride + tx as usize * 4;
+                let row_bytes = (tw * 4) as usize;
+                tile_pixels.clear();
+                for r in 0..th {
+                    let row_start = (ty + r) as usize * src_stride + tx as usize * 4;
+                    tile_pixels.extend_from_slice(&image_pixels[row_start..row_start + row_bytes]);
+                }
+
                 queue.write_texture(
                     source_texture.as_image_copy(),
-                    &image.pixels[offset..],
+                    &tile_pixels,
                     TexelCopyBufferLayout {
                         offset: 0,
-                        bytes_per_row: Some(src_stride as u32),
+                        bytes_per_row: Some(tw * 4),
                         rows_per_image: None,
                     },
                     Extent3d {
@@ -123,6 +135,8 @@ impl TiledSource {
                         blit_bgl,
                     );
                     queue.submit(std::iter::once(encoder.finish()));
+                } else {
+                    queue.submit(std::iter::empty());
                 }
 
                 let source_view = source_texture.create_view(&Default::default());
@@ -159,6 +173,7 @@ impl TiledSource {
 
                 tiles.push(Tile {
                     _source_texture: source_texture,
+                    source_view,
                     uniform_buffer,
                     zoom_out_bind_group,
                     nearest_bind_group,

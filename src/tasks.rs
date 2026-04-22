@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use iced::window::{self, Level, Mode};
 use image::ImageError;
@@ -18,6 +19,7 @@ pub fn load_media(path: PathBuf, generation: u64) -> iced::Task<Message> {
             .unwrap_or_default();
         let (tx, rx) = tokio::sync::oneshot::channel();
         std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
             let _ = tx.send(ImageData::load_media(&path));
         });
         match rx.await {

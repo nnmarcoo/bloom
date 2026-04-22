@@ -92,6 +92,33 @@ impl Modifier {
             feather: 0.0,
         }
     }
+
+    pub fn has_visible_effect(&self) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        match &self.kind {
+            ModifierKind::Exposure { exposure } => *exposure != 0.0,
+            ModifierKind::Levels {
+                shadows,
+                midtones,
+                highlights,
+            } => *shadows != 0.0 || *midtones != 1.0 || *highlights != 1.0,
+            ModifierKind::BrightnessContrast {
+                brightness,
+                contrast,
+            } => *brightness != 0.0 || *contrast != 0.0,
+            ModifierKind::HueSaturation {
+                hue,
+                saturation,
+                lightness,
+            } => *hue != 0.0 || *saturation != 0.0 || *lightness != 0.0,
+            ModifierKind::Vignette { strength, .. } => *strength != 0.0,
+            ModifierKind::Posterize { .. } => true,
+            ModifierKind::Threshold { .. } => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
