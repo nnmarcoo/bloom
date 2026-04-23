@@ -281,10 +281,8 @@ impl ModifierPipeline {
         self.tile_display_bgs_nearest.resize_with(n_tiles, || None);
 
         if dirty_from.is_some() {
-            for out in &mut self.tile_outputs {
-                if let Some(o) = out {
-                    o.valid = false;
-                }
+            for o in self.tile_outputs.iter_mut().flatten() {
+                o.valid = false;
             }
         }
 
@@ -314,7 +312,7 @@ impl ModifierPipeline {
 
             let needs_alloc = self.tile_outputs[ti]
                 .as_ref()
-                .map_or(true, |o| o.width != eff_w || o.height != eff_h);
+                .is_none_or(|o| o.width != eff_w || o.height != eff_h);
 
             if needs_alloc {
                 let tex = gpu::texture_2d(

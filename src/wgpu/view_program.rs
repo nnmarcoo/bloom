@@ -359,8 +359,8 @@ impl ViewProgram {
                     brightness,
                     contrast,
                 } => {
-                    for i in 0..3 {
-                        c[i] = (c[i] + brightness - 0.5) * (1.0 + contrast) + 0.5;
+                    for c_val in c.iter_mut().take(3) {
+                        *c_val = (*c_val + brightness - 0.5) * (1.0 + contrast) + 0.5;
                     }
                 }
                 ModifierKind::Exposure { exposure } => {
@@ -376,12 +376,12 @@ impl ViewProgram {
                 } => {
                     let hi = highlights.max(shadows + 0.001);
                     let range = hi - shadows;
-                    for i in 0..3 {
-                        c[i] = ((c[i] - shadows) / range).clamp(0.0, 1.0);
+                    for c_val in c.iter_mut().take(3) {
+                        *c_val = ((*c_val - shadows) / range).clamp(0.0, 1.0);
                     }
                     let gamma = midtones.max(0.001);
-                    for i in 0..3 {
-                        c[i] = c[i].powf(1.0 / gamma);
+                    for c_val in c.iter_mut().take(3) {
+                        *c_val = c_val.powf(1.0 / gamma);
                     }
                 }
                 ModifierKind::HueSaturation {
@@ -424,8 +424,8 @@ impl ViewProgram {
                 }
                 ModifierKind::Posterize { levels } => {
                     let l = (*levels as f32 - 1.0).max(1.0);
-                    for i in 0..3 {
-                        c[i] = (c[i] * l + 0.5).floor() / l;
+                    for c_val in c.iter_mut().take(3) {
+                        *c_val = (*c_val * l + 0.5).floor() / l;
                     }
                 }
                 _ => {}
