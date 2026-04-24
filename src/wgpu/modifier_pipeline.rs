@@ -254,10 +254,6 @@ impl ModifierPipeline {
         }
     }
 
-    pub fn has_passes(&self) -> bool {
-        true
-    }
-
     pub fn tile_display_bg(&self, i: usize, nearest: bool) -> Option<&BindGroup> {
         if nearest {
             self.tile_display_bgs_nearest.get(i)?.as_ref()

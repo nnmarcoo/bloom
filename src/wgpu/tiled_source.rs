@@ -135,8 +135,6 @@ impl TiledSource {
                         blit_bgl,
                     );
                     queue.submit(std::iter::once(encoder.finish()));
-                } else {
-                    queue.submit(std::iter::empty());
                 }
 
                 let source_view = source_texture.create_view(&Default::default());

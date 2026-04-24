@@ -231,9 +231,7 @@ impl ViewPipeline {
         bounds: &Rectangle,
         smooth_zoom_in: bool,
     ) {
-        if let Some(mp) = &self.modifier_pipeline
-            && mp.has_passes()
-        {
+        if let Some(mp) = &self.modifier_pipeline {
             if let Some(source) = &self.source {
                 let zoomed_out = source.physical_scale < 1.0 - 1e-6;
                 let nearest = !smooth_zoom_in && !zoomed_out;
