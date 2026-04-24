@@ -165,7 +165,7 @@ def render_wix_dialog(svg_content: str) -> Image.Image:
     W, H, PANEL_W = 493, 312, 164
     img = Image.new("RGB", (W, H), (255, 255, 255))
     img.paste(Image.new("RGB", (PANEL_W, H), BLUE), (0, 0))
-    logo_size = 100
+    logo_size = 140
     # Render at 4x then downscale — pre-composite kills the rounded-rect edge halo
     icon = render_icon(svg_content, logo_size)
     _place_icon(img, icon, logo_size, (PANEL_W - logo_size) // 2, (H - logo_size) // 2, BLUE)
