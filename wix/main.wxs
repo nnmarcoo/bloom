@@ -34,9 +34,15 @@
 
         <Icon Id='ProductICO' SourceFile='assets\logo\bloom.ico'/>
         <Property Id='ARPPRODUCTICON' Value='ProductICO'/>
+        <Property Id='ARPCOMMENTS' Value='A hardware accelerated image viewer'/>
+        <Property Id='ARPURLINFOABOUT' Value='https://github.com/nnmarcoo/bloom'/>
+        <Property Id='ARPHELPLINK' Value='https://github.com/nnmarcoo/bloom/issues'/>
+
+        <Property Id='LAUNCHAPP' Value='1'/>
+        <Property Id='WIXUI_INSTALLDIR' Value='APPLICATIONFOLDER'/>
 
         <Directory Id='TARGETDIR' Name='SourceDir'>
-            <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
+            <Directory Id='$(var.PlatformProgramFilesFolder)' Name='Program Files'>
                 <Directory Id='APPLICATIONFOLDER' Name='bloom'>
                     <Directory Id='Bin' Name='bin'>
                         <Component Id='binary0' Guid='*'>
@@ -65,6 +71,89 @@
                             <RegistryValue Id='regAssocFriendlyName' Root='HKLM' Key='Software\Classes\bloom.AssocFile'                               Type='string' Name='FriendlyTypeName' Value='bloom Image File'/>
                             <RegistryValue Id='regAssocIcon'         Root='HKLM' Key='Software\Classes\bloom.AssocFile\DefaultIcon'                   Type='string' Value='"[Bin]bloom.exe",0'/>
                             <RegistryValue Id='regAssocCmd'          Root='HKLM' Key='Software\Classes\bloom.AssocFile\shell\open\command'            Type='string' Value='"[Bin]bloom.exe" "%1"'/>
+                        </Component>
+
+                        <!-- Registers bloom in "Default apps" / "Choose default apps by file type" -->
+                        <Component Id='AppCapabilities' Guid='*'>
+                            <RegistryValue Id='regRegisteredApp'     Root='HKLM' Key='Software\RegisteredApplications'                                Name='bloom' Value='Software\bloom\Capabilities' Type='string' KeyPath='yes'/>
+                            <RegistryValue Id='regCapAppName'        Root='HKLM' Key='Software\bloom\Capabilities'                                    Name='ApplicationName'        Type='string' Value='bloom'/>
+                            <RegistryValue Id='regCapAppDesc'        Root='HKLM' Key='Software\bloom\Capabilities'                                    Name='ApplicationDescription' Type='string' Value='A hardware accelerated image viewer'/>
+                            <!-- Common -->
+                            <RegistryValue Id='regCapJpg'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.jpg'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapJpeg'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.jpeg'  Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapPng'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.png'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapApng'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.apng'  Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapGif'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.gif'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapBmp'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.bmp'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapWebp'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.webp'  Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapTif'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.tif'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapTiff'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.tiff'  Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapIco'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.ico'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapPbm'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.pbm'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapPgm'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.pgm'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapPpm'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.ppm'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapTga'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.tga'   Type='string' Value='bloom.AssocFile'/>
+                            <!-- Modern -->
+                            <RegistryValue Id='regCapAvif'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.avif'  Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapJxl'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.jxl'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapHeic'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.heic'  Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapHeif'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.heif'  Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapQoi'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.qoi'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapJp2'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.jp2'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapJ2k'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.j2k'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapJ2c'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.j2c'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapJpx'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.jpx'   Type='string' Value='bloom.AssocFile'/>
+                            <!-- Specialty -->
+                            <RegistryValue Id='regCapHdr'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.hdr'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapExr'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.exr'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapPsd'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.psd'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapPsb'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.psb'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapSvg'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.svg'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapSvgz'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.svgz'  Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapIcns'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.icns'  Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapDds'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.dds'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapFf'     Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.ff'    Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapKra'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.kra'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapXcf'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.xcf'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapDcm'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.dcm'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapDicom'  Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.dicom' Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapKtx2'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.ktx2'  Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapFits'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.fits'  Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapFit'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.fit'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapFts'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.fts'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapEps'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.eps'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapPs'     Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.ps'    Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapEpsf'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.epsf'  Type='string' Value='bloom.AssocFile'/>
+                            <!-- RAW -->
+                            <RegistryValue Id='regCap3fr'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.3fr'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapAri'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.ari'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapArw'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.arw'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapCr2'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.cr2'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapCr3'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.cr3'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapCrm'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.crm'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapCrw'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.crw'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapDcr'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.dcr'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapDcs'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.dcs'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapDng'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.dng'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapErf'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.erf'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapFff'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.fff'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapIiq'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.iiq'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapKdc'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.kdc'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapMef'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.mef'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapMos'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.mos'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapMrw'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.mrw'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapNef'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.nef'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapNrw'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.nrw'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapOrf'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.orf'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapOri'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.ori'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapPef'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.pef'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapQtk'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.qtk'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapRaf'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.raf'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapRaw'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.raw'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapRw2'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.rw2'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapRwl'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.rwl'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapSrw'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.srw'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapX3f'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.x3f'   Type='string' Value='bloom.AssocFile'/>
                         </Component>
 
                         <!-- Common formats: jpg, jpeg, png, gif, bmp, webp, tif, tiff, ico, apng, pbm, pgm, ppm, tga -->
@@ -259,6 +348,7 @@
             Absent='disallow'>
             <ComponentRef Id='binary0'/>
             <ComponentRef Id='AssocHandler'/>
+            <ComponentRef Id='AppCapabilities'/>
             <ComponentRef Id='ApplicationShortcut'/>
 
             <Feature
@@ -282,7 +372,7 @@
                     Id='AssocModernFeature'
                     Title='Modern formats (avif, jxl, heic, heif, qoi, jp2, j2k)'
                     Description='Associate bloom with modern image formats: AVIF, JPEG XL, HEIC, HEIF, QOI, and JPEG 2000.'
-                    Level='1'
+                    Level='0'
                     AllowAdvertise='no'
                     Absent='allow'>
                     <ComponentRef Id='AssocModern'/>
@@ -291,7 +381,7 @@
                     Id='AssocSpecialtyFeature'
                     Title='Specialty formats (hdr, exr, psd, svg, icns, dds, kra, xcf, dcm, eps, ...)'
                     Description='Associate bloom with specialty formats: HDR, OpenEXR, PSD, PSB, SVG, ICNS, DDS, Krita, GIMP XCF, DICOM, FITS, EPS, and more.'
-                    Level='1'
+                    Level='0'
                     AllowAdvertise='no'
                     Absent='allow'>
                     <ComponentRef Id='AssocSpecialty'/>
@@ -300,7 +390,7 @@
                     Id='AssocRawFeature'
                     Title='RAW camera formats (arw, cr2, nef, dng, ...)'
                     Description='Associate bloom with RAW camera formats from Canon, Nikon, Sony, Fuji, and others.'
-                    Level='1'
+                    Level='0'
                     AllowAdvertise='no'
                     Absent='allow'>
                     <ComponentRef Id='AssocRaw'/>
@@ -311,7 +401,7 @@
                 Id='Environment'
                 Title='PATH Environment Variable'
                 Description='Add the install location of the [ProductName] executable to the PATH system environment variable.'
-                Level='1'
+                Level='0'
                 Absent='allow'>
                 <ComponentRef Id='Path'/>
             </Feature>
@@ -321,14 +411,16 @@
 
         <!-- Notify the shell to refresh file association icons/defaults -->
         <CustomAction Id='NotifyShell' Directory='TARGETDIR' ExeCommand='[SystemFolder]cmd.exe /c ie4uinit.exe -show' Execute='deferred' Return='ignore' Impersonate='yes'/>
+        <!-- Launch bloom after install completes (controlled by LAUNCHAPP property) -->
+        <CustomAction Id='LaunchApplication' FileKey='exe0' Execute='immediate' Return='asyncNoWait'/>
+
         <InstallExecuteSequence>
             <Custom Action='NotifyShell' Before='InstallFinalize'>NOT Installed</Custom>
         </InstallExecuteSequence>
 
         <UI>
-            <UIRef Id='WixUI_FeatureTree'/>
-            <Publish Dialog='WelcomeDlg' Control='Next' Event='NewDialog' Value='CustomizeDlg' Order='99'>1</Publish>
-            <Publish Dialog='CustomizeDlg' Control='Back' Event='NewDialog' Value='WelcomeDlg' Order='99'>1</Publish>
+            <UIRef Id='WixUI_InstallDir'/>
+            <Publish Dialog='ExitDialog' Control='Finish' Event='DoAction' Value='LaunchApplication'>LAUNCHAPP=1</Publish>
         </UI>
 
     </Product>
