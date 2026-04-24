@@ -59,6 +59,8 @@ jobs:
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          VCPKG_MAX_CONCURRENCY: 2
         run: |
           choco install pkgconfiglite -y
           vcpkg integrate install
