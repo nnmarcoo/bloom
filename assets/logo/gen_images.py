@@ -141,6 +141,27 @@ def render_banner(svg_content: str, font: ImageFont.FreeTypeFont) -> Image.Image
     return banner
 
 
+def render_wix_banner(icon_64: Image.Image) -> Image.Image:
+    """WiX top banner: 493x58 blue strip with the icon on the right."""
+    W, H = 493, 58
+    img = Image.new("RGB", (W, H), BLUE)
+    logo_h = H - 10
+    logo = icon_64.resize((logo_h, logo_h), Image.LANCZOS)
+    img.paste(logo, (W - logo_h - 6, (H - logo_h) // 2), logo)
+    return img
+
+
+def render_wix_dialog(icon_64: Image.Image) -> Image.Image:
+    """WiX welcome/exit dialog: 493x312 with a blue left column and centered icon."""
+    W, H, PANEL_W = 493, 312, 164
+    img = Image.new("RGB", (W, H), (255, 255, 255))
+    img.paste(Image.new("RGB", (PANEL_W, H), BLUE), (0, 0))
+    logo_size = 100
+    logo = icon_64.resize((logo_size, logo_size), Image.LANCZOS)
+    img.paste(logo, ((PANEL_W - logo_size) // 2, (H - logo_size) // 2), logo)
+    return img
+
+
 if __name__ == "__main__":
     svg_content = SVG_PATH.read_text(encoding="utf-8")
 
@@ -166,3 +187,12 @@ if __name__ == "__main__":
     banner_path = DIR / "banner.png"
     banner.save(banner_path, format="PNG", optimize=True)
     print(f"Written {banner_path}")
+
+    # WiX installer BMPs — generated from the 64px icon (no extra SVG render needed)
+    icon_64 = render_icon(svg_content, 64)
+    wix_banner = render_wix_banner(icon_64)
+    wix_banner.save(DIR / "installer_banner.bmp", format="BMP")
+    print(f"Written {DIR / 'installer_banner.bmp'}")
+    wix_dialog = render_wix_dialog(icon_64)
+    wix_dialog.save(DIR / "installer_dialog.bmp", format="BMP")
+    print(f"Written {DIR / 'installer_dialog.bmp'}")

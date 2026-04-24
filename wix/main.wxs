@@ -32,6 +32,9 @@
 
         <Media Id='1' Cabinet='media1.cab' EmbedCab='yes'/>
 
+        <WixVariable Id='WixUIBannerBmp' Value='assets\logo\installer_banner.bmp'/>
+        <WixVariable Id='WixUIDialogBmp' Value='assets\logo\installer_dialog.bmp'/>
+
         <Icon Id='ProductICO' SourceFile='assets\logo\bloom.ico'/>
         <Property Id='ARPPRODUCTICON' Value='ProductICO'/>
         <Property Id='ARPCOMMENTS' Value='A hardware accelerated image viewer'/>
