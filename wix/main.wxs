@@ -412,7 +412,7 @@
         <!-- Notify the shell to refresh file association icons/defaults -->
         <CustomAction Id='NotifyShell' Directory='TARGETDIR' ExeCommand='[SystemFolder]cmd.exe /c ie4uinit.exe -show' Execute='deferred' Return='ignore' Impersonate='yes'/>
         <!-- Launch bloom after install completes (controlled by LAUNCHAPP property) -->
-        <CustomAction Id='LaunchApplication' FileKey='exe0' Execute='immediate' Return='asyncNoWait'/>
+        <CustomAction Id='LaunchApplication' FileKey='exe0' ExeCommand='' Execute='immediate' Return='asyncNoWait'/>
 
         <InstallExecuteSequence>
             <Custom Action='NotifyShell' Before='InstallFinalize'>NOT Installed</Custom>
