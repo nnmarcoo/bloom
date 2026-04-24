@@ -154,6 +154,12 @@ impl From<&Config> for ConfigFile {
 
 impl From<ConfigFile> for Config {
     fn from(f: ConfigFile) -> Self {
+        let ui_scale = f.ui_scale.clamp(UI_SCALE_MIN, UI_SCALE_MAX);
+        let pixel_preview_size = if PIXEL_PREVIEW_SIZE_OPTIONS.contains(&f.pixel_preview_size) {
+            f.pixel_preview_size
+        } else {
+            PIXEL_PREVIEW_SIZE_DEFAULT
+        };
         Self {
             theme: theme_from_str(&f.theme),
             show_info: f.show_info,
@@ -169,8 +175,8 @@ impl From<ConfigFile> for Config {
             smooth_zoom_in: f.smooth_zoom_in,
             keymap: Keymap::from(f.keybinds),
             info_collapsed: f.info_collapsed.into_iter().collect(),
-            ui_scale: f.ui_scale,
-            pixel_preview_size: f.pixel_preview_size,
+            ui_scale,
+            pixel_preview_size,
         }
     }
 }
