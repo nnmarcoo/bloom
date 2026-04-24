@@ -141,34 +141,35 @@ def render_banner(svg_content: str, font: ImageFont.FreeTypeFont) -> Image.Image
     return banner
 
 
-def _place_icon(base: Image.Image, icon_rgba: Image.Image, size: int, x: int, y: int, bg: tuple) -> None:
-    """Downscale icon_rgba to size, pre-composite onto bg colour, paste into base."""
-    scaled = icon_rgba.resize((size, size), Image.LANCZOS)
-    pre = Image.new("RGB", (size, size), bg)
-    pre.paste(scaled, (0, 0), scaled)
-    base.paste(pre, (x, y))
+def _icon_on_blue(svg_content: str, size: int) -> Image.Image:
+    """Render icon at size, composite onto blue before any resize.
+
+    LANCZOS interpolates all channels independently, so transparent corner
+    pixels (RGB 0,0,0 A=0) bleed into edge pixels when downscaled. Flattening
+    onto the same blue background first means edge interpolation stays within
+    the blue colour space — no fringing or discolouration at the corners.
+    """
+    icon = render_icon(svg_content, size)
+    base = Image.new("RGBA", (size, size), BLUE + (255,))
+    return Image.alpha_composite(base, icon).convert("RGB")
 
 
 def render_wix_banner(svg_content: str) -> Image.Image:
     """WiX top banner: 493x58 blue strip with the icon on the right."""
     W, H = 493, 58
-    img = Image.new("RGB", (W, H), BLUE)
     logo_h = H - 10
-    # Render at 4x then downscale so the icon is always sharp
-    icon = render_icon(svg_content, logo_h)
-    _place_icon(img, icon, logo_h, W - logo_h - 6, (H - logo_h) // 2, BLUE)
+    img = Image.new("RGB", (W, H), BLUE)
+    img.paste(_icon_on_blue(svg_content, logo_h), (W - logo_h - 6, (H - logo_h) // 2))
     return img
 
 
 def render_wix_dialog(svg_content: str) -> Image.Image:
     """WiX welcome/exit dialog: 493x312 with a blue left column and centered icon."""
     W, H, PANEL_W = 493, 312, 164
+    logo_size = 140
     img = Image.new("RGB", (W, H), (255, 255, 255))
     img.paste(Image.new("RGB", (PANEL_W, H), BLUE), (0, 0))
-    logo_size = 140
-    # Render at 4x then downscale — pre-composite kills the rounded-rect edge halo
-    icon = render_icon(svg_content, logo_size)
-    _place_icon(img, icon, logo_size, (PANEL_W - logo_size) // 2, (H - logo_size) // 2, BLUE)
+    img.paste(_icon_on_blue(svg_content, logo_size), ((PANEL_W - logo_size) // 2, (H - logo_size) // 2))
     return img
 
 

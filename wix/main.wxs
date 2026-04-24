@@ -34,6 +34,7 @@
 
         <WixVariable Id='WixUIBannerBmp' Value='assets\logo\installer_banner.bmp'/>
         <WixVariable Id='WixUIDialogBmp' Value='assets\logo\installer_dialog.bmp'/>
+        <WixVariable Id='WixUILicenseRtf' Value='wix\License.rtf'/>
 
         <Icon Id='ProductICO' SourceFile='assets\logo\bloom.ico'/>
         <Property Id='ARPPRODUCTICON' Value='ProductICO'/>
