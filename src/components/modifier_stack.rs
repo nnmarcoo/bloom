@@ -414,115 +414,6 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                 format!("{:.0}", am)
             )]
         }
-        ModifierKind::Ripple { amount, size } => {
-            let (am, si) = (*amount, *size);
-            column![
-                param_row(
-                    "Amount",
-                    slider(0.0f32..=200.0f32, am, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::RippleAmount(v)
-                    ))
-                    .step(0.5f32)
-                    .width(Length::Fill)
-                    .into(),
-                    format!("{:.0}", am)
-                ),
-                param_row(
-                    "Size",
-                    slider(1.0f32..=200.0f32, si, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::RippleSize(v)
-                    ))
-                    .step(0.5f32)
-                    .width(Length::Fill)
-                    .into(),
-                    format!("{:.0}", si)
-                ),
-            ]
-        }
-        ModifierKind::Twirl { angle, radius } => {
-            let (an, ra) = (*angle, *radius);
-            column![
-                param_row(
-                    "Angle",
-                    slider(-360.0f32..=360.0f32, an, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::TwirlAngle(v)
-                    ))
-                    .step(0.5f32)
-                    .width(Length::Fill)
-                    .into(),
-                    format!("{:.0}°", an)
-                ),
-                param_row(
-                    "Radius",
-                    slider(0.0f32..=500.0f32, ra, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::TwirlRadius(v)
-                    ))
-                    .step(1.0f32)
-                    .width(Length::Fill)
-                    .into(),
-                    format!("{:.0}", ra)
-                ),
-            ]
-        }
-        ModifierKind::Wave {
-            amplitude,
-            frequency,
-            angle,
-        } => {
-            let (am, fr, an) = (*amplitude, *frequency, *angle);
-            column![
-                param_row(
-                    "Amplitude",
-                    slider(0.0f32..=100.0f32, am, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::WaveAmplitude(v)
-                    ))
-                    .step(0.5f32)
-                    .width(Length::Fill)
-                    .into(),
-                    format!("{:.0}", am)
-                ),
-                param_row(
-                    "Frequency",
-                    slider(1.0f32..=50.0f32, fr, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::WaveFrequency(v)
-                    ))
-                    .step(0.1f32)
-                    .width(Length::Fill)
-                    .into(),
-                    format!("{:.1}", fr)
-                ),
-                param_row(
-                    "Angle",
-                    slider(0.0f32..=360.0f32, an, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::WaveAngle(v)
-                    ))
-                    .step(0.5f32)
-                    .width(Length::Fill)
-                    .into(),
-                    format!("{:.0}°", an)
-                ),
-            ]
-        }
-        ModifierKind::Mosaic { size } => {
-            let s = *size;
-            column![param_row(
-                "Size",
-                slider(1u32..=200u32, s, move |v| Message::UpdateModifier(
-                    index,
-                    ModifierParam::MosaicSize(v)
-                ))
-                .width(Length::Fill)
-                .into(),
-                s.to_string()
-            )]
-        }
         ModifierKind::Halftone { size, angle } => {
             let (si, an) = (*size, *angle);
             column![
@@ -673,38 +564,13 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                 format!("{:.2}", cu)
             )]
         }
-        ModifierKind::Glitch { amount, slices } => {
-            let (am, sl) = (*amount, *slices);
-            column![
-                param_row(
-                    "Amount",
-                    slider(0.0f32..=1.0f32, am, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::GlitchAmount(v)
-                    ))
-                    .step(0.01f32)
-                    .width(Length::Fill)
-                    .into(),
-                    format!("{:.2}", am)
-                ),
-                param_row(
-                    "Slices",
-                    slider(1u32..=50u32, sl, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::GlitchSlices(v)
-                    ))
-                    .width(Length::Fill)
-                    .into(),
-                    sl.to_string()
-                ),
-            ]
-        }
         ModifierKind::Grain {
             amount,
             size,
             roughness,
+            seed,
         } => {
-            let (am, si, ro) = (*amount, *size, *roughness);
+            let (am, si, ro, se) = (*amount, *size, *roughness, *seed);
             column![
                 param_row(
                     "Amount",
@@ -719,14 +585,14 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                 ),
                 param_row(
                     "Size",
-                    slider(1.0f32..=10.0f32, si, move |v| Message::UpdateModifier(
+                    slider(0.5f32..=32.0f32, si, move |v| Message::UpdateModifier(
                         index,
                         ModifierParam::GrainSize(v)
                     ))
-                    .step(0.1f32)
+                    .step(0.5f32)
                     .width(Length::Fill)
                     .into(),
-                    format!("{:.1}", si)
+                    format!("{:.1}px", si)
                 ),
                 param_row(
                     "Roughness",
@@ -738,6 +604,17 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                     .width(Length::Fill)
                     .into(),
                     format!("{:.2}", ro)
+                ),
+                param_row(
+                    "Seed",
+                    slider(0.0f32..=99.0f32, se, move |v| Message::UpdateModifier(
+                        index,
+                        ModifierParam::GrainSeed(v)
+                    ))
+                    .step(1.0f32)
+                    .width(Length::Fill)
+                    .into(),
+                    format!("{}", se as u32)
                 ),
             ]
         }
@@ -1076,16 +953,16 @@ fn add_row<'a>() -> Element<'a, Message> {
                     "Adjustments",
                     styled_menu(
                         column![
-                            menu_item("✓ Levels", Message::AddModifier(ModifierType::Levels)),
+                            menu_item("Levels", Message::AddModifier(ModifierType::Levels)),
                             menu_item(
-                                "✓ Brightness / Contrast",
+                                "Brightness / Contrast",
                                 Message::AddModifier(ModifierType::BrightnessContrast)
                             ),
                             menu_item(
-                                "✓ Hue / Saturation",
+                                "Hue / Saturation",
                                 Message::AddModifier(ModifierType::HueSaturation)
                             ),
-                            menu_item("✓ Exposure", Message::AddModifier(ModifierType::Exposure)),
+                            menu_item("Exposure", Message::AddModifier(ModifierType::Exposure)),
                             menu_item("Vibrance", Message::AddModifier(ModifierType::Vibrance)),
                             menu_item(
                                 "Color Balance",
@@ -1118,22 +995,9 @@ fn add_row<'a>() -> Element<'a, Message> {
                 )
                 .side(SubMenuSide::Left),
                 sub_menu(
-                    "Distort",
-                    styled_menu(
-                        column![
-                            menu_item("Ripple", Message::AddModifier(ModifierType::Ripple)),
-                            menu_item("Twirl", Message::AddModifier(ModifierType::Twirl)),
-                            menu_item("Wave", Message::AddModifier(ModifierType::Wave)),
-                        ],
-                        160
-                    )
-                )
-                .side(SubMenuSide::Left),
-                sub_menu(
                     "Pixelate",
                     styled_menu(
                         column![
-                            menu_item("Mosaic", Message::AddModifier(ModifierType::Mosaic)),
                             menu_item("Halftone", Message::AddModifier(ModifierType::Halftone)),
                             menu_item("Pixel Sort", Message::AddModifier(ModifierType::PixelSort)),
                         ],
@@ -1145,14 +1009,13 @@ fn add_row<'a>() -> Element<'a, Message> {
                     "Stylize",
                     styled_menu(
                         column![
-                            menu_item("✓ Vignette", Message::AddModifier(ModifierType::Vignette)),
+                            menu_item("Vignette", Message::AddModifier(ModifierType::Vignette)),
                             menu_item(
                                 "Chromatic Aberration",
                                 Message::AddModifier(ModifierType::ChromaticAberration)
                             ),
-                            menu_item("✓ Posterize", Message::AddModifier(ModifierType::Posterize)),
-                            menu_item("✓ Threshold", Message::AddModifier(ModifierType::Threshold)),
-                            menu_item("Glitch", Message::AddModifier(ModifierType::Glitch)),
+                            menu_item("Posterize", Message::AddModifier(ModifierType::Posterize)),
+                            menu_item("Threshold", Message::AddModifier(ModifierType::Threshold)),
                         ],
                         200
                     )

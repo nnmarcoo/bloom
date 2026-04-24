@@ -589,28 +589,6 @@ impl App {
                             ModifierKind::RadialBlur { amount },
                             ModifierParam::RadialBlurAmount(v),
                         ) => *amount = v,
-                        (ModifierKind::Ripple { amount, .. }, ModifierParam::RippleAmount(v)) => {
-                            *amount = v
-                        }
-                        (ModifierKind::Ripple { size, .. }, ModifierParam::RippleSize(v)) => {
-                            *size = v
-                        }
-                        (ModifierKind::Twirl { angle, .. }, ModifierParam::TwirlAngle(v)) => {
-                            *angle = v
-                        }
-                        (ModifierKind::Twirl { radius, .. }, ModifierParam::TwirlRadius(v)) => {
-                            *radius = v
-                        }
-                        (ModifierKind::Wave { amplitude, .. }, ModifierParam::WaveAmplitude(v)) => {
-                            *amplitude = v
-                        }
-                        (ModifierKind::Wave { frequency, .. }, ModifierParam::WaveFrequency(v)) => {
-                            *frequency = v
-                        }
-                        (ModifierKind::Wave { angle, .. }, ModifierParam::WaveAngle(v)) => {
-                            *angle = v
-                        }
-                        (ModifierKind::Mosaic { size }, ModifierParam::MosaicSize(v)) => *size = v,
                         (ModifierKind::Halftone { size, .. }, ModifierParam::HalftoneSize(v)) => {
                             *size = v
                         }
@@ -650,12 +628,6 @@ impl App {
                         (ModifierKind::Threshold { cutoff }, ModifierParam::ThresholdCutoff(v)) => {
                             *cutoff = v
                         }
-                        (ModifierKind::Glitch { amount, .. }, ModifierParam::GlitchAmount(v)) => {
-                            *amount = v
-                        }
-                        (ModifierKind::Glitch { slices, .. }, ModifierParam::GlitchSlices(v)) => {
-                            *slices = v
-                        }
                         (ModifierKind::Grain { amount, .. }, ModifierParam::GrainAmount(v)) => {
                             *amount = v
                         }
@@ -666,6 +638,9 @@ impl App {
                             ModifierKind::Grain { roughness, .. },
                             ModifierParam::GrainRoughness(v),
                         ) => *roughness = v,
+                        (ModifierKind::Grain { seed, .. }, ModifierParam::GrainSeed(v)) => {
+                            *seed = v
+                        }
                         (ModifierKind::Crop { x, .. }, ModifierParam::CropX(v)) => *x = v,
                         (ModifierKind::Crop { y, .. }, ModifierParam::CropY(v)) => *y = v,
                         (ModifierKind::Crop { width, .. }, ModifierParam::CropWidth(v)) => {

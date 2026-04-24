@@ -348,7 +348,14 @@ impl ViewProgram {
         Some((img.x as u32, img.y as u32))
     }
 
-    fn apply_modifiers_cpu(&self, uv: [f32; 2], mut c: [f32; 4]) -> [f32; 4] {
+    fn apply_modifiers_cpu(
+        &self,
+        pixels: &[u8],
+        img_w: u32,
+        img_h: u32,
+        uv: [f32; 2],
+        mut c: [f32; 4],
+    ) -> [f32; 4] {
         use crate::modifiers::ModifierKind;
         for m in &self.modifiers {
             if !m.enabled {
@@ -427,6 +434,102 @@ impl ViewProgram {
                     for c_val in c.iter_mut().take(3) {
                         *c_val = (*c_val * l + 0.5).floor() / l;
                     }
+                }
+                ModifierKind::Vibrance {
+                    vibrance,
+                    saturation,
+                } => {
+                    let avg = (c[0] + c[1] + c[2]) / 3.0;
+                    let max_c = c[0].max(c[1]).max(c[2]);
+                    let sat_proxy = max_c - c[0].min(c[1]).min(c[2]);
+                    let vib_amount = vibrance * (1.0 - sat_proxy);
+                    for c_val in c.iter_mut().take(3) {
+                        *c_val = avg + (*c_val - avg) * (1.0 + vib_amount);
+                    }
+                    let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+                    for c_val in c.iter_mut().take(3) {
+                        *c_val = luma + (*c_val - luma) * (1.0 + saturation);
+                    }
+                }
+                ModifierKind::ColorBalance {
+                    cyan_red,
+                    magenta_green,
+                    yellow_blue,
+                } => {
+                    c[0] += cyan_red;
+                    c[1] += magenta_green;
+                    c[2] += yellow_blue;
+                }
+                ModifierKind::Grain {
+                    amount,
+                    size,
+                    roughness,
+                    seed,
+                } => {
+                    let full_px_x = uv[0] * img_w as f32;
+                    let full_px_y = uv[1] * img_h as f32;
+                    let iseed = *seed as i32;
+                    let sz = size.max(0.5);
+                    let gx = full_px_x / sz;
+                    let gy = full_px_y / sz;
+                    let cx = gx.floor();
+                    let cy = gy.floor();
+                    let fx = gx.fract();
+                    let fy = gy.fract();
+                    let n00 = Self::hash21_i(cx as i32, cy as i32, iseed);
+                    let n10 = Self::hash21_i(cx as i32 + 1, cy as i32, iseed);
+                    let n01 = Self::hash21_i(cx as i32, cy as i32 + 1, iseed);
+                    let n11 = Self::hash21_i(cx as i32 + 1, cy as i32 + 1, iseed);
+                    let t = roughness.clamp(0.0, 1.0);
+                    let smooth_wx = fx * fx * (3.0 - 2.0 * fx);
+                    let wx = smooth_wx * (1.0 - t) + if fx >= 0.5 { 1.0 } else { 0.0 } * t;
+                    let smooth_wy = fy * fy * (3.0 - 2.0 * fy);
+                    let wy = smooth_wy * (1.0 - t) + if fy >= 0.5 { 1.0 } else { 0.0 } * t;
+                    let noise = (n00 * (1.0 - wx) + n10 * wx) * (1.0 - wy)
+                        + (n01 * (1.0 - wx) + n11 * wx) * wy;
+                    let grain = (noise - 0.5) * amount;
+                    for c_val in c.iter_mut().take(3) {
+                        *c_val = (*c_val + grain).clamp(0.0, 1.0);
+                    }
+                }
+                // Distort modifiers: sample at displaced UV
+                ModifierKind::ChromaticAberration { amount, angle } => {
+                    let angle_rad = *angle * std::f32::consts::PI / 180.0;
+                    let offset_x = angle_rad.cos() * amount / img_w as f32;
+                    let offset_y = angle_rad.sin() * amount / img_w as f32;
+                    c[0] = Self::sample_channel(
+                        pixels,
+                        img_w,
+                        img_h,
+                        uv[0] + offset_x,
+                        uv[1] + offset_y,
+                        0,
+                    );
+                    c[2] = Self::sample_channel(
+                        pixels,
+                        img_w,
+                        img_h,
+                        uv[0] - offset_x,
+                        uv[1] - offset_y,
+                        2,
+                    );
+                }
+                ModifierKind::Halftone { size, angle } => {
+                    let angle_rad = *angle * std::f32::consts::PI / 180.0;
+                    let cs = angle_rad.cos();
+                    let sn = angle_rad.sin();
+                    let period = (*size / img_w.min(img_h) as f32).max(0.001);
+                    let rot_x = (uv[0] * cs - uv[1] * sn) / period;
+                    let rot_y = (uv[0] * sn + uv[1] * cs) / period;
+                    let cell_x = rot_x.floor() + 0.5;
+                    let cell_y = rot_y.floor() + 0.5;
+                    let dist = ((rot_x - cell_x).powi(2) + (rot_y - cell_y).powi(2)).sqrt();
+                    let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+                    let radius = luma.sqrt() * 0.5;
+                    let v = if dist < radius { 1.0 } else { 0.0 };
+                    c[0] = v;
+                    c[1] = v;
+                    c[2] = v;
                 }
                 _ => {}
             }
@@ -516,6 +619,26 @@ impl ViewProgram {
         ]
     }
 
+    fn hash_u(v: u32) -> u32 {
+        let s = v.wrapping_mul(747796405).wrapping_add(2891336453);
+        let s = ((s >> ((s >> 28).wrapping_add(4))) ^ s).wrapping_mul(277803737);
+        (s >> 22) ^ s
+    }
+
+    fn hash21_i(ix: i32, iy: i32, seed: i32) -> f32 {
+        let h = Self::hash_u(
+            (ix as u32) ^ (iy as u32).wrapping_mul(1664525) ^ (seed as u32).wrapping_mul(22695477),
+        );
+        h as f32 / 4294967295.0
+    }
+
+    fn sample_channel(pixels: &[u8], w: u32, h: u32, u: f32, v: f32, ch: usize) -> f32 {
+        let x = (u * w as f32).clamp(0.0, w as f32 - 1.0) as usize;
+        let y = (v * h as f32).clamp(0.0, h as f32 - 1.0) as usize;
+        let idx = (y * w as usize + x) * 4 + ch;
+        pixels.get(idx).map_or(0.0, |&b| b as f32 / 255.0)
+    }
+
     pub fn cursor_info(&self) -> Option<(u32, u32, Vec2, [u8; 4])> {
         let img = self.cursor_image_pos?;
         let (px, py) = (img.x as u32, img.y as u32);
@@ -524,8 +647,13 @@ impl ViewProgram {
         let idx = (py as usize * image.width as usize + px as usize) * 4;
         let guard = image.pixels.lock().unwrap();
         let p = guard.get(idx..idx + 4)?;
-        let rgba =
-            Self::f32_to_pixel(self.apply_modifiers_cpu([uv.x, uv.y], Self::pixel_to_f32(p)));
+        let rgba = Self::f32_to_pixel(self.apply_modifiers_cpu(
+            &guard,
+            image.width,
+            image.height,
+            [uv.x, uv.y],
+            Self::pixel_to_f32(p),
+        ));
         Some((px, py, uv, rgba))
     }
 
@@ -556,7 +684,13 @@ impl ViewProgram {
                 let idx = (y as usize * w as usize + x as usize) * 4;
                 let p = &guard[idx..idx + 4];
                 let uv = [x as f32 / w as f32, y as f32 / h as f32];
-                let rgba = Self::f32_to_pixel(self.apply_modifiers_cpu(uv, Self::pixel_to_f32(p)));
+                let rgba = Self::f32_to_pixel(self.apply_modifiers_cpu(
+                    &guard,
+                    w as u32,
+                    h as u32,
+                    uv,
+                    Self::pixel_to_f32(p),
+                ));
                 pixels.extend_from_slice(&rgba);
             }
         }
@@ -573,7 +707,13 @@ impl ViewProgram {
             px as f32 / image.width as f32,
             py as f32 / image.height as f32,
         ];
-        let rgba = Self::f32_to_pixel(self.apply_modifiers_cpu(uv, Self::pixel_to_f32(p)));
+        let rgba = Self::f32_to_pixel(self.apply_modifiers_cpu(
+            &guard,
+            image.width,
+            image.height,
+            uv,
+            Self::pixel_to_f32(p),
+        ));
         Some((px, py, rgba))
     }
 

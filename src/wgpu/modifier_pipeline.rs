@@ -99,6 +99,48 @@ fn build_mod_uniforms(modifiers: &[Modifier], tile: &TileInfo) -> ModUniforms {
             ),
             ModifierKind::Posterize { levels } => make_entry(6, &[*levels as f32]),
             ModifierKind::Threshold { cutoff } => make_entry(7, &[*cutoff]),
+            ModifierKind::Vibrance {
+                vibrance,
+                saturation,
+            } => make_entry(8, &[*vibrance, *saturation]),
+            ModifierKind::ColorBalance {
+                cyan_red,
+                magenta_green,
+                yellow_blue,
+            } => make_entry(9, &[*cyan_red, *magenta_green, *yellow_blue]),
+            ModifierKind::Grain {
+                amount,
+                size,
+                roughness,
+                seed,
+            } => make_entry(
+                10,
+                &[
+                    *amount,
+                    *size,
+                    *roughness,
+                    *seed,
+                    tile.tile_x as f32,
+                    tile.tile_y as f32,
+                    tile.tile_w as f32,
+                    tile.tile_h as f32,
+                ],
+            ),
+            ModifierKind::ChromaticAberration { amount, angle } => {
+                let angle_rad = *angle * std::f32::consts::PI / 180.0;
+                make_entry(11, &[*amount / tile.full_w as f32, angle_rad])
+            }
+            ModifierKind::Halftone { size, angle } => make_entry(
+                16,
+                &[
+                    *size / tile.full_w.min(tile.full_h) as f32,
+                    *angle * std::f32::consts::PI / 180.0,
+                    tile.tile_x as f32 / tile.full_w as f32,
+                    tile.tile_y as f32 / tile.full_h as f32,
+                    tile.tile_w as f32 / tile.full_w as f32,
+                    tile.tile_h as f32 / tile.full_h as f32,
+                ],
+            ),
             _ => continue,
         };
         u.entries[u.count as usize] = entry;
