@@ -161,6 +161,7 @@ pub enum Message {
     StartModifierDrag(usize),
     ModifierDragHover(usize),
     ModifierDragEnd,
+    SetCropRect(usize, f32, f32, f32, f32),
     Noop,
 }
 
@@ -428,7 +429,34 @@ impl App {
                 }
                 self.notifications.retain(|entry| !entry.is_gone(now));
             }
-            Message::SelectTool(tool) => self.selected_tool = tool,
+            Message::SelectTool(tool) => {
+                let was_crop = self.selected_tool == Tool::Crop;
+                self.selected_tool = tool.clone();
+                self.program.crop_tool_active = tool == Tool::Crop;
+                if tool == Tool::Crop {
+                    if let Some(idx) = self.program.modifiers.iter().position(|m| {
+                        matches!(m.kind, ModifierKind::Crop { .. })
+                    }) {
+                        self.active_modifier = Some(idx);
+                    } else {
+                        let (iw, ih) = self.program.image_size()
+                            .map(|(w, h)| (w as f32, h as f32))
+                            .unwrap_or((1.0, 1.0));
+                        let idx = self.program.modifiers.len();
+                        self.program.modifiers.push(Modifier::new(ModifierKind::Crop {
+                            x: 0.0,
+                            y: 0.0,
+                            width: iw,
+                            height: ih,
+                        }));
+                        self.active_modifier = Some(idx);
+                        self.program.mark_dirty(idx);
+                    }
+                    self.program.fit();
+                } else if was_crop {
+                    self.program.fit();
+                }
+            }
             Message::SetActiveModifier(i) => {
                 if i < self.program.modifiers.len() {
                     self.active_modifier = Some(i);
@@ -471,9 +499,15 @@ impl App {
                 }
             }
             Message::AddModifier(t) => {
-                self.program
-                    .modifiers
-                    .push(Modifier::new(ModifierKind::from(t)));
+                let kind = if matches!(t, ModifierType::Crop) {
+                    let (iw, ih) = self.program.image_size()
+                        .map(|(w, h)| (w as f32, h as f32))
+                        .unwrap_or((1.0, 1.0));
+                    ModifierKind::Crop { x: 0.0, y: 0.0, width: iw, height: ih }
+                } else {
+                    ModifierKind::from(t)
+                };
+                self.program.modifiers.push(Modifier::new(kind));
                 let idx = self.program.modifiers.len() - 1;
                 self.active_modifier = Some(idx);
                 self.program.mark_dirty(idx);
@@ -519,6 +553,7 @@ impl App {
                 self.program.mark_dirty(i);
             }
             Message::UpdateModifier(i, param) => {
+                let img_size = self.program.image_size();
                 if let Some(m) = self.program.modifiers.get_mut(i) {
                     match (&mut m.kind, param) {
                         (ModifierKind::Levels { shadows, .. }, ModifierParam::LevelsShadows(v)) => {
@@ -641,16 +676,27 @@ impl App {
                         (ModifierKind::Grain { seed, .. }, ModifierParam::GrainSeed(v)) => {
                             *seed = v
                         }
-                        (ModifierKind::Crop { x, .. }, ModifierParam::CropX(v)) => *x = v,
-                        (ModifierKind::Crop { y, .. }, ModifierParam::CropY(v)) => *y = v,
-                        (ModifierKind::Crop { width, .. }, ModifierParam::CropWidth(v)) => {
-                            *width = v
+                        (ModifierKind::Crop { x, width, .. }, ModifierParam::CropX(v)) => {
+                            let right = *x + *width;
+                            *x = v.round().clamp(0.0, right - 1.0);
+                            *width = (right - *x).max(1.0);
                         }
-                        (ModifierKind::Crop { height, .. }, ModifierParam::CropHeight(v)) => {
-                            *height = v
+                        (ModifierKind::Crop { y, height, .. }, ModifierParam::CropY(v)) => {
+                            let bottom = *y + *height;
+                            *y = v.round().clamp(0.0, bottom - 1.0);
+                            *height = (bottom - *y).max(1.0);
                         }
-                        (ModifierKind::Crop { rotation, .. }, ModifierParam::CropRotation(v)) => {
-                            *rotation = v
+                        (ModifierKind::Crop { x, width, .. }, ModifierParam::CropWidth(v)) => {
+                            *width = v.round().max(1.0);
+                            if let Some((iw, _)) = img_size {
+                                *width = width.min(iw as f32 - *x);
+                            }
+                        }
+                        (ModifierKind::Crop { y, height, .. }, ModifierParam::CropHeight(v)) => {
+                            *height = v.round().max(1.0);
+                            if let Some((_, ih)) = img_size {
+                                *height = height.min(ih as f32 - *y);
+                            }
                         }
                         (ModifierKind::Text { content, .. }, ModifierParam::TextContent(v)) => {
                             *content = v
@@ -679,6 +725,23 @@ impl App {
                             ModifierParam::DrawingHardness(v),
                         ) => *hardness = v,
                         _ => {}
+                    }
+                }
+                self.program.mark_dirty(i);
+            }
+            Message::SetCropRect(i, x, y, w, h) => {
+                if let Some(m) = self.program.modifiers.get_mut(i) {
+                    if let ModifierKind::Crop {
+                        x: cx,
+                        y: cy,
+                        width: cw,
+                        height: ch,
+                    } = &mut m.kind
+                    {
+                        *cx = x;
+                        *cy = y;
+                        *cw = w;
+                        *ch = h;
                     }
                 }
                 self.program.mark_dirty(i);

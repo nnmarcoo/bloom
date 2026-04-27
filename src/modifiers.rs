@@ -204,7 +204,6 @@ pub enum ModifierKind {
         y: f32,
         width: f32,
         height: f32,
-        rotation: f32,
     },
     Text {
         content: String,
@@ -313,7 +312,6 @@ impl From<ModifierType> for ModifierKind {
                 y: 0.0,
                 width: 1.0,
                 height: 1.0,
-                rotation: 0.0,
             },
             ModifierType::Text => ModifierKind::Text {
                 content: String::new(),
@@ -374,7 +372,6 @@ pub enum ModifierParam {
     CropY(f32),
     CropWidth(f32),
     CropHeight(f32),
-    CropRotation(f32),
     TextContent(String),
     TextX(f32),
     TextY(f32),

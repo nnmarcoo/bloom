@@ -58,6 +58,7 @@ pub struct ViewProgram {
     panning: bool,
     rotation: u8,
     pub modifiers: Vec<Modifier>,
+    pub crop_tool_active: bool,
     dirty_from: Arc<Mutex<Option<usize>>>,
     pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -85,6 +86,7 @@ impl Default for ViewProgram {
             smooth_zoom_in: false,
             uploaded_mipmap_zoom_out: true,
             modifiers: Vec::new(),
+            crop_tool_active: false,
             dirty_from: Arc::new(Mutex::new(None)),
             pre_clear_gpu: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
@@ -110,10 +112,11 @@ impl ViewProgram {
         if self.image_size == Vec2::ZERO {
             return;
         }
+        let eff = self.effective_display_size();
         let (fw, fh) = if self.rotation.is_multiple_of(2) {
-            (self.image_size.x, self.image_size.y)
+            (eff.x, eff.y)
         } else {
-            (self.image_size.y, self.image_size.x)
+            (eff.y, eff.x)
         };
         self.scale.fit_dims(fw, fh, self.bounds);
         self.offset = Vec2::ZERO;
@@ -164,10 +167,11 @@ impl ViewProgram {
     }
 
     fn clamp_offset(&mut self) {
+        let eff = self.effective_display_size();
         let size = if self.rotation.is_multiple_of(2) {
-            self.image_size
+            eff
         } else {
-            vec2(self.image_size.y, self.image_size.x)
+            vec2(eff.y, eff.x)
         };
         self.offset = self.offset.clamp(-size, size);
     }
@@ -184,13 +188,11 @@ impl ViewProgram {
     }
 
     fn aspect(&self, viewport: Vec2) -> Vec2 {
+        let eff = self.effective_display_size();
         if self.rotation.is_multiple_of(2) {
-            self.image_size / viewport
+            eff / viewport
         } else {
-            vec2(
-                self.image_size.x / viewport.y,
-                self.image_size.y / viewport.x,
-            )
+            vec2(eff.x / viewport.y, eff.y / viewport.x)
         }
     }
 
@@ -294,6 +296,36 @@ impl ViewProgram {
         Some((self.image_size.x as u32, self.image_size.y as u32))
     }
 
+    fn active_crop(&self) -> Option<[f32; 4]> {
+        use crate::modifiers::ModifierKind;
+        if self.crop_tool_active || self.image_size == Vec2::ZERO {
+            return None;
+        }
+        self.modifiers.iter().find_map(|m| {
+            if !m.enabled {
+                return None;
+            }
+            if let ModifierKind::Crop { x, y, width, height } = m.kind {
+                let iw = self.image_size.x;
+                let ih = self.image_size.y;
+                Some([x / iw, y / ih, (x + width) / iw, (y + height) / ih])
+            } else {
+                None
+            }
+        })
+    }
+
+    fn effective_display_size(&self) -> Vec2 {
+        if let Some([min_u, min_v, max_u, max_v]) = self.active_crop() {
+            vec2(
+                (max_u - min_u) * self.image_size.x,
+                (max_v - min_v) * self.image_size.y,
+            )
+        } else {
+            self.image_size
+        }
+    }
+
     pub fn animation_info(&self) -> Option<(usize, usize)> {
         self.animation
             .as_ref()
@@ -321,6 +353,24 @@ impl ViewProgram {
         })
     }
 
+    pub fn screen_to_image_uv(&self, screen_pos: Vec2) -> Option<Vec2> {
+        let coords = self.screen_to_image_coords(screen_pos)?;
+        Some(coords / self.image_size)
+    }
+
+    pub fn image_uv_to_screen(&self, uv: Vec2) -> Option<Vec2> {
+        let viewport = vec2(self.bounds.width, self.bounds.height);
+        if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
+            return None;
+        }
+        let img_ndc = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
+        let screen_ndc = self.build_transform(viewport) * img_ndc;
+        Some(vec2(
+            (screen_ndc.x + 1.0) * 0.5 * viewport.x,
+            (1.0 - screen_ndc.y) * 0.5 * viewport.y,
+        ))
+    }
+
     fn screen_to_image_coords(&self, screen_pos: Vec2) -> Option<Vec2> {
         let viewport = vec2(self.bounds.width, self.bounds.height);
         if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
@@ -334,10 +384,14 @@ impl ViewProgram {
             * vec4(screen_ndc.x, screen_ndc.y, 0.0, 1.0))
         .truncate()
         .truncate();
-        Some(
-            (img_ndc + 1.0) * 0.5 * vec2(self.image_size.x, -self.image_size.y)
-                + vec2(0.0, self.image_size.y),
-        )
+        let eff = self.effective_display_size();
+        let local_px = (img_ndc + 1.0) * 0.5 * vec2(eff.x, -eff.y) + vec2(0.0, eff.y);
+        let origin = if let Some([min_u, min_v, ..]) = self.active_crop() {
+            vec2(min_u * self.image_size.x, min_v * self.image_size.y)
+        } else {
+            Vec2::ZERO
+        };
+        Some(local_px + origin)
     }
 
     pub fn screen_to_image_pixel(&self, screen_pos: Vec2) -> Option<(u32, u32)> {
@@ -738,6 +792,7 @@ impl Program<Message> for ViewProgram {
         ViewPrimitive {
             uniforms: Uniforms {
                 transform: self.build_transform(viewport),
+                crop_uv: self.active_crop().unwrap_or([0.0, 0.0, 1.0, 1.0]),
             },
             image: self.image.clone(),
             scale: s,

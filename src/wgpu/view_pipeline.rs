@@ -26,10 +26,11 @@ use crate::{
     },
 };
 
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Copy, Clone, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Uniforms {
     pub transform: Mat4,
+    pub crop_uv: [f32; 4],
 }
 
 fn ndc_rect_of_transform(transform: &Mat4) -> (Vec2, Vec2) {
@@ -130,10 +131,13 @@ impl ViewPipeline {
 
         if source.tiles.len() == 1 {
             let tile = &mut source.tiles[0];
-            if tile.last_transform != Some(uniforms.transform) {
+            if tile.last_transform != Some(uniforms.transform)
+                || tile.last_crop_uv != Some(uniforms.crop_uv)
+            {
                 queue.write_buffer(&tile.uniform_buffer, 0, bytes_of(uniforms));
                 tile.last_ndc_rect = Some(ndc_rect_of_transform(&uniforms.transform));
                 tile.last_transform = Some(uniforms.transform);
+                tile.last_crop_uv = Some(uniforms.crop_uv);
             }
             return;
         }
@@ -161,10 +165,17 @@ impl ViewPipeline {
                 * Mat4::from_translation(vec3(tile_offset.x, tile_offset.y, 0.0))
                 * Mat4::from_scale(vec3(tile_aspect.x, tile_aspect.y, 1.0));
 
-            if tile.last_transform != Some(transform) {
-                queue.write_buffer(&tile.uniform_buffer, 0, bytes_of(&Uniforms { transform }));
+            if tile.last_transform != Some(transform)
+                || tile.last_crop_uv != Some(uniforms.crop_uv)
+            {
+                queue.write_buffer(
+                    &tile.uniform_buffer,
+                    0,
+                    bytes_of(&Uniforms { transform, crop_uv: uniforms.crop_uv }),
+                );
                 tile.last_ndc_rect = Some(ndc_rect_of_transform(&transform));
                 tile.last_transform = Some(transform);
+                tile.last_crop_uv = Some(uniforms.crop_uv);
             }
         }
     }
