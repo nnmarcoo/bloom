@@ -8,7 +8,7 @@ use iced::widget::{
 use iced::{Element, Length, Padding, mouse, padding};
 
 use crate::app::Message;
-use crate::modifiers::{MaskParam, Modifier, ModifierKind, ModifierParam, ModifierType};
+use crate::modifiers::{Modifier, ModifierKind, ModifierParam, ModifierType};
 use crate::styles::{
     PAD, modifier_active_card_style, modifier_add_button_style, modifier_card_style,
     modifier_drop_indicator_style, plain_icon_button_style, svg_style,
@@ -135,10 +135,6 @@ fn card<'a>(
     if modifier.expanded {
         card_col = card_col.push(rule::horizontal(1));
         card_col = card_col.push(body(index, &modifier.kind, image_size, rotation));
-        if !matches!(modifier.kind, ModifierKind::Crop { .. }) {
-            card_col = card_col.push(rule::horizontal(1));
-            card_col = card_col.push(mask_section(index, modifier));
-        }
     }
 
     let card_area = mouse_area(
@@ -827,87 +823,6 @@ fn body<'a>(index: usize, kind: &'a ModifierKind, image_size: Option<(u32, u32)>
     };
 
     col.spacing(4).padding(padding::top(4).bottom(2)).into()
-}
-
-fn mask_section<'a>(index: usize, modifier: &'a Modifier) -> Element<'a, Message> {
-    let mask_icon: &'static [u8] = if modifier.mask_enabled {
-        include_bytes!("../../assets/icons/circle-filled.svg")
-    } else {
-        include_bytes!("../../assets/icons/circle.svg")
-    };
-
-    let header = row![
-        text("Mask").size(11),
-        Space::new().width(Length::Fill),
-        icon_btn(mask_icon, Message::ToggleModifierMask(index)),
-    ]
-    .align_y(Vertical::Center)
-    .spacing(2);
-
-    let mut col = column![header].spacing(4);
-
-    if modifier.mask_enabled {
-        let (mx, my, mw, mh, fe) = (
-            modifier.mask_x,
-            modifier.mask_y,
-            modifier.mask_w,
-            modifier.mask_h,
-            modifier.feather,
-        );
-        col = col
-            .push(param_row(
-                "X",
-                slider(0.0f32..=1.0f32, mx, move |v| {
-                    Message::UpdateModifierMask(index, MaskParam::X(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", mx),
-            ))
-            .push(param_row(
-                "Y",
-                slider(0.0f32..=1.0f32, my, move |v| {
-                    Message::UpdateModifierMask(index, MaskParam::Y(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", my),
-            ))
-            .push(param_row(
-                "Width",
-                slider(0.0f32..=1.0f32, mw, move |v| {
-                    Message::UpdateModifierMask(index, MaskParam::Width(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", mw),
-            ))
-            .push(param_row(
-                "Height",
-                slider(0.0f32..=1.0f32, mh, move |v| {
-                    Message::UpdateModifierMask(index, MaskParam::Height(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", mh),
-            ))
-            .push(param_row(
-                "Feather",
-                slider(0.0f32..=100.0f32, fe, move |v| {
-                    Message::UpdateModifierMask(index, MaskParam::Feather(v))
-                })
-                .step(0.5f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.1}", fe),
-            ));
-    }
-
-    col.padding(padding::top(4).bottom(2)).into()
 }
 
 fn param_row<'a>(

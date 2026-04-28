@@ -60,12 +60,6 @@ pub struct Modifier {
     pub kind: ModifierKind,
     pub enabled: bool,
     pub expanded: bool,
-    pub mask_enabled: bool,
-    pub mask_x: f32,
-    pub mask_y: f32,
-    pub mask_w: f32,
-    pub mask_h: f32,
-    pub feather: f32,
 }
 
 impl Modifier {
@@ -74,12 +68,6 @@ impl Modifier {
             kind,
             enabled: true,
             expanded: true,
-            mask_enabled: false,
-            mask_x: 0.0,
-            mask_y: 0.0,
-            mask_w: 1.0,
-            mask_h: 1.0,
-            feather: 0.0,
         }
     }
 
@@ -121,15 +109,6 @@ impl Modifier {
             _ => false,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum MaskParam {
-    X(f32),
-    Y(f32),
-    Width(f32),
-    Height(f32),
-    Feather(f32),
 }
 
 #[derive(Debug, Clone)]

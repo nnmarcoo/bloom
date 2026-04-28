@@ -63,19 +63,7 @@ fn build_mod_uniforms(modifiers: &[Modifier], tile: &TileInfo) -> ModUniforms {
             ModifierKind::BrightnessContrast {
                 brightness,
                 contrast,
-            } => make_entry(
-                3,
-                &[
-                    *brightness,
-                    *contrast,
-                    m.mask_enabled as u32 as f32,
-                    m.mask_x,
-                    m.mask_y,
-                    m.mask_w,
-                    m.mask_h,
-                    m.feather,
-                ],
-            ),
+            } => make_entry(3, &[*brightness, *contrast]),
             ModifierKind::HueSaturation {
                 hue,
                 saturation,

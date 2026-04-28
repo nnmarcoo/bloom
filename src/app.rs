@@ -25,7 +25,7 @@ use crate::{
     config::{Config, UI_SCALE_DEFAULT, UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP},
     gallery::Gallery,
     keybinds::{Action, KeyBinding},
-    modifiers::{MaskParam, Modifier, ModifierKind, ModifierParam, ModifierType},
+    modifiers::{Modifier, ModifierKind, ModifierParam, ModifierType},
     styles, tasks,
     wgpu::{
         media::image_data::MediaData, passes::checkerboard::CheckerboardUniforms,
@@ -59,7 +59,6 @@ pub enum Tool {
     Crop,
     Draw,
     Text,
-    Mask,
 }
 
 impl Default for App {
@@ -154,8 +153,6 @@ pub enum Message {
     ToggleModifierExpanded(usize),
     ToggleModifierEnabled(usize),
     UpdateModifier(usize, ModifierParam),
-    ToggleModifierMask(usize),
-    UpdateModifierMask(usize, MaskParam),
     SetActiveModifier(usize),
     ClearActiveModifier,
     StartModifierDrag(usize),
@@ -531,24 +528,6 @@ impl App {
             Message::ToggleModifierEnabled(i) => {
                 if let Some(m) = self.program.modifiers.get_mut(i) {
                     m.enabled = !m.enabled;
-                }
-                self.program.mark_dirty(i);
-            }
-            Message::ToggleModifierMask(i) => {
-                if let Some(m) = self.program.modifiers.get_mut(i) {
-                    m.mask_enabled = !m.mask_enabled;
-                }
-                self.program.mark_dirty(i);
-            }
-            Message::UpdateModifierMask(i, param) => {
-                if let Some(m) = self.program.modifiers.get_mut(i) {
-                    match param {
-                        MaskParam::X(v) => m.mask_x = v,
-                        MaskParam::Y(v) => m.mask_y = v,
-                        MaskParam::Width(v) => m.mask_w = v,
-                        MaskParam::Height(v) => m.mask_h = v,
-                        MaskParam::Feather(v) => m.feather = v,
-                    }
                 }
                 self.program.mark_dirty(i);
             }

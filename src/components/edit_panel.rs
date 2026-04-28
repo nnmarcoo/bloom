@@ -66,15 +66,6 @@ pub fn view<'a>(
                 "Text",
                 Position::Left,
             ),
-            with_tooltip(
-                tool_button(
-                    include_bytes!("../../assets/icons/pen.svg"),
-                    Tool::Mask,
-                    selected_tool,
-                ),
-                "Mask",
-                Position::Left,
-            ),
         ]
         .spacing(2),
     )
