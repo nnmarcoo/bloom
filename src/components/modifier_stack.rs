@@ -30,7 +30,14 @@ pub fn view<'a>(
         let show_indicator = matches!((dragging, drag_target),
             (Some(src), Some(tgt)) if tgt == i && src != i);
         stack_col = stack_col.push(gap(show_indicator));
-        stack_col = stack_col.push(card(i, modifier, active == Some(i), dragging.is_some(), image_size, rotation));
+        stack_col = stack_col.push(card(
+            i,
+            modifier,
+            active == Some(i),
+            dragging.is_some(),
+            image_size,
+            rotation,
+        ));
     }
     let show_trailing = matches!((dragging, drag_target),
         (Some(_), Some(tgt)) if tgt == n);
@@ -157,7 +164,12 @@ fn card<'a>(
     }
 }
 
-fn body<'a>(index: usize, kind: &'a ModifierKind, image_size: Option<(u32, u32)>, rotation: u8) -> Element<'a, Message> {
+fn body<'a>(
+    index: usize,
+    kind: &'a ModifierKind,
+    image_size: Option<(u32, u32)>,
+    rotation: u8,
+) -> Element<'a, Message> {
     let col = match kind {
         ModifierKind::Levels {
             shadows,
@@ -510,32 +522,19 @@ fn body<'a>(index: usize, kind: &'a ModifierKind, image_size: Option<(u32, u32)>
                 ),
             ]
         }
-        ModifierKind::ChromaticAberration { amount, angle } => {
-            let (am, an) = (*amount, *angle);
-            column![
-                param_row(
-                    "Amount",
-                    slider(0.0f32..=50.0f32, am, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::ChromaticAberrationAmount(v)
-                    ))
-                    .step(0.1f32)
-                    .width(Length::Fill)
-                    .into(),
-                    format!("{:.1}", am)
-                ),
-                param_row(
-                    "Angle",
-                    slider(0.0f32..=360.0f32, an, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::ChromaticAberrationAngle(v)
-                    ))
-                    .step(0.5f32)
-                    .width(Length::Fill)
-                    .into(),
-                    format!("{:.0}°", an)
-                ),
-            ]
+        ModifierKind::ChromaticAberration { amount } => {
+            let am = *amount;
+            column![param_row(
+                "Amount",
+                slider(0.0f32..=50.0f32, am, move |v| Message::UpdateModifier(
+                    index,
+                    ModifierParam::ChromaticAberrationAmount(v)
+                ))
+                .step(0.1f32)
+                .width(Length::Fill)
+                .into(),
+                format!("{:.1}", am)
+            )]
         }
         ModifierKind::Posterize { levels } => {
             let lv = *levels;
@@ -618,21 +617,45 @@ fn body<'a>(index: usize, kind: &'a ModifierKind, image_size: Option<(u32, u32)>
                 ),
             ]
         }
-        ModifierKind::Crop { x, y, width, height } => {
+        ModifierKind::Crop {
+            x,
+            y,
+            width,
+            height,
+        } => {
             let (cx, cy, cw, ch) = (*x, *y, *width, *height);
-            let (iw, ih) = image_size.map(|(w, h)| (w as f32, h as f32)).unwrap_or((cx + cw, cy + ch));
+            let (iw, ih) = image_size
+                .map(|(w, h)| (w as f32, h as f32))
+                .unwrap_or((cx + cw, cy + ch));
             let swapped = rotation % 2 == 1;
             let (vis_w, vis_h) = if swapped { (ch, cw) } else { (cw, ch) };
             let (vis_w_max, vis_h_max) = if swapped { (ih, iw) } else { (iw, ih) };
-            let w_msg = move |v| Message::UpdateModifier(index, if swapped { ModifierParam::CropHeight(v) } else { ModifierParam::CropWidth(v) });
-            let h_msg = move |v| Message::UpdateModifier(index, if swapped { ModifierParam::CropWidth(v) } else { ModifierParam::CropHeight(v) });
+            let w_msg = move |v| {
+                Message::UpdateModifier(
+                    index,
+                    if swapped {
+                        ModifierParam::CropHeight(v)
+                    } else {
+                        ModifierParam::CropWidth(v)
+                    },
+                )
+            };
+            let h_msg = move |v| {
+                Message::UpdateModifier(
+                    index,
+                    if swapped {
+                        ModifierParam::CropWidth(v)
+                    } else {
+                        ModifierParam::CropHeight(v)
+                    },
+                )
+            };
             column![
                 param_row(
                     "X",
-                    slider(0.0f32..=(iw - 1.0).max(0.0), cx, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::CropX(v)
-                    ))
+                    slider(0.0f32..=(iw - 1.0).max(0.0), cx, move |v| {
+                        Message::UpdateModifier(index, ModifierParam::CropX(v))
+                    })
                     .step(1.0f32)
                     .width(Length::Fill)
                     .into(),
@@ -640,10 +663,9 @@ fn body<'a>(index: usize, kind: &'a ModifierKind, image_size: Option<(u32, u32)>
                 ),
                 param_row(
                     "Y",
-                    slider(0.0f32..=(ih - 1.0).max(0.0), cy, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::CropY(v)
-                    ))
+                    slider(0.0f32..=(ih - 1.0).max(0.0), cy, move |v| {
+                        Message::UpdateModifier(index, ModifierParam::CropY(v))
+                    })
                     .step(1.0f32)
                     .width(Length::Fill)
                     .into(),

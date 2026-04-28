@@ -305,7 +305,13 @@ impl ViewProgram {
             if !m.enabled {
                 return None;
             }
-            if let ModifierKind::Crop { x, y, width, height } = m.kind {
+            if let ModifierKind::Crop {
+                x,
+                y,
+                width,
+                height,
+            } = m.kind
+            {
                 let iw = self.image_size.x;
                 let ih = self.image_size.y;
                 Some([x / iw, y / ih, (x + width) / iw, (y + height) / ih])
@@ -402,6 +408,163 @@ impl ViewProgram {
         Some((img.x as u32, img.y as u32))
     }
 
+    fn apply_single_cpu(
+        kind: &crate::modifiers::ModifierKind,
+        img_w: u32,
+        img_h: u32,
+        uv: [f32; 2],
+        mut c: [f32; 4],
+    ) -> [f32; 4] {
+        use crate::modifiers::ModifierKind;
+        match kind {
+            ModifierKind::BrightnessContrast {
+                brightness,
+                contrast,
+            } => {
+                for v in c.iter_mut().take(3) {
+                    *v = (*v + brightness - 0.5) * (1.0 + contrast) + 0.5;
+                }
+            }
+            ModifierKind::Exposure { exposure } => {
+                let scale = 2.0f32.powf(*exposure);
+                c[0] *= scale;
+                c[1] *= scale;
+                c[2] *= scale;
+            }
+            ModifierKind::Levels {
+                shadows,
+                midtones,
+                highlights,
+            } => {
+                let hi = highlights.max(shadows + 0.001);
+                let range = hi - shadows;
+                for v in c.iter_mut().take(3) {
+                    *v = ((*v - shadows) / range).clamp(0.0, 1.0);
+                }
+                let gamma = midtones.max(0.001);
+                for v in c.iter_mut().take(3) {
+                    *v = v.powf(1.0 / gamma);
+                }
+            }
+            ModifierKind::HueSaturation {
+                hue,
+                saturation,
+                lightness,
+            } => {
+                let [h, s, l] = Self::rgb_to_hsl([c[0], c[1], c[2]]);
+                let rgb = Self::hsl_to_rgb([
+                    (h + hue / 360.0).fract(),
+                    (s + saturation).clamp(0.0, 1.0),
+                    (l + lightness).clamp(0.0, 1.0),
+                ]);
+                c[0] = rgb[0];
+                c[1] = rgb[1];
+                c[2] = rgb[2];
+            }
+            ModifierKind::Vignette {
+                strength,
+                size,
+                softness,
+            } => {
+                let dx = uv[0] - 0.5;
+                let dy = uv[1] - 0.5;
+                let dist = (dx * dx + dy * dy).sqrt() * 2.0;
+                let inner = (size - softness).max(0.0);
+                let t = ((dist - inner) / (size + 0.0001 - inner)).clamp(0.0, 1.0);
+                let vignette = 1.0 - t * t * (3.0 - 2.0 * t);
+                let factor = (1.0 - strength).max(0.0) * (1.0 - vignette) + vignette;
+                c[0] *= factor;
+                c[1] *= factor;
+                c[2] *= factor;
+            }
+            ModifierKind::Threshold { cutoff } => {
+                let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+                let v = if luma >= *cutoff { 1.0 } else { 0.0 };
+                c[0] = v;
+                c[1] = v;
+                c[2] = v;
+            }
+            ModifierKind::Posterize { levels } => {
+                let l = (*levels as f32 - 1.0).max(1.0);
+                for v in c.iter_mut().take(3) {
+                    *v = (*v * l + 0.5).floor() / l;
+                }
+            }
+            ModifierKind::Vibrance {
+                vibrance,
+                saturation,
+            } => {
+                let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+                let max_c = c[0].max(c[1]).max(c[2]);
+                let sat_proxy = max_c - c[0].min(c[1]).min(c[2]);
+                let vib_amount = vibrance * (1.0 - sat_proxy);
+                for v in c.iter_mut().take(3) {
+                    *v = luma + (*v - luma) * (1.0 + vib_amount);
+                }
+                let luma2 = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+                for v in c.iter_mut().take(3) {
+                    *v = luma2 + (*v - luma2) * (1.0 + saturation);
+                }
+            }
+            ModifierKind::ColorBalance {
+                cyan_red,
+                magenta_green,
+                yellow_blue,
+            } => {
+                c[0] += cyan_red;
+                c[1] += magenta_green;
+                c[2] += yellow_blue;
+            }
+            ModifierKind::Grain {
+                amount,
+                size,
+                roughness,
+                seed,
+            } => {
+                let gx = uv[0] * img_w as f32 / size.max(0.5);
+                let gy = uv[1] * img_h as f32 / size.max(0.5);
+                let iseed = *seed as i32;
+                let (cx, cy) = (gx.floor(), gy.floor());
+                let (fx, fy) = (gx.fract(), gy.fract());
+                let n00 = Self::hash21_i(cx as i32, cy as i32, iseed);
+                let n10 = Self::hash21_i(cx as i32 + 1, cy as i32, iseed);
+                let n01 = Self::hash21_i(cx as i32, cy as i32 + 1, iseed);
+                let n11 = Self::hash21_i(cx as i32 + 1, cy as i32 + 1, iseed);
+                let t = roughness.clamp(0.0, 1.0);
+                let wx =
+                    fx * fx * (3.0 - 2.0 * fx) * (1.0 - t) + if fx >= 0.5 { 1.0 } else { 0.0 } * t;
+                let wy =
+                    fy * fy * (3.0 - 2.0 * fy) * (1.0 - t) + if fy >= 0.5 { 1.0 } else { 0.0 } * t;
+                let noise =
+                    (n00 * (1.0 - wx) + n10 * wx) * (1.0 - wy) + (n01 * (1.0 - wx) + n11 * wx) * wy;
+                let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+                let luma_weight = 4.0 * luma * (1.0 - luma);
+                let grain = (noise - 0.5) * amount * luma_weight;
+                for v in c.iter_mut().take(3) {
+                    *v = (*v + grain).clamp(0.0, 1.0);
+                }
+            }
+            ModifierKind::Halftone { size, angle } => {
+                let angle_rad = *angle * std::f32::consts::PI / 180.0;
+                let cs = angle_rad.cos();
+                let sn = angle_rad.sin();
+                let period = (*size / img_w.min(img_h) as f32).max(0.001);
+                let rot_x = (uv[0] * cs - uv[1] * sn) / period;
+                let rot_y = (uv[0] * sn + uv[1] * cs) / period;
+                let cell_x = rot_x.floor() + 0.5;
+                let cell_y = rot_y.floor() + 0.5;
+                let dist = ((rot_x - cell_x).powi(2) + (rot_y - cell_y).powi(2)).sqrt();
+                let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+                let v = if dist < luma.sqrt() * 0.5 { 1.0 } else { 0.0 };
+                c[0] = v;
+                c[1] = v;
+                c[2] = v;
+            }
+            _ => {}
+        }
+        c.map(|v| v.clamp(0.0, 1.0))
+    }
+
     fn apply_modifiers_cpu(
         &self,
         pixels: &[u8],
@@ -411,186 +574,37 @@ impl ViewProgram {
         mut c: [f32; 4],
     ) -> [f32; 4] {
         use crate::modifiers::ModifierKind;
-        for m in &self.modifiers {
+        for (i, m) in self.modifiers.iter().enumerate() {
             if !m.enabled {
                 continue;
             }
-            match &m.kind {
-                ModifierKind::BrightnessContrast {
-                    brightness,
-                    contrast,
-                } => {
-                    for c_val in c.iter_mut().take(3) {
-                        *c_val = (*c_val + brightness - 0.5) * (1.0 + contrast) + 0.5;
+            if let ModifierKind::ChromaticAberration { amount } = &m.kind {
+                let scale = amount / img_w as f32;
+                let r_uv = [
+                    (uv[0] + (uv[0] - 0.5) * scale).clamp(0.0, 1.0),
+                    (uv[1] + (uv[1] - 0.5) * scale).clamp(0.0, 1.0),
+                ];
+                let b_uv = [
+                    (uv[0] - (uv[0] - 0.5) * scale).clamp(0.0, 1.0),
+                    (uv[1] - (uv[1] - 0.5) * scale).clamp(0.0, 1.0),
+                ];
+                let mut cr = Self::sample_pixel(pixels, img_w, img_h, r_uv[0], r_uv[1]);
+                let mut cb = Self::sample_pixel(pixels, img_w, img_h, b_uv[0], b_uv[1]);
+                for prev in &self.modifiers[..i] {
+                    if !prev.enabled
+                        || matches!(prev.kind, ModifierKind::ChromaticAberration { .. })
+                    {
+                        continue;
                     }
+                    cr = Self::apply_single_cpu(&prev.kind, img_w, img_h, r_uv, cr);
+                    cb = Self::apply_single_cpu(&prev.kind, img_w, img_h, b_uv, cb);
                 }
-                ModifierKind::Exposure { exposure } => {
-                    let scale = 2.0f32.powf(*exposure);
-                    c[0] *= scale;
-                    c[1] *= scale;
-                    c[2] *= scale;
-                }
-                ModifierKind::Levels {
-                    shadows,
-                    midtones,
-                    highlights,
-                } => {
-                    let hi = highlights.max(shadows + 0.001);
-                    let range = hi - shadows;
-                    for c_val in c.iter_mut().take(3) {
-                        *c_val = ((*c_val - shadows) / range).clamp(0.0, 1.0);
-                    }
-                    let gamma = midtones.max(0.001);
-                    for c_val in c.iter_mut().take(3) {
-                        *c_val = c_val.powf(1.0 / gamma);
-                    }
-                }
-                ModifierKind::HueSaturation {
-                    hue,
-                    saturation,
-                    lightness,
-                } => {
-                    let [h, s, l] = Self::rgb_to_hsl([c[0], c[1], c[2]]);
-                    let h2 = (h + hue / 360.0).fract();
-                    let s2 = (s + saturation).clamp(0.0, 1.0);
-                    let l2 = (l + lightness).clamp(0.0, 1.0);
-                    let rgb = Self::hsl_to_rgb([h2, s2, l2]);
-                    c[0] = rgb[0];
-                    c[1] = rgb[1];
-                    c[2] = rgb[2];
-                }
-                ModifierKind::Vignette {
-                    strength,
-                    size,
-                    softness,
-                } => {
-                    let dx = uv[0] - 0.5;
-                    let dy = uv[1] - 0.5;
-                    let dist = (dx * dx + dy * dy).sqrt() * 2.0;
-                    let inner = (size - softness).max(0.0);
-                    let outer = size + 0.0001;
-                    let t = ((dist - inner) / (outer - inner)).clamp(0.0, 1.0);
-                    let vignette = 1.0 - t * t * (3.0 - 2.0 * t);
-                    let factor = (1.0 - strength).max(0.0) * (1.0 - vignette) + vignette;
-                    c[0] *= factor;
-                    c[1] *= factor;
-                    c[2] *= factor;
-                }
-                ModifierKind::Threshold { cutoff } => {
-                    let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
-                    let v = if luma >= *cutoff { 1.0 } else { 0.0 };
-                    c[0] = v;
-                    c[1] = v;
-                    c[2] = v;
-                }
-                ModifierKind::Posterize { levels } => {
-                    let l = (*levels as f32 - 1.0).max(1.0);
-                    for c_val in c.iter_mut().take(3) {
-                        *c_val = (*c_val * l + 0.5).floor() / l;
-                    }
-                }
-                ModifierKind::Vibrance {
-                    vibrance,
-                    saturation,
-                } => {
-                    let avg = (c[0] + c[1] + c[2]) / 3.0;
-                    let max_c = c[0].max(c[1]).max(c[2]);
-                    let sat_proxy = max_c - c[0].min(c[1]).min(c[2]);
-                    let vib_amount = vibrance * (1.0 - sat_proxy);
-                    for c_val in c.iter_mut().take(3) {
-                        *c_val = avg + (*c_val - avg) * (1.0 + vib_amount);
-                    }
-                    let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
-                    for c_val in c.iter_mut().take(3) {
-                        *c_val = luma + (*c_val - luma) * (1.0 + saturation);
-                    }
-                }
-                ModifierKind::ColorBalance {
-                    cyan_red,
-                    magenta_green,
-                    yellow_blue,
-                } => {
-                    c[0] += cyan_red;
-                    c[1] += magenta_green;
-                    c[2] += yellow_blue;
-                }
-                ModifierKind::Grain {
-                    amount,
-                    size,
-                    roughness,
-                    seed,
-                } => {
-                    let full_px_x = uv[0] * img_w as f32;
-                    let full_px_y = uv[1] * img_h as f32;
-                    let iseed = *seed as i32;
-                    let sz = size.max(0.5);
-                    let gx = full_px_x / sz;
-                    let gy = full_px_y / sz;
-                    let cx = gx.floor();
-                    let cy = gy.floor();
-                    let fx = gx.fract();
-                    let fy = gy.fract();
-                    let n00 = Self::hash21_i(cx as i32, cy as i32, iseed);
-                    let n10 = Self::hash21_i(cx as i32 + 1, cy as i32, iseed);
-                    let n01 = Self::hash21_i(cx as i32, cy as i32 + 1, iseed);
-                    let n11 = Self::hash21_i(cx as i32 + 1, cy as i32 + 1, iseed);
-                    let t = roughness.clamp(0.0, 1.0);
-                    let smooth_wx = fx * fx * (3.0 - 2.0 * fx);
-                    let wx = smooth_wx * (1.0 - t) + if fx >= 0.5 { 1.0 } else { 0.0 } * t;
-                    let smooth_wy = fy * fy * (3.0 - 2.0 * fy);
-                    let wy = smooth_wy * (1.0 - t) + if fy >= 0.5 { 1.0 } else { 0.0 } * t;
-                    let noise = (n00 * (1.0 - wx) + n10 * wx) * (1.0 - wy)
-                        + (n01 * (1.0 - wx) + n11 * wx) * wy;
-                    let grain = (noise - 0.5) * amount;
-                    for c_val in c.iter_mut().take(3) {
-                        *c_val = (*c_val + grain).clamp(0.0, 1.0);
-                    }
-                }
-                // Distort modifiers: sample at displaced UV
-                ModifierKind::ChromaticAberration { amount, angle } => {
-                    let angle_rad = *angle * std::f32::consts::PI / 180.0;
-                    let offset_x = angle_rad.cos() * amount / img_w as f32;
-                    let offset_y = angle_rad.sin() * amount / img_w as f32;
-                    c[0] = Self::sample_channel(
-                        pixels,
-                        img_w,
-                        img_h,
-                        uv[0] + offset_x,
-                        uv[1] + offset_y,
-                        0,
-                    );
-                    c[2] = Self::sample_channel(
-                        pixels,
-                        img_w,
-                        img_h,
-                        uv[0] - offset_x,
-                        uv[1] - offset_y,
-                        2,
-                    );
-                }
-                ModifierKind::Halftone { size, angle } => {
-                    let angle_rad = *angle * std::f32::consts::PI / 180.0;
-                    let cs = angle_rad.cos();
-                    let sn = angle_rad.sin();
-                    let period = (*size / img_w.min(img_h) as f32).max(0.001);
-                    let rot_x = (uv[0] * cs - uv[1] * sn) / period;
-                    let rot_y = (uv[0] * sn + uv[1] * cs) / period;
-                    let cell_x = rot_x.floor() + 0.5;
-                    let cell_y = rot_y.floor() + 0.5;
-                    let dist = ((rot_x - cell_x).powi(2) + (rot_y - cell_y).powi(2)).sqrt();
-                    let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
-                    let radius = luma.sqrt() * 0.5;
-                    let v = if dist < radius { 1.0 } else { 0.0 };
-                    c[0] = v;
-                    c[1] = v;
-                    c[2] = v;
-                }
-                _ => {}
+                c[0] = cr[0];
+                c[2] = cb[2];
+            } else {
+                c = Self::apply_single_cpu(&m.kind, img_w, img_h, uv, c);
             }
-            c[0] = c[0].clamp(0.0, 1.0);
-            c[1] = c[1].clamp(0.0, 1.0);
-            c[2] = c[2].clamp(0.0, 1.0);
-            c[3] = c[3].clamp(0.0, 1.0);
+            c = c.map(|v| v.clamp(0.0, 1.0));
         }
         c
     }
@@ -691,6 +705,15 @@ impl ViewProgram {
         let y = (v * h as f32).clamp(0.0, h as f32 - 1.0) as usize;
         let idx = (y * w as usize + x) * 4 + ch;
         pixels.get(idx).map_or(0.0, |&b| b as f32 / 255.0)
+    }
+
+    fn sample_pixel(pixels: &[u8], w: u32, h: u32, u: f32, v: f32) -> [f32; 4] {
+        [
+            Self::sample_channel(pixels, w, h, u, v, 0),
+            Self::sample_channel(pixels, w, h, u, v, 1),
+            Self::sample_channel(pixels, w, h, u, v, 2),
+            Self::sample_channel(pixels, w, h, u, v, 3),
+        ]
     }
 
     pub fn cursor_info(&self) -> Option<(u32, u32, Vec2, [u8; 4])> {

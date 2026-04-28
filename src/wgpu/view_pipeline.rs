@@ -165,13 +165,15 @@ impl ViewPipeline {
                 * Mat4::from_translation(vec3(tile_offset.x, tile_offset.y, 0.0))
                 * Mat4::from_scale(vec3(tile_aspect.x, tile_aspect.y, 1.0));
 
-            if tile.last_transform != Some(transform)
-                || tile.last_crop_uv != Some(uniforms.crop_uv)
+            if tile.last_transform != Some(transform) || tile.last_crop_uv != Some(uniforms.crop_uv)
             {
                 queue.write_buffer(
                     &tile.uniform_buffer,
                     0,
-                    bytes_of(&Uniforms { transform, crop_uv: uniforms.crop_uv }),
+                    bytes_of(&Uniforms {
+                        transform,
+                        crop_uv: uniforms.crop_uv,
+                    }),
                 );
                 tile.last_ndc_rect = Some(ndc_rect_of_transform(&transform));
                 tile.last_transform = Some(transform);

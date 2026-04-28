@@ -48,23 +48,28 @@ pub fn view<'a>(
     let notif_overlay = notifications::view(notifs);
 
     let image_size = program.image_size();
-    let (img_w, img_h) = image_size.map(|(w, h)| (w as f32, h as f32)).unwrap_or((1.0, 1.0));
+    let (img_w, img_h) = image_size
+        .map(|(w, h)| (w as f32, h as f32))
+        .unwrap_or((1.0, 1.0));
 
     let mut layers: Vec<Element<'a, Message>> = vec![base];
 
-    if selected_tool == &Tool::Crop && loading.is_none() {
-        if let Some((crop_idx, crop_m)) = modifiers
+    if selected_tool == &Tool::Crop
+        && loading.is_none()
+        && let Some((crop_idx, crop_m)) = modifiers
             .iter()
             .enumerate()
             .find(|(_, m)| m.enabled && matches!(m.kind, ModifierKind::Crop { .. }))
-        {
-            if let ModifierKind::Crop { x, y, width, height } = crop_m.kind {
-                layers.push(
-                    CropOverlay::new(program.clone(), crop_idx, x, y, width, height, img_w, img_h)
-                        .into(),
-                );
-            }
-        }
+        && let ModifierKind::Crop {
+            x,
+            y,
+            width,
+            height,
+        } = crop_m.kind
+    {
+        layers.push(
+            CropOverlay::new(program.clone(), crop_idx, x, y, width, height, img_w, img_h).into(),
+        );
     }
 
     if let Some(filename) = loading {

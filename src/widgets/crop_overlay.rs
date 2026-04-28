@@ -53,6 +53,7 @@ pub struct CropOverlay {
 }
 
 impl CropOverlay {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         program: ViewProgram,
         modifier_idx: usize,
@@ -63,17 +64,30 @@ impl CropOverlay {
         img_w: f32,
         img_h: f32,
     ) -> Self {
-        Self { program, modifier_idx, x, y, w, h, img_w, img_h }
+        Self {
+            program,
+            modifier_idx,
+            x,
+            y,
+            w,
+            h,
+            img_w,
+            img_h,
+        }
     }
 
     fn crop_screen(&self) -> Option<(Vec2, Vec2)> {
         let iw = self.img_w.max(1.0);
         let ih = self.img_h.max(1.0);
         let corners = [
-            self.program.image_uv_to_screen(vec2(self.x / iw, self.y / ih))?,
-            self.program.image_uv_to_screen(vec2((self.x + self.w) / iw, self.y / ih))?,
-            self.program.image_uv_to_screen(vec2(self.x / iw, (self.y + self.h) / ih))?,
-            self.program.image_uv_to_screen(vec2((self.x + self.w) / iw, (self.y + self.h) / ih))?,
+            self.program
+                .image_uv_to_screen(vec2(self.x / iw, self.y / ih))?,
+            self.program
+                .image_uv_to_screen(vec2((self.x + self.w) / iw, self.y / ih))?,
+            self.program
+                .image_uv_to_screen(vec2(self.x / iw, (self.y + self.h) / ih))?,
+            self.program
+                .image_uv_to_screen(vec2((self.x + self.w) / iw, (self.y + self.h) / ih))?,
         ];
         let min = corners.iter().copied().fold(corners[0], Vec2::min);
         let max = corners.iter().copied().fold(corners[0], Vec2::max);
@@ -222,7 +236,15 @@ fn fill(renderer: &mut Renderer, x: f32, y: f32, w: f32, h: f32, color: Color) {
         return;
     }
     renderer.fill_quad(
-        Quad { bounds: Rectangle { x, y, width: w, height: h }, ..Default::default() },
+        Quad {
+            bounds: Rectangle {
+                x,
+                y,
+                width: w,
+                height: h,
+            },
+            ..Default::default()
+        },
         Background::Color(color),
     );
 }
@@ -236,7 +258,10 @@ fn fill_circle(renderer: &mut Renderer, cx: f32, cy: f32, r: f32, color: Color) 
                 width: r * 2.0,
                 height: r * 2.0,
             },
-            border: Border { radius: r.into(), ..Default::default() },
+            border: Border {
+                radius: r.into(),
+                ..Default::default()
+            },
             ..Default::default()
         },
         Background::Color(color),
@@ -253,7 +278,10 @@ impl Widget<Message, Theme, Renderer> for CropOverlay {
     }
 
     fn size(&self) -> Size<Length> {
-        Size { width: Length::Fill, height: Length::Fill }
+        Size {
+            width: Length::Fill,
+            height: Length::Fill,
+        }
     }
 
     fn layout(
@@ -323,11 +351,9 @@ impl Widget<Message, Theme, Renderer> for CropOverlay {
                     shell.request_redraw();
                 }
             }
-            mouse::Event::ButtonReleased(mouse::Button::Left) => {
-                if state.drag.take().is_some() {
-                    shell.capture_event();
-                    shell.request_redraw();
-                }
+            mouse::Event::ButtonReleased(mouse::Button::Left) if state.drag.take().is_some() => {
+                shell.capture_event();
+                shell.request_redraw();
             }
             _ => {}
         }
@@ -360,7 +386,12 @@ impl Widget<Message, Theme, Renderer> for CropOverlay {
             let cy1 = br.y.clamp(0.0, bh);
             let strip_h = cy1 - cy0;
 
-            let dark = Color { r: 0.0, g: 0.0, b: 0.0, a: OVERLAY_ALPHA };
+            let dark = Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: OVERLAY_ALPHA,
+            };
 
             fill(renderer, bx, by, bw, cy0, dark);
             fill(renderer, bx, by + cy1, bw, bh - cy1, dark);
@@ -376,15 +407,48 @@ impl Widget<Message, Theme, Renderer> for CropOverlay {
 
             fill(renderer, ax, ay, aw, BORDER_W, white);
             fill(renderer, ax, ay + ah - BORDER_W, aw, BORDER_W, white);
-            fill(renderer, ax, ay + BORDER_W, BORDER_W, ah - 2.0 * BORDER_W, white);
-            fill(renderer, ax + aw - BORDER_W, ay + BORDER_W, BORDER_W, ah - 2.0 * BORDER_W, white);
+            fill(
+                renderer,
+                ax,
+                ay + BORDER_W,
+                BORDER_W,
+                ah - 2.0 * BORDER_W,
+                white,
+            );
+            fill(
+                renderer,
+                ax + aw - BORDER_W,
+                ay + BORDER_W,
+                BORDER_W,
+                ah - 2.0 * BORDER_W,
+                white,
+            );
 
-            let thirds = Color { r: 1.0, g: 1.0, b: 1.0, a: THIRDS_ALPHA };
+            let thirds = Color {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: THIRDS_ALPHA,
+            };
             for i in 1..3i32 {
                 let vx = ax + aw * i as f32 / 3.0;
-                fill(renderer, vx, ay + BORDER_W, 1.0, ah - 2.0 * BORDER_W, thirds);
+                fill(
+                    renderer,
+                    vx,
+                    ay + BORDER_W,
+                    1.0,
+                    ah - 2.0 * BORDER_W,
+                    thirds,
+                );
                 let hy = ay + ah * i as f32 / 3.0;
-                fill(renderer, ax + BORDER_W, hy, aw - 2.0 * BORDER_W, 1.0, thirds);
+                fill(
+                    renderer,
+                    ax + BORDER_W,
+                    hy,
+                    aw - 2.0 * BORDER_W,
+                    1.0,
+                    thirds,
+                );
             }
 
             let state = tree.state.downcast_ref::<State>();

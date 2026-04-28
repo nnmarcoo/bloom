@@ -164,7 +164,6 @@ pub enum ModifierKind {
     },
     ChromaticAberration {
         amount: f32,
-        angle: f32,
     },
     Posterize {
         levels: u32,
@@ -274,10 +273,7 @@ impl From<ModifierType> for ModifierKind {
                 size: 0.5,
                 softness: 0.5,
             },
-            ModifierType::ChromaticAberration => ModifierKind::ChromaticAberration {
-                amount: 5.0,
-                angle: 0.0,
-            },
+            ModifierType::ChromaticAberration => ModifierKind::ChromaticAberration { amount: 5.0 },
             ModifierType::Posterize => ModifierKind::Posterize { levels: 4 },
             ModifierType::Threshold => ModifierKind::Threshold { cutoff: 0.5 },
             ModifierType::Grain => ModifierKind::Grain {
@@ -340,7 +336,6 @@ pub enum ModifierParam {
     VignetteSize(f32),
     VignetteSoftness(f32),
     ChromaticAberrationAmount(f32),
-    ChromaticAberrationAngle(f32),
     PosterizeLevels(u32),
     ThresholdCutoff(f32),
     GrainAmount(f32),
