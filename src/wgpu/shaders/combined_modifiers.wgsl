@@ -204,12 +204,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let p3 = e.data[1].x;
             let p4 = e.data[1].y;
 
-            let full_uv = in.uv * vec2<f32>(p3, p4) + vec2<f32>(p1, p2);
+            let tile_origin = vec2<f32>(p1, p2);
+            let tile_size = vec2<f32>(p3, p4);
+            let full_uv = in.uv * tile_size + tile_origin;
             let offset = full_uv - vec2<f32>(0.5);
             let r_full = clamp(vec2<f32>(0.5) + offset * (1.0 + p0), vec2<f32>(0.0), vec2<f32>(1.0));
             let b_full = clamp(vec2<f32>(0.5) + offset * (1.0 - p0), vec2<f32>(0.0), vec2<f32>(1.0));
-            let r_tile = clamp((r_full - vec2<f32>(p1, p2)) / vec2<f32>(p3, p4), vec2<f32>(0.0), vec2<f32>(1.0));
-            let b_tile = clamp((b_full - vec2<f32>(p1, p2)) / vec2<f32>(p3, p4), vec2<f32>(0.0), vec2<f32>(1.0));
+            let r_tile = clamp((r_full - tile_origin) / tile_size, vec2<f32>(0.0), vec2<f32>(1.0));
+            let b_tile = clamp((b_full - tile_origin) / tile_size, vec2<f32>(0.0), vec2<f32>(1.0));
 
             var cr = textureSample(t_image, s_image, r_tile);
             var cb = textureSample(t_image, s_image, b_tile);

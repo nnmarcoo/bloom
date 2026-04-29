@@ -501,9 +501,8 @@ impl ViewProgram {
                 for v in c.iter_mut().take(3) {
                     *v = luma + (*v - luma) * (1.0 + vib_amount);
                 }
-                let luma2 = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
                 for v in c.iter_mut().take(3) {
-                    *v = luma2 + (*v - luma2) * (1.0 + saturation);
+                    *v = luma + (*v - luma) * (1.0 + saturation);
                 }
             }
             ModifierKind::ColorBalance {

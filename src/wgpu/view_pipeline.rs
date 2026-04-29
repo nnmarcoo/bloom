@@ -151,13 +151,48 @@ impl ViewPipeline {
             vec2(1.0 / viewport.y, 1.0 / viewport.x)
         };
 
+        let [cu0, cv0, cu1, cv1] = uniforms.crop_uv;
+        let crop_left = cu0 * full_w;
+        let crop_right = cu1 * full_w;
+        let crop_top = cv0 * full_h;
+        let crop_bottom = cv1 * full_h;
+        let crop_cx = (crop_left + crop_right) * 0.5;
+        let crop_cy = (crop_top + crop_bottom) * 0.5;
+
         for tile in &mut source.tiles {
+            let tx = tile.x as f32;
+            let ty = tile.y as f32;
             let tw = tile.width as f32;
             let th = tile.height as f32;
-            let tile_cx = (tile.x as f32 + tw * 0.5) - full_w * 0.5;
-            let tile_cy = (full_h * 0.5) - (tile.y as f32 + th * 0.5);
-            let tile_offset = 2.0 * vec2(tile_cx, tile_cy) * inv_tile_vp;
-            let tile_aspect = vec2(tw, th) * inv_tile_vp;
+
+            let isec_left = crop_left.max(tx);
+            let isec_right = crop_right.min(tx + tw);
+            let isec_top = crop_top.max(ty);
+            let isec_bottom = crop_bottom.min(ty + th);
+
+            if isec_left >= isec_right || isec_top >= isec_bottom {
+                if tile.last_crop_uv != Some(uniforms.crop_uv) {
+                    tile.last_ndc_rect = Some((vec2(2.0, 2.0), vec2(3.0, 3.0)));
+                    tile.last_transform = None;
+                    tile.last_crop_uv = Some(uniforms.crop_uv);
+                }
+                continue;
+            }
+
+            let isec_cx = (isec_left + isec_right) * 0.5;
+            let isec_cy = (isec_top + isec_bottom) * 0.5;
+            let isec_w = isec_right - isec_left;
+            let isec_h = isec_bottom - isec_top;
+
+            let tile_offset = 2.0 * vec2(isec_cx - crop_cx, crop_cy - isec_cy) * inv_tile_vp;
+            let tile_aspect = vec2(isec_w, isec_h) * inv_tile_vp;
+
+            let per_tile_crop_uv = [
+                (isec_left - tx) / tw,
+                (isec_top - ty) / th,
+                (isec_right - tx) / tw,
+                (isec_bottom - ty) / th,
+            ];
 
             let transform = Mat4::from_scale(vec3(scale, scale, 1.0))
                 * Mat4::from_translation(vec3(pan_ndc.x, pan_ndc.y, 0.0))
@@ -172,7 +207,7 @@ impl ViewPipeline {
                     0,
                     bytes_of(&Uniforms {
                         transform,
-                        crop_uv: uniforms.crop_uv,
+                        crop_uv: per_tile_crop_uv,
                     }),
                 );
                 tile.last_ndc_rect = Some(ndc_rect_of_transform(&transform));

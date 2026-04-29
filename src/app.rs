@@ -428,9 +428,10 @@ impl App {
             }
             Message::SelectTool(tool) => {
                 let was_crop = self.selected_tool == Tool::Crop;
-                self.selected_tool = tool.clone();
-                self.program.crop_tool_active = tool == Tool::Crop;
-                if tool == Tool::Crop {
+                let is_crop = tool == Tool::Crop;
+                self.selected_tool = tool;
+                self.program.crop_tool_active = is_crop;
+                if is_crop {
                     if let Some(idx) = self
                         .program
                         .modifiers
