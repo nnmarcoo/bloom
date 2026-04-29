@@ -60,12 +60,6 @@ pub struct Modifier {
     pub kind: ModifierKind,
     pub enabled: bool,
     pub expanded: bool,
-    pub mask_enabled: bool,
-    pub mask_x: f32,
-    pub mask_y: f32,
-    pub mask_w: f32,
-    pub mask_h: f32,
-    pub feather: f32,
 }
 
 impl Modifier {
@@ -74,12 +68,6 @@ impl Modifier {
             kind,
             enabled: true,
             expanded: true,
-            mask_enabled: false,
-            mask_x: 0.0,
-            mask_y: 0.0,
-            mask_w: 1.0,
-            mask_h: 1.0,
-            feather: 0.0,
         }
     }
 
@@ -121,15 +109,6 @@ impl Modifier {
             _ => false,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum MaskParam {
-    X(f32),
-    Y(f32),
-    Width(f32),
-    Height(f32),
-    Feather(f32),
 }
 
 #[derive(Debug, Clone)]
@@ -185,7 +164,6 @@ pub enum ModifierKind {
     },
     ChromaticAberration {
         amount: f32,
-        angle: f32,
     },
     Posterize {
         levels: u32,
@@ -204,7 +182,6 @@ pub enum ModifierKind {
         y: f32,
         width: f32,
         height: f32,
-        rotation: f32,
     },
     Text {
         content: String,
@@ -296,10 +273,7 @@ impl From<ModifierType> for ModifierKind {
                 size: 0.5,
                 softness: 0.5,
             },
-            ModifierType::ChromaticAberration => ModifierKind::ChromaticAberration {
-                amount: 5.0,
-                angle: 0.0,
-            },
+            ModifierType::ChromaticAberration => ModifierKind::ChromaticAberration { amount: 5.0 },
             ModifierType::Posterize => ModifierKind::Posterize { levels: 4 },
             ModifierType::Threshold => ModifierKind::Threshold { cutoff: 0.5 },
             ModifierType::Grain => ModifierKind::Grain {
@@ -313,7 +287,6 @@ impl From<ModifierType> for ModifierKind {
                 y: 0.0,
                 width: 1.0,
                 height: 1.0,
-                rotation: 0.0,
             },
             ModifierType::Text => ModifierKind::Text {
                 content: String::new(),
@@ -363,7 +336,6 @@ pub enum ModifierParam {
     VignetteSize(f32),
     VignetteSoftness(f32),
     ChromaticAberrationAmount(f32),
-    ChromaticAberrationAngle(f32),
     PosterizeLevels(u32),
     ThresholdCutoff(f32),
     GrainAmount(f32),
@@ -374,7 +346,6 @@ pub enum ModifierParam {
     CropY(f32),
     CropWidth(f32),
     CropHeight(f32),
-    CropRotation(f32),
     TextContent(String),
     TextX(f32),
     TextY(f32),

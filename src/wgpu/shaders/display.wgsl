@@ -1,5 +1,6 @@
 struct Uniforms {
     transform: mat4x4<f32>,
+    crop_uv: vec4<f32>,
 };
 
 struct VertexOutput {
@@ -28,5 +29,6 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(t_image, s_image, in.uv);
+    let uv = uniforms.crop_uv.xy + in.uv * (uniforms.crop_uv.zw - uniforms.crop_uv.xy);
+    return textureSample(t_image, s_image, uv);
 }

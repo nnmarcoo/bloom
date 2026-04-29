@@ -1,3 +1,4 @@
+pub mod crop_overlay;
 pub mod histogram;
 pub mod loading_spinner;
 pub mod menu;

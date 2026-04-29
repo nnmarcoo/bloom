@@ -25,7 +25,7 @@ use crate::{
     config::{Config, UI_SCALE_DEFAULT, UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP},
     gallery::Gallery,
     keybinds::{Action, KeyBinding},
-    modifiers::{MaskParam, Modifier, ModifierKind, ModifierParam, ModifierType},
+    modifiers::{Modifier, ModifierKind, ModifierParam, ModifierType},
     styles, tasks,
     wgpu::{
         media::image_data::MediaData, passes::checkerboard::CheckerboardUniforms,
@@ -59,7 +59,6 @@ pub enum Tool {
     Crop,
     Draw,
     Text,
-    Mask,
 }
 
 impl Default for App {
@@ -154,13 +153,12 @@ pub enum Message {
     ToggleModifierExpanded(usize),
     ToggleModifierEnabled(usize),
     UpdateModifier(usize, ModifierParam),
-    ToggleModifierMask(usize),
-    UpdateModifierMask(usize, MaskParam),
     SetActiveModifier(usize),
     ClearActiveModifier,
     StartModifierDrag(usize),
     ModifierDragHover(usize),
     ModifierDragEnd,
+    SetCropRect(usize, f32, f32, f32, f32),
     Noop,
 }
 
@@ -428,7 +426,42 @@ impl App {
                 }
                 self.notifications.retain(|entry| !entry.is_gone(now));
             }
-            Message::SelectTool(tool) => self.selected_tool = tool,
+            Message::SelectTool(tool) => {
+                let was_crop = self.selected_tool == Tool::Crop;
+                let is_crop = tool == Tool::Crop;
+                self.selected_tool = tool;
+                self.program.crop_tool_active = is_crop;
+                if is_crop {
+                    if let Some(idx) = self
+                        .program
+                        .modifiers
+                        .iter()
+                        .position(|m| matches!(m.kind, ModifierKind::Crop { .. }))
+                    {
+                        self.active_modifier = Some(idx);
+                    } else {
+                        let (iw, ih) = self
+                            .program
+                            .image_size()
+                            .map(|(w, h)| (w as f32, h as f32))
+                            .unwrap_or((1.0, 1.0));
+                        let idx = self.program.modifiers.len();
+                        self.program
+                            .modifiers
+                            .push(Modifier::new(ModifierKind::Crop {
+                                x: 0.0,
+                                y: 0.0,
+                                width: iw,
+                                height: ih,
+                            }));
+                        self.active_modifier = Some(idx);
+                        self.program.mark_dirty(idx);
+                    }
+                    self.program.fit();
+                } else if was_crop {
+                    self.program.fit();
+                }
+            }
             Message::SetActiveModifier(i) => {
                 if i < self.program.modifiers.len() {
                     self.active_modifier = Some(i);
@@ -471,12 +504,39 @@ impl App {
                 }
             }
             Message::AddModifier(t) => {
-                self.program
-                    .modifiers
-                    .push(Modifier::new(ModifierKind::from(t)));
-                let idx = self.program.modifiers.len() - 1;
-                self.active_modifier = Some(idx);
-                self.program.mark_dirty(idx);
+                let is_crop = matches!(t, ModifierType::Crop);
+                let already_has_crop = is_crop
+                    && self
+                        .program
+                        .modifiers
+                        .iter()
+                        .any(|m| matches!(m.kind, ModifierKind::Crop { .. }));
+                if already_has_crop {
+                    self.notifications
+                        .push(NotificationEntry::new(Notification::warning(
+                            "Only one Crop modifier is allowed.",
+                        )));
+                } else {
+                    let kind = if is_crop {
+                        let (iw, ih) = self
+                            .program
+                            .image_size()
+                            .map(|(w, h)| (w as f32, h as f32))
+                            .unwrap_or((1.0, 1.0));
+                        ModifierKind::Crop {
+                            x: 0.0,
+                            y: 0.0,
+                            width: iw,
+                            height: ih,
+                        }
+                    } else {
+                        ModifierKind::from(t)
+                    };
+                    self.program.modifiers.push(Modifier::new(kind));
+                    let idx = self.program.modifiers.len() - 1;
+                    self.active_modifier = Some(idx);
+                    self.program.mark_dirty(idx);
+                }
             }
             Message::RemoveModifier(i) => {
                 if i < self.program.modifiers.len() {
@@ -500,25 +560,8 @@ impl App {
                 }
                 self.program.mark_dirty(i);
             }
-            Message::ToggleModifierMask(i) => {
-                if let Some(m) = self.program.modifiers.get_mut(i) {
-                    m.mask_enabled = !m.mask_enabled;
-                }
-                self.program.mark_dirty(i);
-            }
-            Message::UpdateModifierMask(i, param) => {
-                if let Some(m) = self.program.modifiers.get_mut(i) {
-                    match param {
-                        MaskParam::X(v) => m.mask_x = v,
-                        MaskParam::Y(v) => m.mask_y = v,
-                        MaskParam::Width(v) => m.mask_w = v,
-                        MaskParam::Height(v) => m.mask_h = v,
-                        MaskParam::Feather(v) => m.feather = v,
-                    }
-                }
-                self.program.mark_dirty(i);
-            }
             Message::UpdateModifier(i, param) => {
+                let img_size = self.program.image_size();
                 if let Some(m) = self.program.modifiers.get_mut(i) {
                     match (&mut m.kind, param) {
                         (ModifierKind::Levels { shadows, .. }, ModifierParam::LevelsShadows(v)) => {
@@ -618,10 +661,6 @@ impl App {
                             ModifierKind::ChromaticAberration { amount, .. },
                             ModifierParam::ChromaticAberrationAmount(v),
                         ) => *amount = v,
-                        (
-                            ModifierKind::ChromaticAberration { angle, .. },
-                            ModifierParam::ChromaticAberrationAngle(v),
-                        ) => *angle = v,
                         (ModifierKind::Posterize { levels }, ModifierParam::PosterizeLevels(v)) => {
                             *levels = v
                         }
@@ -641,16 +680,27 @@ impl App {
                         (ModifierKind::Grain { seed, .. }, ModifierParam::GrainSeed(v)) => {
                             *seed = v
                         }
-                        (ModifierKind::Crop { x, .. }, ModifierParam::CropX(v)) => *x = v,
-                        (ModifierKind::Crop { y, .. }, ModifierParam::CropY(v)) => *y = v,
-                        (ModifierKind::Crop { width, .. }, ModifierParam::CropWidth(v)) => {
-                            *width = v
+                        (ModifierKind::Crop { x, width, .. }, ModifierParam::CropX(v)) => {
+                            let right = *x + *width;
+                            *x = v.round().clamp(0.0, right - 1.0);
+                            *width = (right - *x).max(1.0);
                         }
-                        (ModifierKind::Crop { height, .. }, ModifierParam::CropHeight(v)) => {
-                            *height = v
+                        (ModifierKind::Crop { y, height, .. }, ModifierParam::CropY(v)) => {
+                            let bottom = *y + *height;
+                            *y = v.round().clamp(0.0, bottom - 1.0);
+                            *height = (bottom - *y).max(1.0);
                         }
-                        (ModifierKind::Crop { rotation, .. }, ModifierParam::CropRotation(v)) => {
-                            *rotation = v
+                        (ModifierKind::Crop { x, width, .. }, ModifierParam::CropWidth(v)) => {
+                            *width = v.round().max(1.0);
+                            if let Some((iw, _)) = img_size {
+                                *width = width.min(iw as f32 - *x);
+                            }
+                        }
+                        (ModifierKind::Crop { y, height, .. }, ModifierParam::CropHeight(v)) => {
+                            *height = v.round().max(1.0);
+                            if let Some((_, ih)) = img_size {
+                                *height = height.min(ih as f32 - *y);
+                            }
                         }
                         (ModifierKind::Text { content, .. }, ModifierParam::TextContent(v)) => {
                             *content = v
@@ -680,6 +730,22 @@ impl App {
                         ) => *hardness = v,
                         _ => {}
                     }
+                }
+                self.program.mark_dirty(i);
+            }
+            Message::SetCropRect(i, x, y, w, h) => {
+                if let Some(m) = self.program.modifiers.get_mut(i)
+                    && let ModifierKind::Crop {
+                        x: cx,
+                        y: cy,
+                        width: cw,
+                        height: ch,
+                    } = &mut m.kind
+                {
+                    *cx = x;
+                    *cy = y;
+                    *cw = w;
+                    *ch = h;
                 }
                 self.program.mark_dirty(i);
             }

@@ -12,10 +12,11 @@ use crate::{
     components::notifications::NotificationEntry,
     components::{edit_panel, info_panel, notifications},
     gallery::Gallery,
-    modifiers::Modifier,
+    modifiers::{Modifier, ModifierKind},
     styles::{PAD, spinner_bg_style},
     wgpu::view_program::ViewProgram,
     widgets::{
+        crop_overlay::CropOverlay,
         loading_spinner::Circular,
         menu::{menu_item, menu_separator, styled_menu},
     },
@@ -39,13 +40,39 @@ pub fn view<'a>(
     dragging_modifier: Option<usize>,
     drag_hover_target: Option<usize>,
 ) -> Element<'a, Message> {
-    let base = shader(program.clone())
+    let base: Element<'a, Message> = shader(program.clone())
         .height(Length::Fill)
-        .width(Length::Fill);
+        .width(Length::Fill)
+        .into();
 
     let notif_overlay = notifications::view(notifs);
 
-    let viewer: Element<'a, Message> = if let Some(filename) = loading {
+    let image_size = program.image_size();
+    let (img_w, img_h) = image_size
+        .map(|(w, h)| (w as f32, h as f32))
+        .unwrap_or((1.0, 1.0));
+
+    let mut layers: Vec<Element<'a, Message>> = vec![base];
+
+    if selected_tool == &Tool::Crop
+        && loading.is_none()
+        && let Some((crop_idx, crop_m)) = modifiers
+            .iter()
+            .enumerate()
+            .find(|(_, m)| m.enabled && matches!(m.kind, ModifierKind::Crop { .. }))
+        && let ModifierKind::Crop {
+            x,
+            y,
+            width,
+            height,
+        } = crop_m.kind
+    {
+        layers.push(
+            CropOverlay::new(program.clone(), crop_idx, x, y, width, height, img_w, img_h).into(),
+        );
+    }
+
+    if let Some(filename) = loading {
         let spinner_overlay = container(
             container(
                 column![
@@ -62,17 +89,15 @@ pub fn view<'a>(
         .height(Length::Fill)
         .align_x(Center)
         .align_y(Center);
+        layers.push(spinner_overlay.into());
+    }
 
-        stack![base, spinner_overlay, notif_overlay]
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .into()
-    } else {
-        stack![base, notif_overlay]
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .into()
-    };
+    layers.push(notif_overlay);
+
+    let viewer: Element<'a, Message> = stack(layers)
+        .height(Length::Fill)
+        .width(Length::Fill)
+        .into();
 
     let viewer_with_menu: Element<'a, Message> = ContextMenu::new(viewer, || {
         styled_menu(
@@ -110,6 +135,8 @@ pub fn view<'a>(
             active_modifier,
             dragging_modifier,
             drag_hover_target,
+            image_size,
+            program.rotation(),
         ));
     }
     content.into()

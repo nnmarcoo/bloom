@@ -63,19 +63,7 @@ fn build_mod_uniforms(modifiers: &[Modifier], tile: &TileInfo) -> ModUniforms {
             ModifierKind::BrightnessContrast {
                 brightness,
                 contrast,
-            } => make_entry(
-                3,
-                &[
-                    *brightness,
-                    *contrast,
-                    m.mask_enabled as u32 as f32,
-                    m.mask_x,
-                    m.mask_y,
-                    m.mask_w,
-                    m.mask_h,
-                    m.feather,
-                ],
-            ),
+            } => make_entry(3, &[*brightness, *contrast]),
             ModifierKind::HueSaturation {
                 hue,
                 saturation,
@@ -126,10 +114,16 @@ fn build_mod_uniforms(modifiers: &[Modifier], tile: &TileInfo) -> ModUniforms {
                     tile.tile_h as f32,
                 ],
             ),
-            ModifierKind::ChromaticAberration { amount, angle } => {
-                let angle_rad = *angle * std::f32::consts::PI / 180.0;
-                make_entry(11, &[*amount / tile.full_w as f32, angle_rad])
-            }
+            ModifierKind::ChromaticAberration { amount } => make_entry(
+                11,
+                &[
+                    *amount / tile.full_w as f32,
+                    tile.tile_x as f32 / tile.full_w as f32,
+                    tile.tile_y as f32 / tile.full_h as f32,
+                    tile.tile_w as f32 / tile.full_w as f32,
+                    tile.tile_h as f32 / tile.full_h as f32,
+                ],
+            ),
             ModifierKind::Halftone { size, angle } => make_entry(
                 16,
                 &[

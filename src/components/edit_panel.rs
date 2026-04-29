@@ -23,6 +23,8 @@ pub fn view<'a>(
     active_modifier: Option<usize>,
     dragging_modifier: Option<usize>,
     drag_hover_target: Option<usize>,
+    image_size: Option<(u32, u32)>,
+    rotation: u8,
 ) -> Element<'a, Message> {
     use iced::widget::column;
 
@@ -64,15 +66,6 @@ pub fn view<'a>(
                 "Text",
                 Position::Left,
             ),
-            with_tooltip(
-                tool_button(
-                    include_bytes!("../../assets/icons/pen.svg"),
-                    Tool::Mask,
-                    selected_tool,
-                ),
-                "Mask",
-                Position::Left,
-            ),
         ]
         .spacing(2),
     )
@@ -90,6 +83,8 @@ pub fn view<'a>(
         active_modifier,
         dragging_modifier,
         drag_hover_target,
+        image_size,
+        rotation,
     ))
     .width(Length::Fill)
     .height(Length::Fill);

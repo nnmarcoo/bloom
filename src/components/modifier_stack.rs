@@ -8,7 +8,7 @@ use iced::widget::{
 use iced::{Element, Length, Padding, mouse, padding};
 
 use crate::app::Message;
-use crate::modifiers::{MaskParam, Modifier, ModifierKind, ModifierParam, ModifierType};
+use crate::modifiers::{Modifier, ModifierKind, ModifierParam, ModifierType};
 use crate::styles::{
     PAD, modifier_active_card_style, modifier_add_button_style, modifier_card_style,
     modifier_drop_indicator_style, plain_icon_button_style, svg_style,
@@ -21,6 +21,8 @@ pub fn view<'a>(
     active: Option<usize>,
     dragging: Option<usize>,
     drag_target: Option<usize>,
+    image_size: Option<(u32, u32)>,
+    rotation: u8,
 ) -> Element<'a, Message> {
     let n = modifiers.len();
     let mut stack_col = column![];
@@ -28,7 +30,14 @@ pub fn view<'a>(
         let show_indicator = matches!((dragging, drag_target),
             (Some(src), Some(tgt)) if tgt == i && src != i);
         stack_col = stack_col.push(gap(show_indicator));
-        stack_col = stack_col.push(card(i, modifier, active == Some(i), dragging.is_some()));
+        stack_col = stack_col.push(card(
+            i,
+            modifier,
+            active == Some(i),
+            dragging.is_some(),
+            image_size,
+            rotation,
+        ));
     }
     let show_trailing = matches!((dragging, drag_target),
         (Some(_), Some(tgt)) if tgt == n);
@@ -86,6 +95,8 @@ fn card<'a>(
     modifier: &'a Modifier,
     is_active: bool,
     dragging: bool,
+    image_size: Option<(u32, u32)>,
+    rotation: u8,
 ) -> Element<'a, Message> {
     let arrow_icon: &'static [u8] = if modifier.expanded {
         include_bytes!("../../assets/icons/down.svg")
@@ -130,11 +141,7 @@ fn card<'a>(
 
     if modifier.expanded {
         card_col = card_col.push(rule::horizontal(1));
-        card_col = card_col.push(body(index, &modifier.kind));
-        if !matches!(modifier.kind, ModifierKind::Crop { .. }) {
-            card_col = card_col.push(rule::horizontal(1));
-            card_col = card_col.push(mask_section(index, modifier));
-        }
+        card_col = card_col.push(body(index, &modifier.kind, image_size, rotation));
     }
 
     let card_area = mouse_area(
@@ -157,7 +164,12 @@ fn card<'a>(
     }
 }
 
-fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
+fn body<'a>(
+    index: usize,
+    kind: &'a ModifierKind,
+    image_size: Option<(u32, u32)>,
+    rotation: u8,
+) -> Element<'a, Message> {
     let col = match kind {
         ModifierKind::Levels {
             shadows,
@@ -510,32 +522,19 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
                 ),
             ]
         }
-        ModifierKind::ChromaticAberration { amount, angle } => {
-            let (am, an) = (*amount, *angle);
-            column![
-                param_row(
-                    "Amount",
-                    slider(0.0f32..=50.0f32, am, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::ChromaticAberrationAmount(v)
-                    ))
-                    .step(0.1f32)
-                    .width(Length::Fill)
-                    .into(),
-                    format!("{:.1}", am)
-                ),
-                param_row(
-                    "Angle",
-                    slider(0.0f32..=360.0f32, an, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::ChromaticAberrationAngle(v)
-                    ))
-                    .step(0.5f32)
-                    .width(Length::Fill)
-                    .into(),
-                    format!("{:.0}°", an)
-                ),
-            ]
+        ModifierKind::ChromaticAberration { amount } => {
+            let am = *amount;
+            column![param_row(
+                "Amount",
+                slider(0.0f32..=50.0f32, am, move |v| Message::UpdateModifier(
+                    index,
+                    ModifierParam::ChromaticAberrationAmount(v)
+                ))
+                .step(0.1f32)
+                .width(Length::Fill)
+                .into(),
+                format!("{:.1}", am)
+            )]
         }
         ModifierKind::Posterize { levels } => {
             let lv = *levels;
@@ -623,64 +622,70 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
             y,
             width,
             height,
-            rotation,
         } => {
-            let (cx, cy, cw, ch, ro) = (*x, *y, *width, *height, *rotation);
+            let (cx, cy, cw, ch) = (*x, *y, *width, *height);
+            let (iw, ih) = image_size
+                .map(|(w, h)| (w as f32, h as f32))
+                .unwrap_or((cx + cw, cy + ch));
+            let swapped = rotation % 2 == 1;
+            let (vis_w, vis_h) = if swapped { (ch, cw) } else { (cw, ch) };
+            let (vis_w_max, vis_h_max) = if swapped { (ih, iw) } else { (iw, ih) };
+            let w_msg = move |v| {
+                Message::UpdateModifier(
+                    index,
+                    if swapped {
+                        ModifierParam::CropHeight(v)
+                    } else {
+                        ModifierParam::CropWidth(v)
+                    },
+                )
+            };
+            let h_msg = move |v| {
+                Message::UpdateModifier(
+                    index,
+                    if swapped {
+                        ModifierParam::CropWidth(v)
+                    } else {
+                        ModifierParam::CropHeight(v)
+                    },
+                )
+            };
             column![
                 param_row(
                     "X",
-                    slider(0.0f32..=1.0f32, cx, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::CropX(v)
-                    ))
-                    .step(0.01f32)
+                    slider(0.0f32..=(iw - 1.0).max(0.0), cx, move |v| {
+                        Message::UpdateModifier(index, ModifierParam::CropX(v))
+                    })
+                    .step(1.0f32)
                     .width(Length::Fill)
                     .into(),
-                    format!("{:.2}", cx)
+                    format!("{}", cx as u32)
                 ),
                 param_row(
                     "Y",
-                    slider(0.0f32..=1.0f32, cy, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::CropY(v)
-                    ))
-                    .step(0.01f32)
+                    slider(0.0f32..=(ih - 1.0).max(0.0), cy, move |v| {
+                        Message::UpdateModifier(index, ModifierParam::CropY(v))
+                    })
+                    .step(1.0f32)
                     .width(Length::Fill)
                     .into(),
-                    format!("{:.2}", cy)
+                    format!("{}", cy as u32)
                 ),
                 param_row(
                     "Width",
-                    slider(0.0f32..=1.0f32, cw, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::CropWidth(v)
-                    ))
-                    .step(0.01f32)
-                    .width(Length::Fill)
-                    .into(),
-                    format!("{:.2}", cw)
+                    slider(1.0f32..=vis_w_max.max(1.0), vis_w, w_msg)
+                        .step(1.0f32)
+                        .width(Length::Fill)
+                        .into(),
+                    format!("{}", vis_w as u32)
                 ),
                 param_row(
                     "Height",
-                    slider(0.0f32..=1.0f32, ch, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::CropHeight(v)
-                    ))
-                    .step(0.01f32)
-                    .width(Length::Fill)
-                    .into(),
-                    format!("{:.2}", ch)
-                ),
-                param_row(
-                    "Rotation",
-                    slider(-45.0f32..=45.0f32, ro, move |v| Message::UpdateModifier(
-                        index,
-                        ModifierParam::CropRotation(v)
-                    ))
-                    .step(0.1f32)
-                    .width(Length::Fill)
-                    .into(),
-                    format!("{:.1}°", ro)
+                    slider(1.0f32..=vis_h_max.max(1.0), vis_h, h_msg)
+                        .step(1.0f32)
+                        .width(Length::Fill)
+                        .into(),
+                    format!("{}", vis_h as u32)
                 ),
             ]
         }
@@ -840,87 +845,6 @@ fn body<'a>(index: usize, kind: &'a ModifierKind) -> Element<'a, Message> {
     };
 
     col.spacing(4).padding(padding::top(4).bottom(2)).into()
-}
-
-fn mask_section<'a>(index: usize, modifier: &'a Modifier) -> Element<'a, Message> {
-    let mask_icon: &'static [u8] = if modifier.mask_enabled {
-        include_bytes!("../../assets/icons/circle-filled.svg")
-    } else {
-        include_bytes!("../../assets/icons/circle.svg")
-    };
-
-    let header = row![
-        text("Mask").size(11),
-        Space::new().width(Length::Fill),
-        icon_btn(mask_icon, Message::ToggleModifierMask(index)),
-    ]
-    .align_y(Vertical::Center)
-    .spacing(2);
-
-    let mut col = column![header].spacing(4);
-
-    if modifier.mask_enabled {
-        let (mx, my, mw, mh, fe) = (
-            modifier.mask_x,
-            modifier.mask_y,
-            modifier.mask_w,
-            modifier.mask_h,
-            modifier.feather,
-        );
-        col = col
-            .push(param_row(
-                "X",
-                slider(0.0f32..=1.0f32, mx, move |v| {
-                    Message::UpdateModifierMask(index, MaskParam::X(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", mx),
-            ))
-            .push(param_row(
-                "Y",
-                slider(0.0f32..=1.0f32, my, move |v| {
-                    Message::UpdateModifierMask(index, MaskParam::Y(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", my),
-            ))
-            .push(param_row(
-                "Width",
-                slider(0.0f32..=1.0f32, mw, move |v| {
-                    Message::UpdateModifierMask(index, MaskParam::Width(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", mw),
-            ))
-            .push(param_row(
-                "Height",
-                slider(0.0f32..=1.0f32, mh, move |v| {
-                    Message::UpdateModifierMask(index, MaskParam::Height(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", mh),
-            ))
-            .push(param_row(
-                "Feather",
-                slider(0.0f32..=100.0f32, fe, move |v| {
-                    Message::UpdateModifierMask(index, MaskParam::Feather(v))
-                })
-                .step(0.5f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.1}", fe),
-            ));
-    }
-
-    col.padding(padding::top(4).bottom(2)).into()
 }
 
 fn param_row<'a>(
