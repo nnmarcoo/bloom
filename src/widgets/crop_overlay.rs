@@ -221,13 +221,13 @@ impl CropOverlay {
         }
 
         const MIN: f32 = 1.0;
-        nw = nw.clamp(MIN, img_w);
-        nh = nh.clamp(MIN, img_h);
-        nx = nx.clamp(0.0, img_w - nw);
-        ny = ny.clamp(0.0, img_h - nh);
+        nw = nw.round().clamp(MIN, img_w);
+        nh = nh.round().clamp(MIN, img_h);
+        nx = nx.round().clamp(0.0, img_w - nw);
+        ny = ny.round().clamp(0.0, img_h - nh);
         nw = nw.min(img_w - nx).max(MIN);
         nh = nh.min(img_h - ny).max(MIN);
-        [nx.round(), ny.round(), nw.round(), nh.round()]
+        [nx, ny, nw, nh]
     }
 }
 
@@ -477,18 +477,25 @@ impl Widget<Message, Theme, Renderer> for CropOverlay {
     fn mouse_interaction(
         &self,
         tree: &Tree,
-        _layout: Layout<'_>,
-        _cursor: mouse::Cursor,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
         _viewport: &Rectangle,
         _renderer: &Renderer,
     ) -> mouse::Interaction {
         let state = tree.state.downcast_ref::<State>();
-        match &state.drag {
-            Some(drag) => match drag.handle {
+        if let Some(drag) = &state.drag {
+            return match drag.handle {
                 Handle::Inside => mouse::Interaction::Grabbing,
                 _ => mouse::Interaction::Crosshair,
-            },
-            None => mouse::Interaction::None,
+            };
+        }
+        let Some(local) = cursor.position_in(layout.bounds()).map(|p| vec2(p.x, p.y)) else {
+            return mouse::Interaction::None;
+        };
+        match self.hit_handle(local) {
+            Handle::Inside => mouse::Interaction::Grab,
+            Handle::Outside => mouse::Interaction::None,
+            _ => mouse::Interaction::Crosshair,
         }
     }
 }
