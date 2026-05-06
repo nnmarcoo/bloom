@@ -806,7 +806,6 @@ impl ImageData {
                     (&["kra"], ImageData::load_kra),
                     (&["xcf"], ImageData::load_xcf),
                     (&["svg", "svgz"], ImageData::load_svg),
-                    (&["avif"], ImageData::load),
                     (&["jp2", "j2k", "j2c", "jpx"], ImageData::load_jp2),
                     (&["dcm", "dicom"], ImageData::load_dicom),
                     (&["dds"], ImageData::load_dds),

@@ -38,7 +38,6 @@
   <tbody>
     <tr><td>Animated PNG</td><td><code>.apng</code></td><td>Animated</td></tr>
     <tr><td>Apple Icon</td><td><code>.icns</code></td><td>Largest available size</td></tr>
-    <tr><td>AVIF</td><td><code>.avif</code></td><td></td></tr>
     <tr><td>BMP</td><td><code>.bmp</code></td><td></td></tr>
     <tr><td>DDS</td><td><code>.dds</code></td><td>BC1–BC7 and uncompressed</td></tr>
     <tr><td>DICOM</td><td><code>.dcm</code> <code>.dicom</code></td><td>Medical imaging, first frame</td></tr>
