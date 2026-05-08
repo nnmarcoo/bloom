@@ -95,7 +95,7 @@ impl Default for ViewProgram {
 
 impl ViewProgram {
     pub fn mark_dirty(&self, i: usize) {
-        let mut guard = self.dirty_from.lock().unwrap();
+        let mut guard = self.dirty_from.lock().unwrap_or_else(|e| e.into_inner());
         *guard = Some(guard.map_or(i, |p| p.min(i)));
     }
 
@@ -721,7 +721,7 @@ impl ViewProgram {
         let uv = img / self.image_size;
         let image = self.image.as_ref()?;
         let idx = (py as usize * image.width as usize + px as usize) * 4;
-        let guard = image.pixels.lock().unwrap();
+        let guard = image.pixels.lock().unwrap_or_else(|e| e.into_inner());
         let p = guard.get(idx..idx + 4)?;
         let rgba = Self::f32_to_pixel(self.apply_modifiers_cpu(
             &guard,
@@ -777,7 +777,7 @@ impl ViewProgram {
         let (px, py) = self.screen_to_image_pixel(pos)?;
         let image = self.image.as_ref()?;
         let idx = (py as usize * image.width as usize + px as usize) * 4;
-        let guard = image.pixels.lock().unwrap();
+        let guard = image.pixels.lock().unwrap_or_else(|e| e.into_inner());
         let p = guard.get(idx..idx + 4)?;
         let uv = [
             px as f32 / image.width as f32,
@@ -826,7 +826,11 @@ impl Program<Message> for ViewProgram {
             mipmap_zoom_out: self.mipmap_zoom_out,
             smooth_zoom_in: self.smooth_zoom_in,
             modifiers: self.modifiers.clone(),
-            dirty_from: self.dirty_from.lock().unwrap().take(),
+            dirty_from: self
+                .dirty_from
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take(),
             pre_clear_gpu: Arc::clone(&self.pre_clear_gpu),
         }
     }

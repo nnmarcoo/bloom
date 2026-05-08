@@ -62,7 +62,12 @@ pub struct ImageData {
 impl Clone for ImageData {
     fn clone(&self) -> Self {
         Self {
-            pixels: Mutex::new(self.pixels.lock().unwrap().clone()),
+            pixels: Mutex::new(
+                self.pixels
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone(),
+            ),
             width: self.width,
             height: self.height,
             id: self.id,
@@ -94,16 +99,16 @@ impl ImageData {
     }
 
     pub fn pixels_available(&self) -> bool {
-        self.pixels.lock().unwrap().len() >= self.size_bytes()
+        self.pixels.lock().unwrap_or_else(|e| e.into_inner()).len() >= self.size_bytes()
     }
 
     pub fn release_pixels(&self) {
-        *self.pixels.lock().unwrap() = Vec::new();
+        *self.pixels.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
     }
 
     pub fn histogram(&self) -> &([u32; 256], [u32; 256], [u32; 256]) {
         self.histogram.get_or_init(|| {
-            let guard = self.pixels.lock().unwrap();
+            let guard = self.pixels.lock().unwrap_or_else(|e| e.into_inner());
             Self::compute_histogram(&guard)
         })
     }

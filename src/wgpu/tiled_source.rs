@@ -50,7 +50,7 @@ impl TiledSource {
         blit_pipeline: &RenderPipeline,
         blit_bgl: &BindGroupLayout,
     ) -> Result<Self, ViewError> {
-        let image_pixels = image.pixels.lock().unwrap();
+        let image_pixels = image.pixels.lock().unwrap_or_else(|e| e.into_inner());
 
         if image_pixels.len() < image.size_bytes() {
             return Err(ViewError::ImageDataMismatch {
