@@ -577,7 +577,7 @@ impl ViewProgram {
     ) -> [f32; 4] {
         use crate::modifiers::ModifierKind;
         for (i, m) in self.modifiers.iter().enumerate() {
-            if !m.enabled {
+            if !m.has_visible_effect() {
                 continue;
             }
             if let ModifierKind::ChromaticAberration { amount } = &m.kind {
@@ -742,7 +742,7 @@ impl ViewProgram {
         let half = (size / 2) as i64;
         let image = self.image.as_ref()?;
         let (w, h) = (image.width as i64, image.height as i64);
-        let guard = image.pixels.lock().unwrap();
+        let guard = image.pixels.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_empty() {
             return None;
         }

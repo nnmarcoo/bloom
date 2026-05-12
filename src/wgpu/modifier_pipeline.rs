@@ -38,6 +38,11 @@ struct ModUniforms {
 }
 
 fn make_entry(kind: u32, params: &[f32]) -> ModEntry {
+    debug_assert!(
+        params.len() <= 11,
+        "make_entry: params overflow ModEntry ({} > 11)",
+        params.len()
+    );
     let mut e = ModEntry::zeroed();
     e.data[0][0] = f32::from_bits(kind);
     for (i, &p) in params.iter().enumerate() {
