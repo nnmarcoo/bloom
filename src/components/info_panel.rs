@@ -214,21 +214,6 @@ pub fn view<'a>(
     let palette = theme.extended_palette();
     let muted = palette.background.base.text.scale_alpha(0.5);
 
-    if program.image_size().is_none() {
-        return container(
-            text("No image loaded")
-                .size(12)
-                .color(muted)
-                .font(Font::MONOSPACE),
-        )
-        .style(bar_style)
-        .height(Length::Fill)
-        .width(Length::Fixed(INFO_PANEL_WIDTH))
-        .align_x(Horizontal::Center)
-        .align_y(Vertical::Center)
-        .into();
-    }
-
     let header_color = palette.background.base.text;
 
     let mut first_section = true;

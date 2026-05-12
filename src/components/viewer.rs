@@ -117,7 +117,7 @@ pub fn view<'a>(
     }
 
     let mut content = iced::widget::Row::new().height(Length::Fill);
-    if show_info {
+    if show_info && program.image_size().is_some() {
         content = content.push(info_panel::view(
             path,
             gallery,
