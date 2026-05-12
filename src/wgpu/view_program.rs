@@ -554,7 +554,10 @@ impl ViewProgram {
                 let cell_y = rot_y.floor() + 0.5;
                 let dist = ((rot_x - cell_x).powi(2) + (rot_y - cell_y).powi(2)).sqrt();
                 let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
-                let v = if dist < luma.sqrt() * 0.5 { 1.0 } else { 0.0 };
+                let radius = luma.sqrt() * 0.5;
+                let aa = 1.0 / size.max(1.0);
+                let t = ((dist - (radius - aa)) / (2.0 * aa)).clamp(0.0, 1.0);
+                let v = 1.0 - t * t * (3.0 - 2.0 * t);
                 c[0] = v;
                 c[1] = v;
                 c[2] = v;
