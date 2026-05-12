@@ -898,33 +898,12 @@ fn add_row<'a>() -> Element<'a, Message> {
                 )
                 .side(SubMenuSide::Left),
                 sub_menu(
-                    "Blur",
-                    styled_menu(
-                        column![
-                            menu_item(
-                                "Gaussian Blur",
-                                Message::AddModifier(ModifierType::GaussianBlur)
-                            ),
-                            menu_item(
-                                "Motion Blur",
-                                Message::AddModifier(ModifierType::MotionBlur)
-                            ),
-                            menu_item(
-                                "Radial Blur",
-                                Message::AddModifier(ModifierType::RadialBlur)
-                            ),
-                        ],
-                        160
-                    )
-                )
-                .side(SubMenuSide::Left),
-                sub_menu(
                     "Pixelate",
                     styled_menu(
-                        column![
-                            menu_item("Halftone", Message::AddModifier(ModifierType::Halftone)),
-                            menu_item("Pixel Sort", Message::AddModifier(ModifierType::PixelSort)),
-                        ],
+                        column![menu_item(
+                            "Halftone",
+                            Message::AddModifier(ModifierType::Halftone)
+                        ),],
                         160
                     )
                 )
@@ -960,17 +939,6 @@ fn add_row<'a>() -> Element<'a, Message> {
                     "Transform",
                     styled_menu(
                         column![menu_item("Crop", Message::AddModifier(ModifierType::Crop)),],
-                        160
-                    )
-                )
-                .side(SubMenuSide::Left),
-                sub_menu(
-                    "Creative",
-                    styled_menu(
-                        column![
-                            menu_item("Text", Message::AddModifier(ModifierType::Text)),
-                            menu_item("Drawing", Message::AddModifier(ModifierType::Drawing)),
-                        ],
                         160
                     )
                 )
