@@ -108,12 +108,8 @@ impl ImageData {
 
     pub fn histogram(&self) -> &([u32; 256], [u32; 256], [u32; 256]) {
         self.histogram.get_or_init(|| {
-            let pixels = self
-                .pixels
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone();
-            Self::compute_histogram(&pixels)
+            let guard = self.pixels.lock().unwrap_or_else(|e| e.into_inner());
+            Self::compute_histogram(&guard)
         })
     }
 
