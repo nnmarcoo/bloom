@@ -57,6 +57,7 @@ pub struct Config {
     pub info_collapsed: HashSet<String>,
     pub ui_scale: f32,
     pub pixel_preview_size: u32,
+    pub fit_lock: bool,
 }
 
 impl Default for Config {
@@ -78,6 +79,7 @@ impl Default for Config {
             info_collapsed: HashSet::new(),
             ui_scale: UI_SCALE_DEFAULT,
             pixel_preview_size: PIXEL_PREVIEW_SIZE_DEFAULT,
+            fit_lock: false,
         }
     }
 }
@@ -113,6 +115,8 @@ struct ConfigFile {
     ui_scale: f32,
     #[serde(default = "default_preview_size")]
     pixel_preview_size: u32,
+    #[serde(default)]
+    fit_lock: bool,
 }
 
 fn default_true() -> bool {
@@ -148,6 +152,7 @@ impl From<&Config> for ConfigFile {
             info_collapsed,
             ui_scale: c.ui_scale,
             pixel_preview_size: c.pixel_preview_size,
+            fit_lock: c.fit_lock,
         }
     }
 }
@@ -177,6 +182,7 @@ impl From<ConfigFile> for Config {
             info_collapsed: f.info_collapsed.into_iter().collect(),
             ui_scale,
             pixel_preview_size,
+            fit_lock: f.fit_lock,
         }
     }
 }

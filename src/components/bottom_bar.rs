@@ -24,6 +24,7 @@ pub fn view<'a>(
     show_edit: bool,
     show_checkerboard: bool,
     has_image: bool,
+    fit_lock: bool,
 ) -> Element<'a, Message> {
     let is_fullscreen = matches!(mode, Mode::Fullscreen);
     let (fullscreen_icon, fullscreen_tooltip): (&'static [u8], &str) = if is_fullscreen {
@@ -72,8 +73,16 @@ pub fn view<'a>(
             Position::Top,
         ),
         with_tooltip(
-            svg_button(include_bytes!("../../assets/icons/fit.svg"), Message::Fit),
-            "Fit to viewport",
+            svg_button_toggle(
+                include_bytes!("../../assets/icons/fit.svg"),
+                Message::Fit,
+                fit_lock,
+            ),
+            if fit_lock {
+                "Fit to viewport (locked)"
+            } else {
+                "Fit to viewport"
+            },
             Position::Top,
         ),
         with_tooltip(

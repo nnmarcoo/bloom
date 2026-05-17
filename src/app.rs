@@ -51,6 +51,7 @@ pub struct App {
     pub active_modifier: Option<usize>,
     pub dragging_modifier: Option<usize>,
     pub drag_hover_target: Option<usize>,
+    last_fit_press: Option<Instant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +96,7 @@ impl App {
             active_modifier: None,
             dragging_modifier: None,
             drag_hover_target: None,
+            last_fit_press: None,
         }
     }
 }
@@ -185,9 +187,27 @@ impl App {
         self.focus_scale = false;
 
         match message {
-            Message::Pan(delta) => self.program.pan(delta),
-            Message::ScaleUp(cursor) => self.program.scale_up(cursor),
-            Message::ScaleDown(cursor) => self.program.scale_down(cursor),
+            Message::Pan(delta) => {
+                self.program.pan(delta);
+                if self.config.fit_lock {
+                    self.config.fit_lock = false;
+                    self.config.save();
+                }
+            }
+            Message::ScaleUp(cursor) => {
+                self.program.scale_up(cursor);
+                if self.config.fit_lock {
+                    self.config.fit_lock = false;
+                    self.config.save();
+                }
+            }
+            Message::ScaleDown(cursor) => {
+                self.program.scale_down(cursor);
+                if self.config.fit_lock {
+                    self.config.fit_lock = false;
+                    self.config.save();
+                }
+            }
             Message::RotateCw => {
                 if self.gallery.current().is_some() {
                     self.program.rotate();
@@ -200,12 +220,33 @@ impl App {
             }
             Message::Fit => {
                 self.context_menu_pos = None;
+                let now = Instant::now();
+                let is_double = self
+                    .last_fit_press
+                    .map(|t| now.duration_since(t) < Duration::from_millis(400))
+                    .unwrap_or(false);
+                if is_double {
+                    self.config.fit_lock = !self.config.fit_lock;
+                    self.config.save();
+                    self.last_fit_press = None;
+                } else {
+                    self.last_fit_press = Some(now);
+                }
                 self.program.fit();
             }
-            Message::BoundsChanged(bounds) => self.program.set_bounds(bounds),
+            Message::BoundsChanged(bounds) => {
+                self.program.set_bounds(bounds);
+                if self.config.fit_lock {
+                    self.program.fit();
+                }
+            }
             Message::Scale(scale) => {
                 let center = self.program.viewport_center();
                 self.program.set_scale(scale, center);
+                if self.config.fit_lock {
+                    self.config.fit_lock = false;
+                    self.config.save();
+                }
             }
             Message::Next => {
                 if let Some(p) = self.gallery.next() {
@@ -904,6 +945,7 @@ impl App {
             self.config.show_edit,
             self.program.show_checkerboard,
             self.gallery.current().is_some(),
+            self.config.fit_lock,
         ))
         .into()
     }
