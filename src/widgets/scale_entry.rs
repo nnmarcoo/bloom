@@ -276,7 +276,7 @@ where
                         } else {
                             Color::TRANSPARENT
                         },
-                        width: 1.0,
+                        width: 1.5,
                         radius: radius().into(),
                     },
                     ..Quad::default()
@@ -285,10 +285,7 @@ where
             );
         }
 
-        let selected = matches!(
-            state,
-            State::Pending { .. } | State::Editing { fresh: true, .. }
-        );
+        let show_selection = matches!(state, State::Editing { fresh: true, .. });
         let show_caret = matches!(state, State::Editing { fresh: false, .. });
 
         let display: String = match state {
@@ -299,27 +296,9 @@ where
             State::Editing { buffer, .. } => buffer.clone(),
         };
 
-        if selected {
-            renderer.fill_quad(
-                Quad {
-                    bounds,
-                    border: Border {
-                        radius: radius().into(),
-                        ..Border::default()
-                    },
-                    ..Quad::default()
-                },
-                Background::Color(palette.primary.base.color),
-            );
-        }
+        let text_color = palette.background.base.text;
 
-        let text_color = if selected {
-            palette.primary.base.text
-        } else {
-            palette.background.base.text
-        };
-
-        let caret_x = if show_caret {
+        let caret_x = if show_caret || show_selection {
             let para = <Renderer as advanced::text::Renderer>::Paragraph::with_text(Text {
                 content: display.as_str(),
                 bounds: Size::new(f32::INFINITY, f32::INFINITY),
@@ -332,11 +311,35 @@ where
                 wrapping: text::Wrapping::None,
             });
             let text_width = para.min_bounds().width;
-            Some(if text_width > 0.0 {
-                (bounds.center_x() + text_width / 2.0 + 2.0).round()
+
+            if show_selection {
+                let sel_h = self.text_size + 4.0;
+                let sel_x = (bounds.center_x() - text_width / 2.0 - 2.0).round();
+                let sel_y = (bounds.center_y() - sel_h / 2.0).round();
+                renderer.fill_quad(
+                    Quad {
+                        bounds: Rectangle {
+                            x: sel_x,
+                            y: sel_y,
+                            width: text_width + 4.0,
+                            height: sel_h,
+                        },
+                        border: Border {
+                            radius: 3.0.into(),
+                            ..Border::default()
+                        },
+                        ..Quad::default()
+                    },
+                    Background::Color(palette.primary.base.color.scale_alpha(0.35)),
+                );
+                None
             } else {
-                bounds.center_x().round()
-            })
+                Some(if text_width > 0.0 {
+                    (bounds.center_x() + text_width / 2.0 + 2.0).round()
+                } else {
+                    bounds.center_x().round()
+                })
+            }
         } else {
             None
         };

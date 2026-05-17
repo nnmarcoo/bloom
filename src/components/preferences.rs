@@ -383,7 +383,6 @@ pub fn view<'a>(
             ScaleEntry::new(pending.ui_scale, |v| {
                 Message::Preference(PreferenceMessage::SetUiScale(v))
             })
-            .width(36.0)
             .into(),
             theme,
         ),
