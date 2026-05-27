@@ -13,7 +13,7 @@ eula = false
 # UI
 iced = { version = "0.14.0", features = ["canvas", "advanced", "svg", "tokio", "image"] }
 iced_aw = { version = "0.13.1", default-features = false, features = ["context_menu"] }
-tokio = { version = "1", features = ["rt", "sync"] }
+tokio = { version = "1", features = ["rt", "sync", "macros"] }
 
 # GPU / math
 bytemuck = { version = "1.25.0", features = ["derive"] }
@@ -44,8 +44,9 @@ resvg = "0.45.1"
 usvg = "0.45.1"
 tiny-skia = "0.11.4"
 
-# Parallel processing
 rayon = "1.11.0"
+futures = "0.3"
+png = "0.17"
 
 # EXIF metadata
 kamadak-exif = "0.6.1"

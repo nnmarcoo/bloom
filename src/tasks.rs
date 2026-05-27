@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 
+use futures::SinkExt;
 use iced::window::{self, Level, Mode};
 use image::ImageError;
 
 use crate::app::Message;
+use crate::export::{ExportData, do_export};
 use crate::{
     clipboard::{self, ClipboardImage},
     gallery::SUPPORTED,
@@ -55,6 +57,57 @@ pub fn select_media() -> iced::Task<Message> {
             None => Message::Noop,
         }
     })
+}
+
+pub fn export_image(data: ExportData, suggested_name: String) -> iced::Task<Message> {
+    let (mut tx, rx) = futures::channel::mpsc::channel(64);
+
+    tokio::spawn(async move {
+        let handle = rfd::AsyncFileDialog::new()
+            .add_filter("PNG Image", &["png"])
+            .add_filter("JPEG Image", &["jpg", "jpeg"])
+            .add_filter("WebP Image", &["webp"])
+            .set_file_name(&suggested_name)
+            .save_file()
+            .await;
+
+        let Some(handle) = handle else { return };
+        let path = handle.path().to_path_buf();
+
+        let _ = tx.try_send(Message::ExportProgress(0.0));
+
+        let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<f32>(256);
+        let (done_tx, mut done_rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
+
+        std::thread::spawn(move || {
+            let result = do_export(data, &path, |p| {
+                let _ = progress_tx.blocking_send(p);
+            });
+            let _ = done_tx.send(result);
+        });
+
+        loop {
+            tokio::select! {
+                Some(p) = progress_rx.recv() => {
+                    let _ = tx.try_send(Message::ExportProgress(p));
+                }
+                result = &mut done_rx => {
+                    while let Ok(p) = progress_rx.try_recv() {
+                        let _ = tx.try_send(Message::ExportProgress(p));
+                    }
+                    let msg = match result {
+                        Ok(Ok(name)) => Message::ExportDone(Ok(name)),
+                        Ok(Err(e)) => Message::ExportDone(Err(e)),
+                        Err(_) => Message::ExportDone(Err("thread panicked".to_string())),
+                    };
+                    let _ = tx.send(msg).await;
+                    break;
+                }
+            }
+        }
+    });
+
+    iced::Task::stream(rx)
 }
 
 pub fn set_window_mode(mode: Mode) -> iced::Task<Message> {

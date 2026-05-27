@@ -1,9 +1,10 @@
 use iced::alignment::Vertical;
+use iced::widget::progress_bar;
 use iced::widget::svg::Handle;
 use iced::widget::tooltip::Position;
 use iced::widget::{Column, Space, column, container, row, svg};
 use iced::window::Mode;
-use iced::{Element, Length};
+use iced::{Border, Element, Length};
 
 use crate::app::Message;
 use crate::styles::{
@@ -25,6 +26,7 @@ pub fn view<'a>(
     show_checkerboard: bool,
     has_image: bool,
     fit_lock: bool,
+    export_progress: Option<f32>,
 ) -> Element<'a, Message> {
     let is_fullscreen = matches!(mode, Mode::Fullscreen);
     let (fullscreen_icon, fullscreen_tooltip): (&'static [u8], &str) = if is_fullscreen {
@@ -153,7 +155,7 @@ pub fn view<'a>(
                         menu_item("Preferences", Message::TogglePreferences),
                         menu_separator(),
                         menu_item("Copy file path", Message::CopyPath),
-                        menu_item("Export", Message::Noop),
+                        menu_item("Export", if has_image { Message::ExportImage } else { Message::Noop }),
                         menu_separator(),
                         menu_item("About", Message::Noop),
                         menu_item("Exit", Message::Exit),
@@ -171,9 +173,24 @@ pub fn view<'a>(
     .spacing(2)
     .align_y(Vertical::Center);
 
-    let divider = container(Space::new().height(Length::Fixed(2.0)))
+    let top: Element<'a, Message> = if let Some(p) = export_progress {
+        container(
+            progress_bar(0.0..=1.0, p).style(|theme: &iced::Theme| progress_bar::Style {
+                background: theme.extended_palette().background.strong.color.into(),
+                bar: theme.extended_palette().primary.base.color.into(),
+                border: Border::default(),
+            }),
+        )
+        .height(Length::Fixed(2.0))
         .width(Length::Fill)
-        .style(panel_divider_style);
+        .clip(true)
+        .into()
+    } else {
+        container(Space::new().height(Length::Fixed(2.0)))
+            .width(Length::Fill)
+            .style(panel_divider_style)
+            .into()
+    };
 
     let bar_content = container(
         row![
@@ -188,7 +205,7 @@ pub fn view<'a>(
     )
     .padding([0.0, PAD]);
 
-    container(Column::new().push(divider).push(bar_content))
+    container(Column::new().push(top).push(bar_content))
         .style(bar_style)
         .into()
 }

@@ -13,6 +13,7 @@ const ANIM_SECS: f32 = 0.25;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotificationKind {
+    Info,
     Warning,
     Error,
 }
@@ -24,6 +25,13 @@ pub struct Notification {
 }
 
 impl Notification {
+    pub fn info(message: impl Into<String>) -> Self {
+        Self {
+            kind: NotificationKind::Info,
+            message: message.into(),
+        }
+    }
+
     pub fn warning(message: impl Into<String>) -> Self {
         Self {
             kind: NotificationKind::Warning,
@@ -40,6 +48,7 @@ impl Notification {
 
     fn timeout(&self) -> Option<Duration> {
         match self.kind {
+            NotificationKind::Info => Some(Duration::from_secs(4)),
             NotificationKind::Warning | NotificationKind::Error => Some(Duration::from_secs(8)),
         }
     }
@@ -123,6 +132,10 @@ pub fn view<'a>(notifications: &'a [NotificationEntry]) -> Element<'a, Message> 
 
 fn toast_view(index: usize, n: &Notification, alpha: f32) -> Element<'_, Message> {
     let (icon_bytes, accent_fn): (&'static [u8], fn(&iced::Theme) -> Color) = match n.kind {
+        NotificationKind::Info => (
+            include_bytes!("../../assets/icons/check.svg"),
+            |t: &iced::Theme| t.extended_palette().success.base.color,
+        ),
         NotificationKind::Warning => (
             include_bytes!("../../assets/icons/info.svg"),
             |t: &iced::Theme| t.extended_palette().warning.base.color,

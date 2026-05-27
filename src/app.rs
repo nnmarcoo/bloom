@@ -47,6 +47,7 @@ pub struct App {
     paused: bool,
     scrubbing: bool,
     notifications: Vec<NotificationEntry>,
+    export_progress: Option<f32>,
     pub selected_tool: Tool,
     pub active_modifier: Option<usize>,
     pub dragging_modifier: Option<usize>,
@@ -92,6 +93,7 @@ impl App {
             paused: false,
             scrubbing: false,
             notifications: Vec::new(),
+            export_progress: None,
             selected_tool: Tool::Select,
             active_modifier: None,
             dragging_modifier: None,
@@ -161,6 +163,9 @@ pub enum Message {
     ModifierDragHover(usize),
     ModifierDragEnd,
     SetCropRect(usize, f32, f32, f32, f32),
+    ExportImage,
+    ExportProgress(f32),
+    ExportDone(Result<String, String>),
     Noop,
 }
 
@@ -790,6 +795,28 @@ impl App {
                 }
                 self.program.mark_dirty(i);
             }
+            Message::ExportImage => {
+                if let Some(data) = self.program.export_data() {
+                    let suggested = self
+                        .gallery
+                        .current()
+                        .and_then(|p| p.file_stem())
+                        .map(|s| format!("{}.png", s.to_string_lossy()))
+                        .unwrap_or_else(|| "export.png".to_string());
+                    return tasks::export_image(data, suggested);
+                }
+            }
+            Message::ExportProgress(p) => {
+                self.export_progress = Some(p);
+            }
+            Message::ExportDone(result) => {
+                self.export_progress = None;
+                let n = match result {
+                    Ok(name) => Notification::info(format!("Exported \"{name}\"")),
+                    Err(e) => Notification::error(format!("Export failed: {e}")),
+                };
+                self.notifications.push(NotificationEntry::new(n));
+            }
             Message::Noop => {}
             Message::Event(event) => return self.handle_event(event),
         }
@@ -946,6 +973,7 @@ impl App {
             self.program.show_checkerboard,
             self.gallery.current().is_some(),
             self.config.fit_lock,
+            self.export_progress,
         ))
         .into()
     }
