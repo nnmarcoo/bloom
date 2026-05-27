@@ -594,8 +594,9 @@ impl ImageData {
     pub fn load_heic(path: &Path) -> Result<Self, ImageError> {
         use libheif_rs::{ColorSpace, HeifContext, LibHeif, RgbChroma};
 
+        let bytes = std::fs::read(path).map_err(ImageError::IoError)?;
         let lib_heif = LibHeif::new();
-        let ctx = HeifContext::read_from_file(path.to_str().unwrap_or_default())
+        let ctx = HeifContext::read_from_bytes(&bytes)
             .map_err(|e| ImageError::IoError(Error::other(e)))?;
         let handle = ctx
             .primary_image_handle()
