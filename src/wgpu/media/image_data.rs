@@ -596,8 +596,14 @@ impl ImageData {
 
         let bytes = std::fs::read(path).map_err(ImageError::IoError)?;
         let lib_heif = LibHeif::new();
-        let ctx = HeifContext::read_from_bytes(&bytes)
-            .map_err(|e| ImageError::IoError(Error::other(e)))?;
+        let ctx = match HeifContext::read_from_bytes(&bytes) {
+            Ok(ctx) => ctx,
+            Err(_) => {
+                let img = image::load_from_memory(&bytes)?.into_rgba8();
+                let (width, height) = img.dimensions();
+                return Ok(Self::new(img.into_raw(), width, height));
+            }
+        };
         let handle = ctx
             .primary_image_handle()
             .map_err(|e| ImageError::IoError(Error::other(e)))?;
