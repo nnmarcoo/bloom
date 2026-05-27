@@ -371,7 +371,6 @@ impl App {
             }
             Message::CursorLeft => {
                 self.context_menu_pos = None;
-                self.program.set_cursor_pos(None);
             }
             Message::ContextMenuOpened(pos) => {
                 self.context_menu_pos = Some(pos);
