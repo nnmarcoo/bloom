@@ -48,24 +48,6 @@ pub fn view<'a>(
                 "Crop",
                 Position::Left,
             ),
-            with_tooltip(
-                tool_button(
-                    include_bytes!("../../assets/icons/pencil.svg"),
-                    Tool::Draw,
-                    selected_tool,
-                ),
-                "Draw",
-                Position::Left,
-            ),
-            with_tooltip(
-                tool_button(
-                    include_bytes!("../../assets/icons/text.svg"),
-                    Tool::Text,
-                    selected_tool,
-                ),
-                "Text",
-                Position::Left,
-            ),
         ]
         .spacing(2),
     )
