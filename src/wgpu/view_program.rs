@@ -99,6 +99,24 @@ impl ViewProgram {
         *guard = Some(guard.map_or(i, |p| p.min(i)));
     }
 
+    fn reset_crop_to_image(&mut self) {
+        use crate::modifiers::ModifierKind;
+        for m in &mut self.modifiers {
+            if let ModifierKind::Crop {
+                x,
+                y,
+                width,
+                height,
+            } = &mut m.kind
+            {
+                *x = 0.0;
+                *y = 0.0;
+                *width = self.image_size.x;
+                *height = self.image_size.y;
+            }
+        }
+    }
+
     pub fn set_bounds(&mut self, bounds: Rectangle) {
         self.bounds = bounds;
         self.clamp_offset();
@@ -204,6 +222,7 @@ impl ViewProgram {
         self.panning = false;
         self.rotation = 0;
         self.uploaded_mipmap_zoom_out = self.mipmap_zoom_out;
+        self.reset_crop_to_image();
     }
 
     pub fn histogram(&self) -> Option<&([u32; 256], [u32; 256], [u32; 256])> {
@@ -238,6 +257,7 @@ impl ViewProgram {
         self.panning = false;
         self.rotation = 0;
         self.uploaded_mipmap_zoom_out = self.mipmap_zoom_out;
+        self.reset_crop_to_image();
     }
 
     pub fn set_cursor_pos(&mut self, pos: Option<Vec2>) {
