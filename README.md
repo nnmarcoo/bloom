@@ -20,6 +20,8 @@
 - **Gallery** — browse every image in a folder seamlessly
 - **Tiled texture system** — handles images larger than GPU texture limits
 - **Pan and zoom** — flexible zoom from 0.01× to 35×, with custom % input
+- **Non-destructive modifiers** — brightness/contrast, exposure, hue/saturation, vibrance, color balance, levels, vignette, grain, chromatic aberration, halftone, posterize, threshold, and more
+- **Export** — save to PNG, JPEG, or WebP with crop, rotation, and all modifiers applied
 - **Clipboard import** — load an image directly from clipboard or file path
 - **Drag and drop** — drop any supported file onto the window to open it
 - **Info panel** — file metadata, dimensions, EXIF, pixel color under cursor, RGB histogram, and animation timing
@@ -75,7 +77,7 @@
   </thead>
   <tbody>
     <tr><td><code>←</code> / <code>→</code></td><td>Previous / next image in folder</td></tr>
-    <tr><td><code>]</code> / <code>[</code></td><td>Rotate clockwise / counter-clockwise</td></tr>
+    <tr><td><code>R</code> / <code>Shift</code> <code>R</code></td><td>Rotate clockwise / counter-clockwise</td></tr>
     <tr><td><code>Ctrl</code> <code>=</code></td><td>Zoom in</td></tr>
     <tr><td><code>Ctrl</code> <code>-</code></td><td>Zoom out</td></tr>
     <tr><td><code>Ctrl</code> <code>0</code></td><td>Fit to window</td></tr>
