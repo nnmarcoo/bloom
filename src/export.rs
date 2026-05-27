@@ -39,9 +39,7 @@ pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Resul
     let pixels: &[u8] = &guard;
 
     if pixels.len() < img_w as usize * img_h as usize * 4 {
-        return Err(
-            "Image pixels are no longer available. Try reloading the image.".to_string(),
-        );
+        return Err("Image pixels are no longer available. Try reloading the image.".to_string());
     }
 
     let (cx0, cy0, cw, ch) = match data.crop {
@@ -109,9 +107,11 @@ fn encode_png(ctx: &ExportCtx, path: &Path, progress: &impl Fn(f32)) -> Result<(
         let strip_h = (ctx.out_h - oy).min(STRIP_HEIGHT);
         let buf = &mut strip[..row_bytes * strip_h as usize];
 
-        buf.par_chunks_mut(row_bytes).enumerate().for_each(|(i, row)| {
-            fill_row(row, oy + i as u32, ctx);
-        });
+        buf.par_chunks_mut(row_bytes)
+            .enumerate()
+            .for_each(|(i, row)| {
+                fill_row(row, oy + i as u32, ctx);
+            });
 
         stream.write_all(buf).map_err(|e| e.to_string())?;
         oy += strip_h;
@@ -131,9 +131,11 @@ fn encode_rgba(ctx: &ExportCtx, path: &Path, progress: &impl Fn(f32)) -> Result<
         let strip_h = (ctx.out_h - oy).min(STRIP_HEIGHT);
         let buf = &mut strip[..row_bytes * strip_h as usize];
 
-        buf.par_chunks_mut(row_bytes).enumerate().for_each(|(i, row)| {
-            fill_row(row, oy + i as u32, ctx);
-        });
+        buf.par_chunks_mut(row_bytes)
+            .enumerate()
+            .for_each(|(i, row)| {
+                fill_row(row, oy + i as u32, ctx);
+            });
 
         rgba.extend_from_slice(buf);
         oy += strip_h;
@@ -156,9 +158,11 @@ fn encode_jpeg(ctx: &ExportCtx, path: &Path, progress: &impl Fn(f32)) -> Result<
         let strip_h = (ctx.out_h - oy).min(STRIP_HEIGHT);
         let buf = &mut strip[..row_bytes * strip_h as usize];
 
-        buf.par_chunks_mut(row_bytes).enumerate().for_each(|(i, row)| {
-            fill_row(row, oy + i as u32, ctx);
-        });
+        buf.par_chunks_mut(row_bytes)
+            .enumerate()
+            .for_each(|(i, row)| {
+                fill_row(row, oy + i as u32, ctx);
+            });
 
         for p in buf.chunks_exact(4) {
             let a = p[3] as f32 / 255.0;
@@ -201,7 +205,8 @@ fn fill_row(row: &mut [u8], oy: u32, ctx: &ExportCtx) {
         let p = &ctx.pixels[src..src + 4];
         let raw = modifier_cpu::pixel_to_f32(p);
         let uv = [fx as f32 / ctx.img_w as f32, fy as f32 / ctx.img_h as f32];
-        let result = modifier_cpu::apply_modifiers(ctx.modifiers, ctx.pixels, ctx.img_w, ctx.img_h, uv, raw);
+        let result =
+            modifier_cpu::apply_modifiers(ctx.modifiers, ctx.pixels, ctx.img_w, ctx.img_h, uv, raw);
         row[out..out + 4].copy_from_slice(&modifier_cpu::f32_to_pixel(result));
     }
 }

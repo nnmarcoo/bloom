@@ -155,7 +155,14 @@ pub fn view<'a>(
                         menu_item("Preferences", Message::TogglePreferences),
                         menu_separator(),
                         menu_item("Copy file path", Message::CopyPath),
-                        menu_item("Export", if has_image { Message::ExportImage } else { Message::Noop }),
+                        menu_item(
+                            "Export",
+                            if has_image {
+                                Message::ExportImage
+                            } else {
+                                Message::Noop
+                            }
+                        ),
                         menu_separator(),
                         menu_item("About", Message::Noop),
                         menu_item("Exit", Message::Exit),

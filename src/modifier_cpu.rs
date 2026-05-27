@@ -1,8 +1,17 @@
 use crate::modifiers::{Modifier, ModifierKind};
 
-pub(crate) fn apply_single(kind: &ModifierKind, img_w: u32, img_h: u32, uv: [f32; 2], mut c: [f32; 4]) -> [f32; 4] {
+pub(crate) fn apply_single(
+    kind: &ModifierKind,
+    img_w: u32,
+    img_h: u32,
+    uv: [f32; 2],
+    mut c: [f32; 4],
+) -> [f32; 4] {
     match kind {
-        ModifierKind::BrightnessContrast { brightness, contrast } => {
+        ModifierKind::BrightnessContrast {
+            brightness,
+            contrast,
+        } => {
             for v in c.iter_mut().take(3) {
                 *v = (*v + brightness - 0.5) * (1.0 + contrast) + 0.5;
             }
@@ -13,7 +22,11 @@ pub(crate) fn apply_single(kind: &ModifierKind, img_w: u32, img_h: u32, uv: [f32
             c[1] *= scale;
             c[2] *= scale;
         }
-        ModifierKind::Levels { shadows, midtones, highlights } => {
+        ModifierKind::Levels {
+            shadows,
+            midtones,
+            highlights,
+        } => {
             let hi = highlights.max(shadows + 0.001);
             let range = hi - shadows;
             for v in c.iter_mut().take(3) {
@@ -24,7 +37,11 @@ pub(crate) fn apply_single(kind: &ModifierKind, img_w: u32, img_h: u32, uv: [f32
                 *v = v.powf(1.0 / gamma);
             }
         }
-        ModifierKind::HueSaturation { hue, saturation, lightness } => {
+        ModifierKind::HueSaturation {
+            hue,
+            saturation,
+            lightness,
+        } => {
             let [h, s, l] = rgb_to_hsl([c[0], c[1], c[2]]);
             let rgb = hsl_to_rgb([
                 (h + hue / 360.0).fract(),
@@ -35,7 +52,11 @@ pub(crate) fn apply_single(kind: &ModifierKind, img_w: u32, img_h: u32, uv: [f32
             c[1] = rgb[1];
             c[2] = rgb[2];
         }
-        ModifierKind::Vignette { strength, size, softness } => {
+        ModifierKind::Vignette {
+            strength,
+            size,
+            softness,
+        } => {
             let dx = uv[0] - 0.5;
             let dy = uv[1] - 0.5;
             let dist = (dx * dx + dy * dy).sqrt() * 2.0;
@@ -60,7 +81,10 @@ pub(crate) fn apply_single(kind: &ModifierKind, img_w: u32, img_h: u32, uv: [f32
                 *v = (*v * l + 0.5).floor() / l;
             }
         }
-        ModifierKind::Vibrance { vibrance, saturation } => {
+        ModifierKind::Vibrance {
+            vibrance,
+            saturation,
+        } => {
             let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
             let max_c = c[0].max(c[1]).max(c[2]);
             let sat_proxy = max_c - c[0].min(c[1]).min(c[2]);
@@ -72,12 +96,21 @@ pub(crate) fn apply_single(kind: &ModifierKind, img_w: u32, img_h: u32, uv: [f32
                 *v = luma + (*v - luma) * (1.0 + saturation);
             }
         }
-        ModifierKind::ColorBalance { cyan_red, magenta_green, yellow_blue } => {
+        ModifierKind::ColorBalance {
+            cyan_red,
+            magenta_green,
+            yellow_blue,
+        } => {
             c[0] += cyan_red;
             c[1] += magenta_green;
             c[2] += yellow_blue;
         }
-        ModifierKind::Grain { amount, size, roughness, seed } => {
+        ModifierKind::Grain {
+            amount,
+            size,
+            roughness,
+            seed,
+        } => {
             let gx = uv[0] * img_w as f32 / size.max(0.5);
             let gy = uv[1] * img_h as f32 / size.max(0.5);
             let iseed = *seed as i32;
@@ -88,12 +121,10 @@ pub(crate) fn apply_single(kind: &ModifierKind, img_w: u32, img_h: u32, uv: [f32
             let n01 = hash21_i(cx as i32, cy as i32 + 1, iseed);
             let n11 = hash21_i(cx as i32 + 1, cy as i32 + 1, iseed);
             let t = roughness.clamp(0.0, 1.0);
-            let wx = fx * fx * (3.0 - 2.0 * fx) * (1.0 - t)
-                + if fx >= 0.5 { 1.0 } else { 0.0 } * t;
-            let wy = fy * fy * (3.0 - 2.0 * fy) * (1.0 - t)
-                + if fy >= 0.5 { 1.0 } else { 0.0 } * t;
-            let noise = (n00 * (1.0 - wx) + n10 * wx) * (1.0 - wy)
-                + (n01 * (1.0 - wx) + n11 * wx) * wy;
+            let wx = fx * fx * (3.0 - 2.0 * fx) * (1.0 - t) + if fx >= 0.5 { 1.0 } else { 0.0 } * t;
+            let wy = fy * fy * (3.0 - 2.0 * fy) * (1.0 - t) + if fy >= 0.5 { 1.0 } else { 0.0 } * t;
+            let noise =
+                (n00 * (1.0 - wx) + n10 * wx) * (1.0 - wy) + (n01 * (1.0 - wx) + n11 * wx) * wy;
             let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
             let luma_weight = 4.0 * luma * (1.0 - luma);
             let grain = (noise - 0.5) * amount * luma_weight;
@@ -150,7 +181,9 @@ pub(crate) fn apply_modifiers(
             let mut cr = sample_pixel(pixels, img_w, img_h, r_uv[0], r_uv[1]);
             let mut cb = sample_pixel(pixels, img_w, img_h, b_uv[0], b_uv[1]);
             for prev in &modifiers[..i] {
-                if !prev.has_visible_effect() || matches!(prev.kind, ModifierKind::ChromaticAberration { .. }) {
+                if !prev.has_visible_effect()
+                    || matches!(prev.kind, ModifierKind::ChromaticAberration { .. })
+                {
                     continue;
                 }
                 cr = apply_single(&prev.kind, img_w, img_h, r_uv, cr);
