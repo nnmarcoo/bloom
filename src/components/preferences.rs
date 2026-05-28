@@ -316,8 +316,6 @@ fn divider<'a>() -> Element<'a, Message> {
         .into()
 }
 
-// Mirrors the app's bottom bar: the divider lives inside the `bar_style` fill so its
-// translucent color composites over the bar (not the content backdrop) and matches.
 fn bar<'a>(content: impl Into<Element<'a, Message>>, divider_on_top: bool) -> Element<'a, Message> {
     let body = container(content)
         .width(Length::Fill)
