@@ -126,7 +126,7 @@ impl Histogram {
     pub fn new(r: [u32; 256], g: [u32; 256], b: [u32; 256]) -> Self {
         let mut l = [0u32; 256];
         for i in 0..256 {
-            l[i] = (0.299 * r[i] as f64 + 0.587 * g[i] as f64 + 0.114 * b[i] as f64) as u32;
+            l[i] = (0.2126 * r[i] as f64 + 0.7152 * g[i] as f64 + 0.0722 * b[i] as f64) as u32;
         }
         let max = r
             .iter()
