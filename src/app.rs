@@ -756,6 +756,8 @@ impl App {
                     Task::none()
                 }
             }
+            Some(Action::ToggleInfoPanel) => Task::done(Message::ToggleInfoColumn),
+            Some(Action::ToggleEditPanel) => Task::done(Message::ToggleEditPanel),
             None => Task::none(),
         }
     }

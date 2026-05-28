@@ -27,6 +27,8 @@ pub enum Action {
     ToolDraw,
     ToolText,
     TogglePlayback,
+    ToggleInfoPanel,
+    ToggleEditPanel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +81,8 @@ impl Action {
             Self::ToolDraw => "Draw tool".into(),
             Self::ToolText => "Text tool".into(),
             Self::TogglePlayback => "Toggle playback".into(),
+            Self::ToggleInfoPanel => "Toggle info panel".into(),
+            Self::ToggleEditPanel => "Toggle edit panel".into(),
         }
     }
 
@@ -103,6 +107,8 @@ impl Action {
             Self::ToolDraw => "Switch to the draw tool",
             Self::ToolText => "Switch to the text tool",
             Self::TogglePlayback => "Pause or resume animation playback",
+            Self::ToggleInfoPanel => "Show or hide the image info panel",
+            Self::ToggleEditPanel => "Show or hide the edit panel",
         }
     }
 
@@ -120,7 +126,9 @@ impl Action {
             | Self::FocusScale
             | Self::UiScaleUp
             | Self::UiScaleDown
-            | Self::UiScaleReset => KeyCategory::View,
+            | Self::UiScaleReset
+            | Self::ToggleInfoPanel
+            | Self::ToggleEditPanel => KeyCategory::View,
             Self::ToolSelect | Self::ToolCrop | Self::ToolDraw | Self::ToolText => {
                 KeyCategory::Tools
             }
@@ -143,6 +151,8 @@ impl Action {
             Action::UiScaleUp,
             Action::UiScaleDown,
             Action::UiScaleReset,
+            Action::ToggleInfoPanel,
+            Action::ToggleEditPanel,
             Action::ToolSelect,
             Action::ToolCrop,
             Action::ToolDraw,
@@ -352,6 +362,8 @@ impl Default for Keymap {
         m.insert(Action::ToolDraw, n(key::Code::KeyD));
         m.insert(Action::ToolText, n(key::Code::KeyT));
         m.insert(Action::TogglePlayback, n(key::Code::Space));
+        m.insert(Action::ToggleInfoPanel, n(key::Code::KeyI));
+        m.insert(Action::ToggleEditPanel, n(key::Code::KeyE));
         let digit_codes = [
             key::Code::Digit1,
             key::Code::Digit2,
@@ -425,6 +437,8 @@ pub(crate) struct KeymapFile {
     pub tool_draw: Option<String>,
     pub tool_text: Option<String>,
     pub toggle_playback: Option<String>,
+    pub toggle_info_panel: Option<String>,
+    pub toggle_edit_panel: Option<String>,
 }
 
 impl From<&Keymap> for KeymapFile {
@@ -465,6 +479,8 @@ impl From<&Keymap> for KeymapFile {
             tool_draw: bind(Action::ToolDraw),
             tool_text: bind(Action::ToolText),
             toggle_playback: bind(Action::TogglePlayback),
+            toggle_info_panel: bind(Action::ToggleInfoPanel),
+            toggle_edit_panel: bind(Action::ToggleEditPanel),
         }
     }
 }
@@ -507,6 +523,8 @@ impl From<KeymapFile> for Keymap {
             resolve(f.tool_draw, Action::ToolDraw),
             resolve(f.tool_text, Action::ToolText),
             resolve(f.toggle_playback, Action::TogglePlayback),
+            resolve(f.toggle_info_panel, Action::ToggleInfoPanel),
+            resolve(f.toggle_edit_panel, Action::ToggleEditPanel),
         ]
         .into_iter()
         .flatten()
