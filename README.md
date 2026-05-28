@@ -17,19 +17,19 @@
 - **GPU rendering** — hardware-accelerated via [wgpu](https://wgpu.rs) at any resolution
 - **Hardware mipmaps** — smooth zoomed-out views
 - **GIF, APNG & WebP** — animation playback with timeline scrubbing and frame controls
-- **Gallery** — browse every image in a folder seamlessly
-- **Tiled texture system** — handles images larger than GPU texture limits
-- **Pan and zoom** — flexible zoom from 0.01× to 35×, with custom % input
+- **Gallery** — browse every image in a folder
+- **Tiled textures** — handles images larger than GPU texture limits
+- **Pan and zoom** — 0.01× to 35×, with custom % input
 - **Non-destructive modifiers** — brightness/contrast, exposure, hue/saturation, vibrance, color balance, levels, vignette, grain, chromatic aberration, halftone, posterize, threshold, and more
-- **Export** — save to PNG, JPEG, or WebP with crop, rotation, and all modifiers applied
-- **Clipboard import** — load an image directly from clipboard or file path
-- **Drag and drop** — drop any supported file onto the window to open it
-- **Info panel** — file metadata, dimensions, EXIF, pixel color under cursor, RGB histogram, and animation timing
-- **Image rotation** — rotate 90° clockwise or counter-clockwise
+- **Export** — PNG, JPEG, or WebP with crop, rotation, and modifiers applied
+- **Clipboard import** — load an image from clipboard or file path
+- **Drag and drop** — drop any supported file onto the window
+- **Info panel** — metadata, dimensions, EXIF, pixel color under cursor, RGB histogram, and animation timing
+- **Rotation** — 90° clockwise or counter-clockwise
 - **Checkerboard toggle** — visualize transparency
 - **Context menu** — right-click to copy pixel color or file path
-- **Themes** — 22 built-in themes including Catppuccin, Tokyo Night, Nord, Dracula, Gruvbox, and Kanagawa
-- **Customizable keybindings** — rebind any action via the preferences panel
+- **Themes** — 22 built-in, including Catppuccin, Tokyo Night, Nord, Dracula, Gruvbox, and Kanagawa
+- **Customizable keybindings** — rebind any action in preferences
 
 ## Supported Formats
 
@@ -101,7 +101,7 @@
 cargo build --release
 ```
 
-For HEIC/HEIF support, install libheif first then build with the feature flag:
+For HEIC/HEIF support, install libheif and build with the feature flag:
 
 ```sh
 # macOS
@@ -119,4 +119,4 @@ Requires a GPU with WebGPU support. On Windows, DX12 is used by default.
 
 ## Privacy
 
-Bloom is entirely local. It does not collect, transmit, or store any data of any kind. No telemetry, no analytics, no network requests — ever. Your files stay on your machine.
+Bloom is entirely local. No telemetry, no analytics, no network requests — ever. Your files stay on your machine.
