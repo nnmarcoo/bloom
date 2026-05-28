@@ -478,9 +478,6 @@ pub enum ModifierParam {
     DrawingHardness(f32),
 }
 
-/// Integer IDs used to identify modifier kinds in the GPU uniform packing.
-/// These must match the `case` values in `combined_modifiers.wgsl::apply_entry`.
-/// Crop/Text/Drawing are not GPU-rendered through the modifier pipeline.
 pub mod ids {
     pub const EXPOSURE: u32 = 1;
     pub const LEVELS: u32 = 2;
