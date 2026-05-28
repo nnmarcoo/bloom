@@ -1,3 +1,5 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -7,16 +9,33 @@ use iced::{
     mouse::{self, Button, Cursor, Interaction},
     widget::{Action, shader::Program},
 };
+use rayon::prelude::*;
 
 use crate::{
     app::Message,
-    modifiers::Modifier,
+    modifiers::{Modifier, ModifierKind, cpu},
     wgpu::{
-        media::animation::Animation, media::exif_data::ExifData, media::image_data::ImageData,
-        passes::checkerboard::CheckerboardUniforms, scale::Scale, view_pipeline::Uniforms,
+        media::animation::Animation,
+        media::exif_data::ExifData,
+        media::image_data::{ImageData, ImageId},
+        passes::checkerboard::CheckerboardUniforms,
+        scale::Scale,
+        view_pipeline::Uniforms,
         view_primitive::ViewPrimitive,
     },
 };
+
+type Histogram = ([u32; 256], [u32; 256], [u32; 256]);
+
+struct HistogramCacheEntry {
+    image_id: ImageId,
+    modifier_hash: u64,
+    data: Histogram,
+    computed_at: Instant,
+}
+
+const HISTOGRAM_TARGET_SAMPLES: usize = 250_000;
+const HISTOGRAM_THROTTLE: Duration = Duration::from_millis(50);
 
 const SCALE_COOLDOWN: Duration = Duration::from_millis(30);
 
@@ -61,6 +80,7 @@ pub struct ViewProgram {
     pub crop_tool_active: bool,
     dirty_from: Arc<Mutex<Option<usize>>>,
     pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
+    histogram_cache: Arc<Mutex<Option<HistogramCacheEntry>>>,
 }
 
 impl Default for ViewProgram {
@@ -89,6 +109,7 @@ impl Default for ViewProgram {
             crop_tool_active: false,
             dirty_from: Arc::new(Mutex::new(None)),
             pre_clear_gpu: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            histogram_cache: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -100,7 +121,6 @@ impl ViewProgram {
     }
 
     fn reset_crop_to_image(&mut self) {
-        use crate::modifiers::ModifierKind;
         for m in &mut self.modifiers {
             if let ModifierKind::Crop {
                 x,
@@ -225,11 +245,45 @@ impl ViewProgram {
         self.reset_crop_to_image();
     }
 
-    pub fn histogram(&self) -> Option<&([u32; 256], [u32; 256], [u32; 256])> {
-        if let Some(anim) = &self.animation {
-            return Some(anim.current_histogram());
+    pub fn histogram(&self) -> Option<Histogram> {
+        let image = self.image.as_ref()?;
+        let modifier_hash = hash_modifiers(&self.modifiers);
+
+        {
+            let cache = self
+                .histogram_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(entry) = cache.as_ref() {
+                if entry.image_id == image.id && entry.modifier_hash == modifier_hash {
+                    return Some(entry.data);
+                }
+                if entry.computed_at.elapsed() < HISTOGRAM_THROTTLE {
+                    return Some(entry.data);
+                }
+            }
         }
-        self.image.as_deref().map(|d| d.histogram())
+
+        let pixels = image.pixels_snapshot();
+        if pixels.len() < image.size_bytes() {
+            return None;
+        }
+
+        let data =
+            compute_subsampled_histogram(&pixels, image.width, image.height, &self.modifiers);
+        let computed_at = Instant::now();
+
+        let mut cache = self
+            .histogram_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *cache = Some(HistogramCacheEntry {
+            image_id: image.id,
+            modifier_hash,
+            data,
+            computed_at,
+        });
+        Some(data)
     }
 
     pub fn exif(&self) -> Option<&ExifData> {
@@ -317,7 +371,6 @@ impl ViewProgram {
     }
 
     fn active_crop(&self) -> Option<[f32; 4]> {
-        use crate::modifiers::ModifierKind;
         if self.crop_tool_active || self.image_size == Vec2::ZERO {
             return None;
         }
@@ -436,7 +489,7 @@ impl ViewProgram {
         uv: [f32; 2],
         c: [f32; 4],
     ) -> [f32; 4] {
-        crate::modifiers::cpu::apply_modifiers(&self.modifiers, pixels, img_w, img_h, uv, c)
+        cpu::apply_modifiers(&self.modifiers, pixels, img_w, img_h, uv, c)
     }
 
     pub fn export_data(&self) -> Option<crate::export::ExportData> {
@@ -459,12 +512,12 @@ impl ViewProgram {
         let idx = (py as usize * image.width as usize + px as usize) * 4;
         let pixels = image.pixels_snapshot();
         let p = pixels.get(idx..idx + 4)?;
-        let rgba = crate::modifiers::cpu::f32_to_pixel(self.apply_modifiers_cpu(
+        let rgba = cpu::f32_to_pixel(self.apply_modifiers_cpu(
             &pixels,
             image.width,
             image.height,
             [uv.x, uv.y],
-            crate::modifiers::cpu::pixel_to_f32(p),
+            cpu::pixel_to_f32(p),
         ));
         Some((px, py, uv, rgba))
     }
@@ -496,12 +549,12 @@ impl ViewProgram {
                 let idx = (y as usize * w as usize + x as usize) * 4;
                 let p = &buf[idx..idx + 4];
                 let uv = [x as f32 / w as f32, y as f32 / h as f32];
-                let rgba = crate::modifiers::cpu::f32_to_pixel(self.apply_modifiers_cpu(
+                let rgba = cpu::f32_to_pixel(self.apply_modifiers_cpu(
                     &buf,
                     w as u32,
                     h as u32,
                     uv,
-                    crate::modifiers::cpu::pixel_to_f32(p),
+                    cpu::pixel_to_f32(p),
                 ));
                 pixels.extend_from_slice(&rgba);
             }
@@ -519,12 +572,12 @@ impl ViewProgram {
             px as f32 / image.width as f32,
             py as f32 / image.height as f32,
         ];
-        let rgba = crate::modifiers::cpu::f32_to_pixel(self.apply_modifiers_cpu(
+        let rgba = cpu::f32_to_pixel(self.apply_modifiers_cpu(
             &pixels,
             image.width,
             image.height,
             uv,
-            crate::modifiers::cpu::pixel_to_f32(p),
+            cpu::pixel_to_f32(p),
         ));
         Some((px, py, rgba))
     }
@@ -669,6 +722,243 @@ impl Program<Message> for ViewProgram {
         match state.drag {
             ViewDragState::Panning(_) => Interaction::Grabbing,
             ViewDragState::Idle => Interaction::Idle,
+        }
+    }
+}
+
+fn compute_subsampled_histogram(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    modifiers: &[Modifier],
+) -> Histogram {
+    let pixel_count = (width as usize) * (height as usize);
+    let stride = if pixel_count > HISTOGRAM_TARGET_SAMPLES {
+        ((pixel_count as f64 / HISTOGRAM_TARGET_SAMPLES as f64)
+            .sqrt()
+            .round() as usize)
+            .max(1)
+    } else {
+        1
+    };
+    let width_u = width as usize;
+    let height_u = height as usize;
+    let row_indices: Vec<usize> = (0..height_u).step_by(stride).collect();
+
+    let (mut r, mut g, mut b) = row_indices
+        .par_iter()
+        .map(|&y| {
+            let mut r = [0u32; 256];
+            let mut g = [0u32; 256];
+            let mut b = [0u32; 256];
+            let mut x = 0;
+            while x < width_u {
+                let idx = (y * width_u + x) * 4;
+                if let Some(p) = pixels.get(idx..idx + 4) {
+                    let uv = [x as f32 / width as f32, y as f32 / height as f32];
+                    let raw = cpu::pixel_to_f32(p);
+                    let result = cpu::apply_modifiers(modifiers, pixels, width, height, uv, raw);
+                    let out = cpu::f32_to_pixel(result);
+                    r[out[0] as usize] += 1;
+                    g[out[1] as usize] += 1;
+                    b[out[2] as usize] += 1;
+                }
+                x += stride;
+            }
+            (r, g, b)
+        })
+        .reduce(
+            || ([0u32; 256], [0u32; 256], [0u32; 256]),
+            |(mut ra, mut ga, mut ba), (rb, gb, bb)| {
+                for i in 0..256 {
+                    ra[i] += rb[i];
+                    ga[i] += gb[i];
+                    ba[i] += bb[i];
+                }
+                (ra, ga, ba)
+            },
+        );
+
+    smooth_bins(&mut r);
+    smooth_bins(&mut g);
+    smooth_bins(&mut b);
+    (r, g, b)
+}
+
+fn smooth_bins(bins: &mut [u32; 256]) {
+    let mut out = [0u32; 256];
+    for i in 0usize..256 {
+        let l = bins[i.saturating_sub(1)];
+        let c = bins[i];
+        let r = bins[(i + 1).min(255)];
+        out[i] = (l + 2 * c + r + 2) / 4;
+    }
+    *bins = out;
+}
+
+fn hash_modifiers(modifiers: &[Modifier]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    modifiers.len().hash(&mut hasher);
+    for m in modifiers {
+        m.enabled.hash(&mut hasher);
+        hash_kind(&mut hasher, &m.kind);
+    }
+    hasher.finish()
+}
+
+fn hash_kind(h: &mut DefaultHasher, kind: &ModifierKind) {
+    let bits = |v: f32, h: &mut DefaultHasher| v.to_bits().hash(h);
+    match kind {
+        ModifierKind::Levels {
+            shadows,
+            midtones,
+            highlights,
+        } => {
+            1u8.hash(h);
+            bits(*shadows, h);
+            bits(*midtones, h);
+            bits(*highlights, h);
+        }
+        ModifierKind::BrightnessContrast {
+            brightness,
+            contrast,
+        } => {
+            2u8.hash(h);
+            bits(*brightness, h);
+            bits(*contrast, h);
+        }
+        ModifierKind::HueSaturation {
+            hue,
+            saturation,
+            lightness,
+        } => {
+            3u8.hash(h);
+            bits(*hue, h);
+            bits(*saturation, h);
+            bits(*lightness, h);
+        }
+        ModifierKind::Exposure { exposure } => {
+            4u8.hash(h);
+            bits(*exposure, h);
+        }
+        ModifierKind::Vibrance {
+            vibrance,
+            saturation,
+        } => {
+            5u8.hash(h);
+            bits(*vibrance, h);
+            bits(*saturation, h);
+        }
+        ModifierKind::ColorBalance {
+            cyan_red,
+            magenta_green,
+            yellow_blue,
+        } => {
+            6u8.hash(h);
+            bits(*cyan_red, h);
+            bits(*magenta_green, h);
+            bits(*yellow_blue, h);
+        }
+        ModifierKind::GaussianBlur { radius } => {
+            7u8.hash(h);
+            bits(*radius, h);
+        }
+        ModifierKind::MotionBlur { angle, distance } => {
+            8u8.hash(h);
+            bits(*angle, h);
+            bits(*distance, h);
+        }
+        ModifierKind::RadialBlur { amount } => {
+            9u8.hash(h);
+            bits(*amount, h);
+        }
+        ModifierKind::Halftone { size, angle } => {
+            10u8.hash(h);
+            bits(*size, h);
+            bits(*angle, h);
+        }
+        ModifierKind::PixelSort { threshold, angle } => {
+            11u8.hash(h);
+            bits(*threshold, h);
+            bits(*angle, h);
+        }
+        ModifierKind::Vignette {
+            strength,
+            size,
+            softness,
+        } => {
+            12u8.hash(h);
+            bits(*strength, h);
+            bits(*size, h);
+            bits(*softness, h);
+        }
+        ModifierKind::ChromaticAberration { amount } => {
+            13u8.hash(h);
+            bits(*amount, h);
+        }
+        ModifierKind::Posterize { levels } => {
+            14u8.hash(h);
+            levels.hash(h);
+        }
+        ModifierKind::Threshold { cutoff } => {
+            15u8.hash(h);
+            bits(*cutoff, h);
+        }
+        ModifierKind::Grain {
+            amount,
+            size,
+            roughness,
+            seed,
+        } => {
+            16u8.hash(h);
+            bits(*amount, h);
+            bits(*size, h);
+            bits(*roughness, h);
+            bits(*seed, h);
+        }
+        ModifierKind::Crop {
+            x,
+            y,
+            width,
+            height,
+        } => {
+            17u8.hash(h);
+            bits(*x, h);
+            bits(*y, h);
+            bits(*width, h);
+            bits(*height, h);
+        }
+        ModifierKind::Text {
+            content,
+            x,
+            y,
+            size,
+            rotation,
+            opacity,
+            r,
+            g,
+            b,
+        } => {
+            18u8.hash(h);
+            content.hash(h);
+            bits(*x, h);
+            bits(*y, h);
+            bits(*size, h);
+            bits(*rotation, h);
+            bits(*opacity, h);
+            bits(*r, h);
+            bits(*g, h);
+            bits(*b, h);
+        }
+        ModifierKind::Drawing {
+            opacity,
+            size,
+            hardness,
+        } => {
+            19u8.hash(h);
+            bits(*opacity, h);
+            bits(*size, h);
+            bits(*hardness, h);
         }
     }
 }

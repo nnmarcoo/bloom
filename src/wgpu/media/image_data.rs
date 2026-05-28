@@ -3,11 +3,8 @@ use std::io::{BufReader, Error};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-
-use rayon::prelude::*;
 
 use basis_universal::transcoding::{
     DecodeFlags, TranscodeParameters, Transcoder, TranscoderTextureFormat,
@@ -53,7 +50,6 @@ pub struct ImageData {
     pub width: u32,
     pub height: u32,
     pub id: ImageId,
-    histogram: OnceLock<([u32; 256], [u32; 256], [u32; 256])>,
     pub exif: ExifData,
     pub bit_depth: u8,
     pub color_space: Option<&'static str>,
@@ -66,7 +62,6 @@ impl Clone for ImageData {
             width: self.width,
             height: self.height,
             id: self.id,
-            histogram: OnceLock::new(),
             exif: self.exif.clone(),
             bit_depth: self.bit_depth,
             color_space: self.color_space,
@@ -86,7 +81,6 @@ impl ImageData {
             width,
             height,
             id,
-            histogram: OnceLock::new(),
             exif: ExifData::default(),
             bit_depth: 8,
             color_space: None,
@@ -103,39 +97,6 @@ impl ImageData {
 
     pub fn release_pixels(&self) {
         *self.pixels.lock().unwrap_or_else(|e| e.into_inner()) = Arc::new(Vec::new());
-    }
-
-    pub fn histogram(&self) -> &([u32; 256], [u32; 256], [u32; 256]) {
-        self.histogram
-            .get_or_init(|| Self::compute_histogram(&self.pixels_snapshot()))
-    }
-
-    fn compute_histogram(pixels: &[u8]) -> ([u32; 256], [u32; 256], [u32; 256]) {
-        const CHUNK: usize = 65536 * 4;
-        pixels
-            .par_chunks(CHUNK)
-            .map(|chunk| {
-                let mut r = [0u32; 256];
-                let mut g = [0u32; 256];
-                let mut b = [0u32; 256];
-                for px in chunk.chunks_exact(4) {
-                    r[px[0] as usize] += 1;
-                    g[px[1] as usize] += 1;
-                    b[px[2] as usize] += 1;
-                }
-                (r, g, b)
-            })
-            .reduce(
-                || ([0u32; 256], [0u32; 256], [0u32; 256]),
-                |(mut ra, mut ga, mut ba), (rb, gb, bb)| {
-                    for i in 0..256 {
-                        ra[i] += rb[i];
-                        ga[i] += gb[i];
-                        ba[i] += bb[i];
-                    }
-                    (ra, ga, ba)
-                },
-            )
     }
 
     pub fn load(path: &Path) -> Result<Self, ImageError> {

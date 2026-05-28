@@ -41,10 +41,6 @@ impl Animation {
         &self.frames[self.current].data
     }
 
-    pub fn current_histogram(&self) -> &([u32; 256], [u32; 256], [u32; 256]) {
-        self.frames[self.current].data.histogram()
-    }
-
     pub fn frame_count(&self) -> usize {
         self.frames.len()
     }
