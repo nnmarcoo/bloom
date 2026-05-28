@@ -49,7 +49,7 @@ pub struct ImageId(u64);
 
 #[derive(Debug)]
 pub struct ImageData {
-    pub pixels: Mutex<Vec<u8>>,
+    pixels: Mutex<Arc<Vec<u8>>>,
     pub width: u32,
     pub height: u32,
     pub id: ImageId,
@@ -62,12 +62,7 @@ pub struct ImageData {
 impl Clone for ImageData {
     fn clone(&self) -> Self {
         Self {
-            pixels: Mutex::new(
-                self.pixels
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone(),
-            ),
+            pixels: Mutex::new(self.pixels_snapshot()),
             width: self.width,
             height: self.height,
             id: self.id,
@@ -87,7 +82,7 @@ impl ImageData {
     pub fn new(pixels: Vec<u8>, width: u32, height: u32) -> Self {
         let id = ImageId(NEXT_ID.fetch_add(1, Ordering::Relaxed));
         Self {
-            pixels: Mutex::new(pixels),
+            pixels: Mutex::new(Arc::new(pixels)),
             width,
             height,
             id,
@@ -98,19 +93,21 @@ impl ImageData {
         }
     }
 
+    pub fn pixels_snapshot(&self) -> Arc<Vec<u8>> {
+        Arc::clone(&self.pixels.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
     pub fn pixels_available(&self) -> bool {
-        self.pixels.lock().unwrap_or_else(|e| e.into_inner()).len() >= self.size_bytes()
+        self.pixels_snapshot().len() >= self.size_bytes()
     }
 
     pub fn release_pixels(&self) {
-        *self.pixels.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
+        *self.pixels.lock().unwrap_or_else(|e| e.into_inner()) = Arc::new(Vec::new());
     }
 
     pub fn histogram(&self) -> &([u32; 256], [u32; 256], [u32; 256]) {
-        self.histogram.get_or_init(|| {
-            let guard = self.pixels.lock().unwrap_or_else(|e| e.into_inner());
-            Self::compute_histogram(&guard)
-        })
+        self.histogram
+            .get_or_init(|| Self::compute_histogram(&self.pixels_snapshot()))
     }
 
     fn compute_histogram(pixels: &[u8]) -> ([u32; 256], [u32; 256], [u32; 256]) {

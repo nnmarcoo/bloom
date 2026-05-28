@@ -6,10 +6,11 @@ use rayon::prelude::*;
 
 use crate::modifier_cpu;
 use crate::modifiers::Modifier;
-use crate::wgpu::media::image_data::ImageData;
 
 pub struct ExportData {
-    pub image: Arc<ImageData>,
+    pub pixels: Arc<Vec<u8>>,
+    pub width: u32,
+    pub height: u32,
     pub modifiers: Vec<Modifier>,
     pub crop: Option<[f32; 4]>,
     pub rotation: u8,
@@ -32,11 +33,9 @@ struct ExportCtx<'a> {
 }
 
 pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Result<String, String> {
-    let img_w = data.image.width;
-    let img_h = data.image.height;
-
-    let guard = data.image.pixels.lock().unwrap_or_else(|e| e.into_inner());
-    let pixels: &[u8] = &guard;
+    let img_w = data.width;
+    let img_h = data.height;
+    let pixels: &[u8] = &data.pixels;
 
     if pixels.len() < img_w as usize * img_h as usize * 4 {
         return Err("Image pixels are no longer available. Try reloading the image.".to_string());

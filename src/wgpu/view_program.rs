@@ -442,7 +442,9 @@ impl ViewProgram {
     pub fn export_data(&self) -> Option<crate::export::ExportData> {
         let image = self.image.as_ref()?;
         Some(crate::export::ExportData {
-            image: Arc::clone(image),
+            pixels: image.pixels_snapshot(),
+            width: image.width,
+            height: image.height,
             modifiers: self.modifiers.clone(),
             crop: self.active_crop(),
             rotation: self.rotation,
@@ -455,10 +457,10 @@ impl ViewProgram {
         let uv = img / self.image_size;
         let image = self.image.as_ref()?;
         let idx = (py as usize * image.width as usize + px as usize) * 4;
-        let guard = image.pixels.lock().unwrap_or_else(|e| e.into_inner());
-        let p = guard.get(idx..idx + 4)?;
+        let pixels = image.pixels_snapshot();
+        let p = pixels.get(idx..idx + 4)?;
         let rgba = crate::modifier_cpu::f32_to_pixel(self.apply_modifiers_cpu(
-            &guard,
+            &pixels,
             image.width,
             image.height,
             [uv.x, uv.y],
@@ -473,8 +475,8 @@ impl ViewProgram {
         let half = (size / 2) as i64;
         let image = self.image.as_ref()?;
         let (w, h) = (image.width as i64, image.height as i64);
-        let guard = image.pixels.lock().unwrap_or_else(|e| e.into_inner());
-        if guard.is_empty() {
+        let buf = image.pixels_snapshot();
+        if buf.is_empty() {
             return None;
         }
         let mut pixels = Vec::with_capacity((size * size * 4) as usize);
@@ -492,10 +494,10 @@ impl ViewProgram {
                     continue;
                 }
                 let idx = (y as usize * w as usize + x as usize) * 4;
-                let p = &guard[idx..idx + 4];
+                let p = &buf[idx..idx + 4];
                 let uv = [x as f32 / w as f32, y as f32 / h as f32];
                 let rgba = crate::modifier_cpu::f32_to_pixel(self.apply_modifiers_cpu(
-                    &guard,
+                    &buf,
                     w as u32,
                     h as u32,
                     uv,
@@ -511,14 +513,14 @@ impl ViewProgram {
         let (px, py) = self.screen_to_image_pixel(pos)?;
         let image = self.image.as_ref()?;
         let idx = (py as usize * image.width as usize + px as usize) * 4;
-        let guard = image.pixels.lock().unwrap_or_else(|e| e.into_inner());
-        let p = guard.get(idx..idx + 4)?;
+        let pixels = image.pixels_snapshot();
+        let p = pixels.get(idx..idx + 4)?;
         let uv = [
             px as f32 / image.width as f32,
             py as f32 / image.height as f32,
         ];
         let rgba = crate::modifier_cpu::f32_to_pixel(self.apply_modifiers_cpu(
-            &guard,
+            &pixels,
             image.width,
             image.height,
             uv,
