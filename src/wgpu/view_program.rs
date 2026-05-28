@@ -436,7 +436,7 @@ impl ViewProgram {
         uv: [f32; 2],
         c: [f32; 4],
     ) -> [f32; 4] {
-        crate::modifier_cpu::apply_modifiers(&self.modifiers, pixels, img_w, img_h, uv, c)
+        crate::modifiers::cpu::apply_modifiers(&self.modifiers, pixels, img_w, img_h, uv, c)
     }
 
     pub fn export_data(&self) -> Option<crate::export::ExportData> {
@@ -459,12 +459,12 @@ impl ViewProgram {
         let idx = (py as usize * image.width as usize + px as usize) * 4;
         let pixels = image.pixels_snapshot();
         let p = pixels.get(idx..idx + 4)?;
-        let rgba = crate::modifier_cpu::f32_to_pixel(self.apply_modifiers_cpu(
+        let rgba = crate::modifiers::cpu::f32_to_pixel(self.apply_modifiers_cpu(
             &pixels,
             image.width,
             image.height,
             [uv.x, uv.y],
-            crate::modifier_cpu::pixel_to_f32(p),
+            crate::modifiers::cpu::pixel_to_f32(p),
         ));
         Some((px, py, uv, rgba))
     }
@@ -496,12 +496,12 @@ impl ViewProgram {
                 let idx = (y as usize * w as usize + x as usize) * 4;
                 let p = &buf[idx..idx + 4];
                 let uv = [x as f32 / w as f32, y as f32 / h as f32];
-                let rgba = crate::modifier_cpu::f32_to_pixel(self.apply_modifiers_cpu(
+                let rgba = crate::modifiers::cpu::f32_to_pixel(self.apply_modifiers_cpu(
                     &buf,
                     w as u32,
                     h as u32,
                     uv,
-                    crate::modifier_cpu::pixel_to_f32(p),
+                    crate::modifiers::cpu::pixel_to_f32(p),
                 ));
                 pixels.extend_from_slice(&rgba);
             }
@@ -519,12 +519,12 @@ impl ViewProgram {
             px as f32 / image.width as f32,
             py as f32 / image.height as f32,
         ];
-        let rgba = crate::modifier_cpu::f32_to_pixel(self.apply_modifiers_cpu(
+        let rgba = crate::modifiers::cpu::f32_to_pixel(self.apply_modifiers_cpu(
             &pixels,
             image.width,
             image.height,
             uv,
-            crate::modifier_cpu::pixel_to_f32(p),
+            crate::modifiers::cpu::pixel_to_f32(p),
         ));
         Some((px, py, rgba))
     }

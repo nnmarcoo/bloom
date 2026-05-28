@@ -8,7 +8,6 @@ mod config;
 mod export;
 mod gallery;
 mod keybinds;
-mod modifier_cpu;
 mod modifiers;
 mod styles;
 mod tasks;

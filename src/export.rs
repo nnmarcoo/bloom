@@ -4,8 +4,7 @@ use std::sync::Arc;
 
 use rayon::prelude::*;
 
-use crate::modifier_cpu;
-use crate::modifiers::Modifier;
+use crate::modifiers::{Modifier, cpu};
 
 pub struct ExportData {
     pub pixels: Arc<Vec<u8>>,
@@ -202,10 +201,9 @@ fn fill_row(row: &mut [u8], oy: u32, ctx: &ExportCtx) {
 
         let src = (fy as usize * ctx.img_w as usize + fx as usize) * 4;
         let p = &ctx.pixels[src..src + 4];
-        let raw = modifier_cpu::pixel_to_f32(p);
+        let raw = cpu::pixel_to_f32(p);
         let uv = [fx as f32 / ctx.img_w as f32, fy as f32 / ctx.img_h as f32];
-        let result =
-            modifier_cpu::apply_modifiers(ctx.modifiers, ctx.pixels, ctx.img_w, ctx.img_h, uv, raw);
-        row[out..out + 4].copy_from_slice(&modifier_cpu::f32_to_pixel(result));
+        let result = cpu::apply_modifiers(ctx.modifiers, ctx.pixels, ctx.img_w, ctx.img_h, uv, raw);
+        row[out..out + 4].copy_from_slice(&cpu::f32_to_pixel(result));
     }
 }
