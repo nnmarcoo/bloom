@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use iced::{
     Background, Border, Color, Shadow, Theme, Vector,
-    widget::{button, container, svg},
+    widget::{button, container, rule, svg},
 };
 
 pub const PAD: f32 = 5.0;
@@ -16,6 +16,8 @@ pub const INFO_PANEL_WIDTH: f32 = 220.0;
 pub const RULE_HEIGHT: f32 = 2.0;
 pub const EDIT_PANEL_WIDTH: f32 = 240.0;
 pub const TOAST_WIDTH: f32 = 300.0;
+pub const PREF_SIDEBAR_WIDTH: f32 = 160.0;
+pub const PREF_CONTENT_MAX_WIDTH: f32 = 600.0;
 
 pub const INFO_ROW_FONT_SIZE: f32 = 12.0;
 pub const INFO_HEADER_LABEL_SIZE: f32 = 10.0;
@@ -139,6 +141,41 @@ pub fn plain_icon_button_style(theme: &Theme, status: button::Status) -> button:
         border: iced::border::rounded(radius()),
         text_color: palette.background.base.text,
         ..Default::default()
+    }
+}
+
+pub fn pref_nav_button_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme: &Theme, status: button::Status| {
+        let palette = theme.extended_palette();
+        let background = if active {
+            Some(Background::Color(palette.background.strong.color))
+        } else {
+            match status {
+                button::Status::Hovered => Some(Background::Color(palette.background.weak.color)),
+                button::Status::Pressed => Some(Background::Color(palette.background.strong.color)),
+                _ => None,
+            }
+        };
+        let text_color = if active {
+            palette.background.base.text
+        } else {
+            palette.background.base.text.scale_alpha(0.75)
+        };
+        button::Style {
+            background,
+            border: iced::border::rounded(radius()),
+            text_color,
+            ..Default::default()
+        }
+    }
+}
+
+pub fn pref_section_rule_style(theme: &Theme) -> rule::Style {
+    rule::Style {
+        color: theme.extended_palette().primary.base.color,
+        radius: 0.0.into(),
+        fill_mode: rule::FillMode::Full,
+        snap: true,
     }
 }
 

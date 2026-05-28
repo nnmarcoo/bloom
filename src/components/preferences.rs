@@ -1,18 +1,21 @@
 use std::sync::OnceLock;
 
 use iced::alignment::{Horizontal, Vertical};
+use iced::font::Weight;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::tooltip::Position;
 use iced::widget::{
     Space, button, column, container, pick_list, row, rule, scrollable, text, toggler,
 };
-use iced::{Element, Length, Theme};
+use iced::{Element, Font, Length, Theme};
 
 use crate::app::Message;
 use crate::config::{Config, PIXEL_PREVIEW_SIZE_OPTIONS, UI_SCALE_MAX, UI_SCALE_MIN};
-use crate::keybinds::{Action, KeyBinding, Keymap};
+use crate::keybinds::{Action, KeyBinding, KeyCategory, Keymap};
 use crate::styles::{
-    PAD, capturing_chip_style, key_chip_style, plain_icon_button_style, set_radius,
+    BAR_HEIGHT, PAD, PREF_CONTENT_MAX_WIDTH, PREF_SIDEBAR_WIDTH, RULE_HEIGHT, bar_style,
+    capturing_chip_style, key_chip_style, panel_divider_style, plain_icon_button_style,
+    pref_nav_button_style, pref_section_rule_style, set_radius,
 };
 use crate::ui::{svg_button_plain, with_tooltip};
 use crate::widgets::scale_entry::ScaleEntry;
@@ -23,13 +26,23 @@ fn on_wayland() -> bool {
     *ON_WAYLAND.get_or_init(|| std::env::var_os("WAYLAND_DISPLAY").is_some())
 }
 
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrefSection {
+    #[default]
+    Appearance,
+    Rendering,
+    Keybindings,
+}
+
 #[derive(Default)]
 pub struct PreferenceState {
     pub capturing: Option<Action>,
+    pub section: PrefSection,
 }
 
 #[derive(Debug, Clone)]
 pub enum PreferenceMessage {
+    SelectSection(PrefSection),
     SetTheme(Theme),
     SetRounded(bool),
     SetDecorations(bool),
@@ -64,6 +77,11 @@ pub fn update(
     preference_state: &mut PreferenceState,
 ) -> PreferenceOutcome {
     match msg {
+        PreferenceMessage::SelectSection(s) => {
+            preference_state.section = s;
+            preference_state.capturing = None;
+            PreferenceOutcome::Open
+        }
         PreferenceMessage::SetTheme(t) => {
             pending.theme = t;
             PreferenceOutcome::Open
@@ -166,10 +184,16 @@ fn section<'a>(
     on_reset: PreferenceMessage,
     theme: &Theme,
 ) -> Element<'a, Message> {
-    let accent = theme.extended_palette().primary.base.color;
+    let text_color = theme.extended_palette().background.base.text;
     column![
         row![
-            text(label).size(11).color(accent),
+            text(label)
+                .size(11)
+                .font(Font {
+                    weight: Weight::Semibold,
+                    ..Font::DEFAULT
+                })
+                .color(text_color),
             Space::new().width(Length::Fill),
             with_tooltip(
                 button(text("Reset").size(11))
@@ -181,7 +205,7 @@ fn section<'a>(
             ),
         ]
         .align_y(Vertical::Center),
-        rule::horizontal(1),
+        rule::horizontal(1).style(pref_section_rule_style),
     ]
     .spacing(PAD)
     .into()
@@ -274,15 +298,283 @@ fn keybind_row<'a>(
     .into()
 }
 
+fn nav_button<'a>(label: &'a str, target: PrefSection, active: bool) -> Element<'a, Message> {
+    button(text(label).size(13))
+        .width(Length::Fill)
+        .padding([6.0, 8.0])
+        .style(pref_nav_button_style(active))
+        .on_press(Message::Preference(PreferenceMessage::SelectSection(
+            target,
+        )))
+        .into()
+}
+
+fn divider<'a>() -> Element<'a, Message> {
+    container(Space::new().height(RULE_HEIGHT))
+        .width(Length::Fill)
+        .style(panel_divider_style)
+        .into()
+}
+
+// Mirrors the app's bottom bar: the divider lives inside the `bar_style` fill so its
+// translucent color composites over the bar (not the content backdrop) and matches.
+fn bar<'a>(content: impl Into<Element<'a, Message>>, divider_on_top: bool) -> Element<'a, Message> {
+    let body = container(content)
+        .width(Length::Fill)
+        .height(Length::Fixed(BAR_HEIGHT))
+        .align_x(Horizontal::Center)
+        .align_y(Vertical::Center)
+        .padding([0.0, PAD]);
+    let stack = if divider_on_top {
+        column![divider(), body]
+    } else {
+        column![body, divider()]
+    }
+    .width(Length::Fill);
+    container(stack).width(Length::Fill).style(bar_style).into()
+}
+
+fn settings_list<'a>(rows: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+    let n = rows.len();
+    let mut col = column![].spacing(PAD * 2.0).width(Length::Fill);
+    for (i, row) in rows.into_iter().enumerate() {
+        col = col.push(row);
+        if i + 1 < n {
+            col = col.push(divider());
+        }
+    }
+    col.into()
+}
+
+fn appearance_pane<'a>(pending: &'a Config, theme: &Theme) -> Element<'a, Message> {
+    let rows = vec![
+        setting(
+            "Theme",
+            "Color scheme for the application",
+            ThemePicker::new(pending.theme.clone(), |t| {
+                Message::Preference(PreferenceMessage::SetTheme(t))
+            })
+            .into(),
+            theme,
+        ),
+        setting(
+            "Rounded corners",
+            "Use rounded corners on UI elements",
+            toggler(pending.rounded)
+                .on_toggle(|v| Message::Preference(PreferenceMessage::SetRounded(v)))
+                .into(),
+            theme,
+        ),
+        setting(
+            "Window decorations",
+            "Show the native title bar and window border",
+            toggler(pending.decorations)
+                .on_toggle(|v| Message::Preference(PreferenceMessage::SetDecorations(v)))
+                .into(),
+            theme,
+        ),
+        setting(
+            "Always on top",
+            if on_wayland() {
+                "Not supported on Wayland"
+            } else {
+                "Always show Bloom above other windows"
+            },
+            {
+                let t = toggler(pending.always_on_top);
+                if on_wayland() {
+                    t
+                } else {
+                    t.on_toggle(|v| Message::Preference(PreferenceMessage::SetAlwaysOnTop(v)))
+                }
+            }
+            .into(),
+            theme,
+        ),
+        setting(
+            "UI scale",
+            "Scale the application interface",
+            ScaleEntry::new(pending.ui_scale, |v| {
+                Message::Preference(PreferenceMessage::SetUiScale(v))
+            })
+            .into(),
+            theme,
+        ),
+    ];
+    column![
+        section(
+            "Appearance",
+            "Reset appearance to defaults",
+            PreferenceMessage::ResetAppearance,
+            theme
+        ),
+        settings_list(rows),
+    ]
+    .spacing(PAD * 2.0)
+    .width(Length::Fill)
+    .into()
+}
+
+fn rendering_pane<'a>(pending: &'a Config, theme: &Theme) -> Element<'a, Message> {
+    let rows = vec![
+        setting(
+            "Autoplay animations",
+            "Automatically play animations when opened",
+            toggler(pending.autoplay)
+                .on_toggle(|v| Message::Preference(PreferenceMessage::SetAutoplay(v)))
+                .into(),
+            theme,
+        ),
+        setting(
+            "Remember last image",
+            "Open the last viewed image when no file is passed on launch",
+            toggler(pending.remember_last)
+                .on_toggle(|v| Message::Preference(PreferenceMessage::SetRememberLast(v)))
+                .into(),
+            theme,
+        ),
+        setting(
+            "Zoom out filtering",
+            "Trilinear mipmapping, pre-averages the image at smaller sizes to reduce aliasing (uses ~33% more VRAM, restart required)",
+            toggler(pending.mipmap_zoom_out)
+                .on_toggle(|v| Message::Preference(PreferenceMessage::SetMipmapZoomOut(v)))
+                .into(),
+            theme,
+        ),
+        setting(
+            "Zoom in filtering",
+            "Bilinear filtering, blends between neighbouring pixels when zoomed above 100%",
+            toggler(pending.smooth_zoom_in)
+                .on_toggle(|v| Message::Preference(PreferenceMessage::SetSmoothZoomIn(v)))
+                .into(),
+            theme,
+        ),
+        setting(
+            "Pixel preview size",
+            "Grid size of the zoomed pixel preview in the info panel",
+            pick_list(
+                PIXEL_PREVIEW_SIZE_OPTIONS,
+                Some(pending.pixel_preview_size),
+                |v| Message::Preference(PreferenceMessage::SetPixelPreviewSize(v)),
+            )
+            .text_size(12)
+            .into(),
+            theme,
+        ),
+    ];
+    column![
+        section(
+            "Rendering",
+            "Reset rendering to defaults",
+            PreferenceMessage::ResetRendering,
+            theme
+        ),
+        settings_list(rows),
+    ]
+    .spacing(PAD * 2.0)
+    .width(Length::Fill)
+    .into()
+}
+
+fn keybindings_pane<'a>(
+    pending: &'a Config,
+    capturing: Option<Action>,
+    theme: &Theme,
+) -> Element<'a, Message> {
+    let header_color = theme.extended_palette().background.base.text;
+
+    let mut col = column![section(
+        "Keybindings",
+        "Reset keybindings to defaults",
+        PreferenceMessage::ResetKeybindings,
+        theme
+    )]
+    .spacing(PAD * 3.0)
+    .width(Length::Fill);
+
+    for &category in KeyCategory::all() {
+        let rows: Vec<Element<'a, Message>> = Action::all_visible()
+            .iter()
+            .filter(|a| a.category() == category)
+            .map(|&action| keybind_row(action, &pending.keymap, capturing, theme))
+            .collect();
+        if rows.is_empty() {
+            continue;
+        }
+        col = col.push(
+            column![
+                text(category.label())
+                    .size(11)
+                    .font(Font {
+                        weight: Weight::Semibold,
+                        ..Font::DEFAULT
+                    })
+                    .color(header_color),
+                settings_list(rows),
+            ]
+            .spacing(PAD)
+            .width(Length::Fill),
+        );
+    }
+    col.into()
+}
+
 pub fn view<'a>(
     pending: &'a Config,
     theme: &Theme,
     preference_state: &'a PreferenceState,
 ) -> Element<'a, Message> {
-    let action_buttons = container(
+    let header = bar(text("Preferences").size(16), false);
+
+    let active = preference_state.section;
+    let sidebar = container(
+        column![
+            nav_button(
+                "Appearance",
+                PrefSection::Appearance,
+                active == PrefSection::Appearance
+            ),
+            nav_button(
+                "Rendering",
+                PrefSection::Rendering,
+                active == PrefSection::Rendering
+            ),
+            nav_button(
+                "Keybindings",
+                PrefSection::Keybindings,
+                active == PrefSection::Keybindings
+            ),
+        ]
+        .spacing(PAD)
+        .width(Length::Fill)
+        .height(Length::Fill),
+    )
+    .width(Length::Fixed(PREF_SIDEBAR_WIDTH))
+    .height(Length::Fill)
+    .padding(PAD * 2.0);
+
+    let pane = match active {
+        PrefSection::Appearance => appearance_pane(pending, theme),
+        PrefSection::Rendering => rendering_pane(pending, theme),
+        PrefSection::Keybindings => keybindings_pane(pending, preference_state.capturing, theme),
+    };
+
+    let content = scrollable(
+        container(pane)
+            .max_width(PREF_CONTENT_MAX_WIDTH)
+            .width(Length::Fill)
+            .padding(PAD * 3.0),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .direction(Direction::Vertical(
+        Scrollbar::new().width(4).scroller_width(4),
+    ));
+
+    let footer = bar(
         row![
             with_tooltip(
-                button(text("Reset").size(12))
+                button(text("Reset all").size(12))
                     .style(plain_icon_button_style)
                     .on_press(Message::Preference(PreferenceMessage::ResetAll))
                     .padding([4.0, 8.0]),
@@ -307,164 +599,18 @@ pub fn view<'a>(
                 Position::Top,
             ),
         ]
+        .width(Length::Fill)
         .align_y(Vertical::Center)
         .spacing(PAD),
-    )
-    .width(Length::Fill)
-    .padding(PAD * 2.0);
-
-    let keybind_rows: Vec<Element<'a, Message>> = Action::all_visible()
-        .iter()
-        .map(|&action| keybind_row(action, &pending.keymap, preference_state.capturing, theme))
-        .collect();
-
-    let content = column![
-        container(text("Preferences").size(16))
-            .width(Length::Fill)
-            .align_x(Horizontal::Center),
-        Space::new().height(PAD * 2.0),
-        section(
-            "Appearance",
-            "Reset appearance to defaults",
-            PreferenceMessage::ResetAppearance,
-            theme
-        ),
-        Space::new().height(PAD),
-        setting(
-            "Theme",
-            "Color scheme for the application",
-            ThemePicker::new(pending.theme.clone(), |t| {
-                Message::Preference(PreferenceMessage::SetTheme(t))
-            })
-            .into(),
-            theme,
-        ),
-        Space::new().height(PAD),
-        setting(
-            "Rounded corners",
-            "Use rounded corners on UI elements",
-            toggler(pending.rounded)
-                .on_toggle(|v| Message::Preference(PreferenceMessage::SetRounded(v)))
-                .into(),
-            theme,
-        ),
-        Space::new().height(PAD),
-        setting(
-            "Window decorations",
-            "Show the native title bar and window border",
-            toggler(pending.decorations)
-                .on_toggle(|v| Message::Preference(PreferenceMessage::SetDecorations(v)))
-                .into(),
-            theme,
-        ),
-        Space::new().height(PAD),
-        setting(
-            "Always on top",
-            if on_wayland() {
-                "Not supported on Wayland"
-            } else {
-                "Always show Bloom above other windows"
-            },
-            {
-                let t = toggler(pending.always_on_top);
-                if on_wayland() {
-                    t
-                } else {
-                    t.on_toggle(|v| Message::Preference(PreferenceMessage::SetAlwaysOnTop(v)))
-                }
-            }
-            .into(),
-            theme,
-        ),
-        Space::new().height(PAD),
-        setting(
-            "UI scale",
-            "Scale the application interface",
-            ScaleEntry::new(pending.ui_scale, |v| {
-                Message::Preference(PreferenceMessage::SetUiScale(v))
-            })
-            .into(),
-            theme,
-        ),
-        Space::new().height(PAD * 2.0),
-        section(
-            "Rendering",
-            "Reset rendering to defaults",
-            PreferenceMessage::ResetRendering,
-            theme
-        ),
-        Space::new().height(PAD),
-        setting(
-            "Autoplay animations",
-            "Automatically play animations when opened",
-            toggler(pending.autoplay)
-                .on_toggle(|v| Message::Preference(PreferenceMessage::SetAutoplay(v)))
-                .into(),
-            theme,
-        ),
-        Space::new().height(PAD),
-        setting(
-            "Remember last image",
-            "Open the last viewed image when no file is passed on launch",
-            toggler(pending.remember_last)
-                .on_toggle(|v| Message::Preference(PreferenceMessage::SetRememberLast(v)))
-                .into(),
-            theme,
-        ),
-        Space::new().height(PAD),
-        setting(
-            "Zoom out filtering",
-            "Trilinear mipmapping, pre-averages the image at smaller sizes to reduce aliasing (uses ~33% more VRAM, restart required)",
-            toggler(pending.mipmap_zoom_out)
-                .on_toggle(|v| Message::Preference(PreferenceMessage::SetMipmapZoomOut(v)))
-                .into(),
-            theme,
-        ),
-        Space::new().height(PAD),
-        setting(
-            "Zoom in filtering",
-            "Bilinear filtering, blends between neighbouring pixels when zoomed above 100%",
-            toggler(pending.smooth_zoom_in)
-                .on_toggle(|v| Message::Preference(PreferenceMessage::SetSmoothZoomIn(v)))
-                .into(),
-            theme,
-        ),
-        Space::new().height(PAD),
-        setting(
-            "Pixel preview size",
-            "Grid size of the zoomed pixel preview in the info panel",
-            pick_list(
-                PIXEL_PREVIEW_SIZE_OPTIONS,
-                Some(pending.pixel_preview_size),
-                |v| Message::Preference(PreferenceMessage::SetPixelPreviewSize(v)),
-            )
-            .text_size(12)
-            .into(),
-            theme,
-        ),
-        Space::new().height(PAD * 2.0),
-        section(
-            "Keybindings",
-            "Reset keybindings to defaults",
-            PreferenceMessage::ResetKeybindings,
-            theme
-        ),
-        Space::new().height(PAD),
-    ]
-    .extend(keybind_rows)
-    .spacing(PAD)
-    .padding(PAD * 3.0)
-    .width(Length::Fill);
+        true,
+    );
 
     column![
-        scrollable(content)
+        header,
+        row![sidebar, rule::vertical(1), content]
             .width(Length::Fill)
-            .height(Length::Fill)
-            .direction(Direction::Vertical(
-                Scrollbar::new().width(4).scroller_width(4),
-            )),
-        rule::horizontal(1),
-        action_buttons,
+            .height(Length::Fill),
+        footer,
     ]
     .width(Length::Fill)
     .height(Length::Fill)

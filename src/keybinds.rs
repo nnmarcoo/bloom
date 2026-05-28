@@ -29,6 +29,34 @@ pub enum Action {
     TogglePlayback,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyCategory {
+    Navigation,
+    View,
+    Tools,
+    Playback,
+}
+
+impl KeyCategory {
+    pub fn all() -> &'static [KeyCategory] {
+        &[
+            KeyCategory::Navigation,
+            KeyCategory::View,
+            KeyCategory::Tools,
+            KeyCategory::Playback,
+        ]
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            KeyCategory::Navigation => "Navigation",
+            KeyCategory::View => "View & Zoom",
+            KeyCategory::Tools => "Tools",
+            KeyCategory::Playback => "Playback",
+        }
+    }
+}
+
 impl Action {
     pub fn label_with_detail(&self) -> String {
         match self {
@@ -75,6 +103,28 @@ impl Action {
             Self::ToolDraw => "Switch to the draw tool",
             Self::ToolText => "Switch to the text tool",
             Self::TogglePlayback => "Pause or resume animation playback",
+        }
+    }
+
+    pub fn category(&self) -> KeyCategory {
+        match self {
+            Self::Next | Self::Previous | Self::ToggleFullscreen | Self::PasteFromClipboard => {
+                KeyCategory::Navigation
+            }
+            Self::RotateCw
+            | Self::RotateCcw
+            | Self::ZoomIn
+            | Self::ZoomOut
+            | Self::ZoomFit
+            | Self::ZoomPreset(_)
+            | Self::FocusScale
+            | Self::UiScaleUp
+            | Self::UiScaleDown
+            | Self::UiScaleReset => KeyCategory::View,
+            Self::ToolSelect | Self::ToolCrop | Self::ToolDraw | Self::ToolText => {
+                KeyCategory::Tools
+            }
+            Self::TogglePlayback => KeyCategory::Playback,
         }
     }
 
