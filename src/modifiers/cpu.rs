@@ -42,9 +42,13 @@ pub(crate) fn apply_single(
             saturation,
             lightness,
         } => {
-            let [h, s, l] = rgb_to_hsl([c[0], c[1], c[2]]);
+            let [h, s, l] = rgb_to_hsl([
+                c[0].clamp(0.0, 1.0),
+                c[1].clamp(0.0, 1.0),
+                c[2].clamp(0.0, 1.0),
+            ]);
             let rgb = hsl_to_rgb([
-                (h + hue / 360.0).fract(),
+                (h + hue / 360.0).rem_euclid(1.0),
                 (s + saturation).clamp(0.0, 1.0),
                 (l + lightness).clamp(0.0, 1.0),
             ]);
@@ -69,7 +73,9 @@ pub(crate) fn apply_single(
             c[2] *= factor;
         }
         ModifierKind::Threshold { cutoff } => {
-            let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+            let luma = c[0].clamp(0.0, 1.0) * 0.2126
+                + c[1].clamp(0.0, 1.0) * 0.7152
+                + c[2].clamp(0.0, 1.0) * 0.0722;
             let v = if luma >= *cutoff { 1.0 } else { 0.0 };
             c[0] = v;
             c[1] = v;
@@ -78,22 +84,25 @@ pub(crate) fn apply_single(
         ModifierKind::Posterize { levels } => {
             let l = (*levels as f32 - 1.0).max(1.0);
             for v in c.iter_mut().take(3) {
-                *v = (*v * l + 0.5).floor() / l;
+                *v = ((*v).clamp(0.0, 1.0) * l + 0.5).floor() / l;
             }
         }
         ModifierKind::Vibrance {
             vibrance,
             saturation,
         } => {
-            let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
-            let max_c = c[0].max(c[1]).max(c[2]);
-            let sat_proxy = max_c - c[0].min(c[1]).min(c[2]);
+            let cc = [
+                c[0].clamp(0.0, 1.0),
+                c[1].clamp(0.0, 1.0),
+                c[2].clamp(0.0, 1.0),
+            ];
+            let luma = cc[0] * 0.2126 + cc[1] * 0.7152 + cc[2] * 0.0722;
+            let max_c = cc[0].max(cc[1]).max(cc[2]);
+            let sat_proxy = max_c - cc[0].min(cc[1]).min(cc[2]);
             let vib_amount = vibrance * (1.0 - sat_proxy);
-            for v in c.iter_mut().take(3) {
-                *v = luma + (*v - luma) * (1.0 + vib_amount);
-            }
-            for v in c.iter_mut().take(3) {
-                *v = luma + (*v - luma) * (1.0 + saturation);
+            for (v, &base) in c.iter_mut().take(3).zip(cc.iter()) {
+                let after_vib = luma + (base - luma) * (1.0 + vib_amount);
+                *v = luma + (after_vib - luma) * (1.0 + saturation);
             }
         }
         ModifierKind::ColorBalance {
@@ -125,11 +134,13 @@ pub(crate) fn apply_single(
             let wy = fy * fy * (3.0 - 2.0 * fy) * (1.0 - t) + if fy >= 0.5 { 1.0 } else { 0.0 } * t;
             let noise =
                 (n00 * (1.0 - wx) + n10 * wx) * (1.0 - wy) + (n01 * (1.0 - wx) + n11 * wx) * wy;
-            let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+            let luma = c[0].clamp(0.0, 1.0) * 0.2126
+                + c[1].clamp(0.0, 1.0) * 0.7152
+                + c[2].clamp(0.0, 1.0) * 0.0722;
             let luma_weight = 4.0 * luma * (1.0 - luma);
             let grain = (noise - 0.5) * amount * luma_weight;
             for v in c.iter_mut().take(3) {
-                *v = (*v + grain).clamp(0.0, 1.0);
+                *v += grain;
             }
         }
         ModifierKind::Halftone { size, angle } => {
@@ -142,7 +153,9 @@ pub(crate) fn apply_single(
             let cell_x = rot_x.floor() + 0.5;
             let cell_y = rot_y.floor() + 0.5;
             let dist = ((rot_x - cell_x).powi(2) + (rot_y - cell_y).powi(2)).sqrt();
-            let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+            let luma = c[0].clamp(0.0, 1.0) * 0.2126
+                + c[1].clamp(0.0, 1.0) * 0.7152
+                + c[2].clamp(0.0, 1.0) * 0.0722;
             let radius = luma.sqrt() * 0.5;
             let aa = 1.0 / size.max(1.0);
             let t = ((dist - (radius - aa)) / (2.0 * aa)).clamp(0.0, 1.0);
@@ -153,7 +166,7 @@ pub(crate) fn apply_single(
         }
         _ => {}
     }
-    c.map(|v| v.clamp(0.0, 1.0))
+    c
 }
 
 pub(crate) fn apply_modifiers(
@@ -195,7 +208,7 @@ pub(crate) fn apply_modifiers(
             c = apply_single(&m.kind, img_w, img_h, uv, c);
         }
     }
-    c
+    c.map(|v| v.clamp(0.0, 1.0))
 }
 
 pub(crate) fn pixel_to_f32(p: &[u8]) -> [f32; 4] {

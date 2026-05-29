@@ -30,7 +30,7 @@ pub struct ViewPrimitive {
     pub mipmap_zoom_out: bool,
     pub smooth_zoom_in: bool,
     pub modifiers: Vec<Modifier>,
-    pub dirty_from: Option<usize>,
+    pub dirty: bool,
     pub pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -74,7 +74,7 @@ impl Primitive for ViewPrimitive {
         if self.show_checkerboard {
             pipeline.update_checkerboard(queue, self.checker_uniforms);
         }
-        pipeline.prepare_modifiers(device, queue, &self.modifiers, self.dirty_from);
+        pipeline.prepare_modifiers(device, queue, &self.modifiers, self.dirty);
     }
 
     fn render(

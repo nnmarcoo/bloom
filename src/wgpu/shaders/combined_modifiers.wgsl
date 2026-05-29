@@ -106,10 +106,10 @@ fn apply_entry(e: ModEntry, tile_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
         case 3u: {
             var rgb = c.rgb + p0;
             rgb = (rgb - 0.5) * (1.0 + p1) + 0.5;
-            c = clamp(vec4<f32>(rgb, c.a), vec4<f32>(0.0), vec4<f32>(1.0));
+            c = vec4<f32>(rgb, c.a);
         }
         case 4u: {
-            var hsl = rgb_to_hsl(c.rgb);
+            var hsl = rgb_to_hsl(clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0)));
             hsl.x = fract(hsl.x + p0 / 360.0);
             hsl.y = clamp(hsl.y + p1, 0.0, 1.0);
             hsl.z = clamp(hsl.z + p2, 0.0, 1.0);
@@ -124,24 +124,25 @@ fn apply_entry(e: ModEntry, tile_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
         }
         case 6u: {
             let l = max(p0 - 1.0, 1.0);
-            c = vec4<f32>(floor(c.rgb * l + 0.5) / l, c.a);
+            c = vec4<f32>(floor(clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * l + 0.5) / l, c.a);
         }
         case 7u: {
-            let luma = dot(c.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+            let luma = dot(clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.2126, 0.7152, 0.0722));
             let v = select(0.0, 1.0, luma >= p0);
             c = vec4<f32>(v, v, v, c.a);
         }
         case 8u: {
-            let luma = dot(c.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
-            let mx = max(max(c.r, c.g), c.b);
-            let sat_proxy = mx - min(min(c.r, c.g), c.b);
+            let cin = clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+            let luma = dot(cin, vec3<f32>(0.2126, 0.7152, 0.0722));
+            let mx = max(max(cin.r, cin.g), cin.b);
+            let sat_proxy = mx - min(min(cin.r, cin.g), cin.b);
             let vib_amount = p0 * (1.0 - sat_proxy);
-            var rgb = mix(vec3<f32>(luma), c.rgb, 1.0 + vib_amount);
+            var rgb = mix(vec3<f32>(luma), cin, 1.0 + vib_amount);
             rgb = mix(vec3<f32>(luma), rgb, 1.0 + p1);
-            c = clamp(vec4<f32>(rgb, c.a), vec4<f32>(0.0), vec4<f32>(1.0));
+            c = vec4<f32>(rgb, c.a);
         }
         case 9u: {
-            c = clamp(vec4<f32>(c.r + p0, c.g + p1, c.b + p2, c.a), vec4<f32>(0.0), vec4<f32>(1.0));
+            c = vec4<f32>(c.r + p0, c.g + p1, c.b + p2, c.a);
         }
         case 10u: {
             let full_px_x = p4 + tile_uv.x * p6;
@@ -162,10 +163,10 @@ fn apply_entry(e: ModEntry, tile_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
             let wx = mix(fx * fx * (3.0 - 2.0 * fx), step(0.5, fx), t);
             let wy = mix(fy * fy * (3.0 - 2.0 * fy), step(0.5, fy), t);
             let noise = mix(mix(n00, n10, wx), mix(n01, n11, wx), wy);
-            let luma = dot(c.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+            let luma = dot(clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.2126, 0.7152, 0.0722));
             let luma_weight = 4.0 * luma * (1.0 - luma);
             let grain = (noise - 0.5) * p0 * luma_weight;
-            c = clamp(vec4<f32>(c.rgb + grain, c.a), vec4<f32>(0.0), vec4<f32>(1.0));
+            c = vec4<f32>(c.rgb + grain, c.a);
         }
         case 16u: {
             let full_uv = tile_uv * vec2<f32>(p4, p5) + vec2<f32>(p2, p3);
@@ -177,7 +178,7 @@ fn apply_entry(e: ModEntry, tile_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
             ) / max(p0, 0.001);
             let cell = floor(rot_uv) + 0.5;
             let dist = length(rot_uv - cell);
-            let luma = dot(c.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+            let luma = dot(clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.2126, 0.7152, 0.0722));
             let radius = sqrt(luma) * 0.5;
             let aa = fwidth(dist) * 0.5;
             let dot_val = 1.0 - smoothstep(radius - aa, radius + aa, dist);
@@ -186,7 +187,7 @@ fn apply_entry(e: ModEntry, tile_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
         default: {}
     }
 
-    return clamp(c, vec4<f32>(0.0), vec4<f32>(1.0));
+    return c;
 }
 
 @fragment

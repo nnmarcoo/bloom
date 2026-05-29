@@ -500,7 +500,7 @@ impl App {
                                 height: ih,
                             }));
                         self.active_modifier = Some(idx);
-                        self.program.mark_dirty(idx);
+                        self.program.mark_dirty();
                     }
                     self.program.fit();
                 } else if was_crop {
@@ -533,7 +533,7 @@ impl App {
                     let m = self.program.modifiers.remove(src);
                     let insert_at = if tgt > src { tgt - 1 } else { tgt };
                     self.program.modifiers.insert(insert_at, m);
-                    self.program.mark_dirty(src.min(insert_at));
+                    self.program.mark_dirty();
                     if let Some(active) = self.active_modifier {
                         self.active_modifier = Some(if active == src {
                             insert_at
@@ -580,12 +580,12 @@ impl App {
                     self.program.modifiers.push(Modifier::new(kind));
                     let idx = self.program.modifiers.len() - 1;
                     self.active_modifier = Some(idx);
-                    self.program.mark_dirty(idx);
+                    self.program.mark_dirty();
                 }
             }
             Message::RemoveModifier(i) => {
                 if i < self.program.modifiers.len() {
-                    self.program.mark_dirty(i);
+                    self.program.mark_dirty();
                     self.program.modifiers.remove(i);
                     self.active_modifier = match self.active_modifier {
                         Some(a) if a == i => None,
@@ -603,14 +603,14 @@ impl App {
                 if let Some(m) = self.program.modifiers.get_mut(i) {
                     m.enabled = !m.enabled;
                 }
-                self.program.mark_dirty(i);
+                self.program.mark_dirty();
             }
             Message::UpdateModifier(i, param) => {
                 let img_size = self.program.image_size();
                 if let Some(m) = self.program.modifiers.get_mut(i) {
                     m.apply_param(param, img_size);
                 }
-                self.program.mark_dirty(i);
+                self.program.mark_dirty();
             }
             Message::SetCropRect(i, x, y, w, h) => {
                 if let Some(m) = self.program.modifiers.get_mut(i)
@@ -626,7 +626,7 @@ impl App {
                     *cw = w;
                     *ch = h;
                 }
-                self.program.mark_dirty(i);
+                self.program.mark_dirty();
             }
             Message::ExportImage => {
                 if let Some(data) = self.program.export_data() {

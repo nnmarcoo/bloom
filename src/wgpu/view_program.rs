@@ -78,7 +78,7 @@ pub struct ViewProgram {
     rotation: u8,
     pub modifiers: Vec<Modifier>,
     pub crop_tool_active: bool,
-    dirty_from: Arc<Mutex<Option<usize>>>,
+    dirty: Arc<std::sync::atomic::AtomicBool>,
     pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
     histogram_cache: Arc<Mutex<Option<HistogramCacheEntry>>>,
 }
@@ -107,7 +107,7 @@ impl Default for ViewProgram {
             uploaded_mipmap_zoom_out: true,
             modifiers: Vec::new(),
             crop_tool_active: false,
-            dirty_from: Arc::new(Mutex::new(None)),
+            dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pre_clear_gpu: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             histogram_cache: Arc::new(Mutex::new(None)),
         }
@@ -115,9 +115,8 @@ impl Default for ViewProgram {
 }
 
 impl ViewProgram {
-    pub fn mark_dirty(&self, i: usize) {
-        let mut guard = self.dirty_from.lock().unwrap_or_else(|e| e.into_inner());
-        *guard = Some(guard.map_or(i, |p| p.min(i)));
+    pub fn mark_dirty(&self) {
+        self.dirty.store(true, std::sync::atomic::Ordering::Release);
     }
 
     fn reset_crop_to_image(&mut self) {
@@ -615,11 +614,7 @@ impl Program<Message> for ViewProgram {
             mipmap_zoom_out: self.mipmap_zoom_out,
             smooth_zoom_in: self.smooth_zoom_in,
             modifiers: self.modifiers.clone(),
-            dirty_from: self
-                .dirty_from
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .take(),
+            dirty: self.dirty.swap(false, std::sync::atomic::Ordering::AcqRel),
             pre_clear_gpu: Arc::clone(&self.pre_clear_gpu),
         }
     }

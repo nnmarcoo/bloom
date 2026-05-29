@@ -177,7 +177,7 @@ impl ModifierPipeline {
         queue: &Queue,
         source: &TiledSource,
         modifiers: &[Modifier],
-        dirty_from: Option<usize>,
+        dirty: bool,
     ) {
         let n_tiles = source.tiles.len();
 
@@ -185,7 +185,7 @@ impl ModifierPipeline {
         self.tile_display_bgs_linear.resize_with(n_tiles, || None);
         self.tile_display_bgs_nearest.resize_with(n_tiles, || None);
 
-        if dirty_from.is_some() {
+        if dirty {
             for o in self.tile_outputs.iter_mut().flatten() {
                 o.valid = false;
             }

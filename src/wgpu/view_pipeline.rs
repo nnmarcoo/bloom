@@ -229,7 +229,7 @@ impl ViewPipeline {
         device: &Device,
         queue: &Queue,
         modifiers: &[Modifier],
-        dirty_from: Option<usize>,
+        dirty: bool,
     ) {
         let source = match &self.source {
             Some(s) => s,
@@ -253,10 +253,10 @@ impl ViewPipeline {
 
         if needs_create {
             let mut mp = ModifierPipeline::new(device, self.format, w, h);
-            mp.prepare(device, queue, source, modifiers, None);
+            mp.prepare(device, queue, source, modifiers, false);
             self.modifier_pipeline = Some(mp);
         } else if let Some(mp) = &mut self.modifier_pipeline {
-            mp.prepare(device, queue, source, modifiers, dirty_from);
+            mp.prepare(device, queue, source, modifiers, dirty);
         }
     }
 
