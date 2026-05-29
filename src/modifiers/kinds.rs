@@ -1,15 +1,17 @@
 use std::collections::hash_map::DefaultHasher;
 use std::f32::consts::PI;
 use std::hash::Hash;
+use std::ops::RangeInclusive;
 
 use iced::alignment::{Horizontal, Vertical};
-use iced::widget::{Column, column, row, slider, text, text_input};
+use iced::widget::{Column, column, row, text, text_input};
 use iced::{Element, Length, padding};
 
 use crate::app::Message;
 use crate::modifiers::cpu::{hash21, hsl_to_rgb, rgb_to_hsl};
 use crate::modifiers::gpu::{ModEntry, TileInfo, make_entry};
 use crate::modifiers::{ModifierImpl, ModifierParam, ids};
+use crate::widgets::value_slider::{Fmt, ValueSlider};
 
 const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
 
@@ -25,21 +27,22 @@ fn finish(col: Column<'_, Message>) -> Element<'_, Message> {
     col.spacing(4).padding(padding::top(4).bottom(2)).into()
 }
 
-fn param_row<'a>(
+fn value_row<'a>(
     label: &'a str,
-    slider_el: Element<'a, Message>,
-    value: String,
+    value: f32,
+    range: RangeInclusive<f32>,
+    step: f32,
+    fmt: Fmt,
+    on_change: impl Fn(f32) -> Message + 'static,
 ) -> Element<'a, Message> {
     row![
         text(label)
             .size(10)
             .width(Length::Fixed(58.0))
             .align_x(Horizontal::Left),
-        slider_el,
-        text(value)
-            .size(10)
-            .width(Length::Fixed(30.0))
-            .align_x(Horizontal::Right),
+        ValueSlider::new(value, range, on_change)
+            .step(step)
+            .format(fmt),
     ]
     .align_y(Vertical::Center)
     .spacing(4)
@@ -115,35 +118,29 @@ impl ModifierImpl for Levels {
         _rotation: u8,
     ) -> Element<'_, Message> {
         finish(column![
-            param_row(
+            value_row(
                 "Shadows",
-                slider(0.0f32..=2.0f32, self.shadows, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::LevelsShadows(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.shadows)
+                self.shadows,
+                0.0..=2.0,
+                0.01,
+                Fmt::num(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::LevelsShadows(v)),
             ),
-            param_row(
+            value_row(
                 "Midtones",
-                slider(0.0f32..=2.0f32, self.midtones, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::LevelsMidtones(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.midtones)
+                self.midtones,
+                0.0..=2.0,
+                0.01,
+                Fmt::num(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::LevelsMidtones(v)),
             ),
-            param_row(
+            value_row(
                 "Highlights",
-                slider(0.0f32..=2.0f32, self.highlights, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::LevelsHighlights(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.highlights)
+                self.highlights,
+                0.0..=2.0,
+                0.01,
+                Fmt::num(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::LevelsHighlights(v)),
             ),
         ])
     }
@@ -199,25 +196,21 @@ impl ModifierImpl for BrightnessContrast {
         _rotation: u8,
     ) -> Element<'_, Message> {
         finish(column![
-            param_row(
+            value_row(
                 "Brightness",
-                slider(-1.0f32..=1.0f32, self.brightness, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::Brightness(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:+.2}", self.brightness)
+                self.brightness,
+                -1.0..=1.0,
+                0.01,
+                Fmt::signed(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::Brightness(v)),
             ),
-            param_row(
+            value_row(
                 "Contrast",
-                slider(-1.0f32..=1.0f32, self.contrast, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::Contrast(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:+.2}", self.contrast)
+                self.contrast,
+                -1.0..=1.0,
+                0.01,
+                Fmt::signed(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::Contrast(v)),
             ),
         ])
     }
@@ -286,35 +279,29 @@ impl ModifierImpl for HueSaturation {
         _rotation: u8,
     ) -> Element<'_, Message> {
         finish(column![
-            param_row(
+            value_row(
                 "Hue",
-                slider(-180.0f32..=180.0f32, self.hue, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::Hue(v))
-                })
-                .step(0.5f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:+.0}\u{00b0}", self.hue)
+                self.hue,
+                -180.0..=180.0,
+                0.5,
+                Fmt::signed(0).suffix("\u{00b0}"),
+                move |v| Message::UpdateModifier(index, ModifierParam::Hue(v)),
             ),
-            param_row(
+            value_row(
                 "Saturation",
-                slider(-1.0f32..=1.0f32, self.saturation, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::Saturation(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:+.2}", self.saturation)
+                self.saturation,
+                -1.0..=1.0,
+                0.01,
+                Fmt::signed(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::Saturation(v)),
             ),
-            param_row(
+            value_row(
                 "Lightness",
-                slider(-1.0f32..=1.0f32, self.lightness, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::Lightness(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:+.2}", self.lightness)
+                self.lightness,
+                -1.0..=1.0,
+                0.01,
+                Fmt::signed(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::Lightness(v)),
             ),
         ])
     }
@@ -363,15 +350,13 @@ impl ModifierImpl for Exposure {
         _image_size: Option<(u32, u32)>,
         _rotation: u8,
     ) -> Element<'_, Message> {
-        finish(column![param_row(
+        finish(column![value_row(
             "Exposure",
-            slider(-5.0f32..=5.0f32, self.exposure, move |v| {
-                Message::UpdateModifier(index, ModifierParam::Exposure(v))
-            })
-            .step(0.01f32)
-            .width(Length::Fill)
-            .into(),
-            format!("{:+.2}", self.exposure)
+            self.exposure,
+            -5.0..=5.0,
+            0.01,
+            Fmt::signed(2),
+            move |v| Message::UpdateModifier(index, ModifierParam::Exposure(v)),
         )])
     }
 }
@@ -433,25 +418,21 @@ impl ModifierImpl for Vibrance {
         _rotation: u8,
     ) -> Element<'_, Message> {
         finish(column![
-            param_row(
+            value_row(
                 "Vibrance",
-                slider(-1.0f32..=1.0f32, self.vibrance, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::Vibrance(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:+.2}", self.vibrance)
+                self.vibrance,
+                -1.0..=1.0,
+                0.01,
+                Fmt::signed(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::Vibrance(v)),
             ),
-            param_row(
+            value_row(
                 "Saturation",
-                slider(-1.0f32..=1.0f32, self.saturation, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::VibranceSaturation(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:+.2}", self.saturation)
+                self.saturation,
+                -1.0..=1.0,
+                0.01,
+                Fmt::signed(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::VibranceSaturation(v)),
             ),
         ])
     }
@@ -510,35 +491,29 @@ impl ModifierImpl for ColorBalance {
         _rotation: u8,
     ) -> Element<'_, Message> {
         finish(column![
-            param_row(
+            value_row(
                 "Cyan / Red",
-                slider(-1.0f32..=1.0f32, self.cyan_red, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::ColorBalanceCyanRed(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:+.2}", self.cyan_red)
+                self.cyan_red,
+                -1.0..=1.0,
+                0.01,
+                Fmt::signed(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::ColorBalanceCyanRed(v)),
             ),
-            param_row(
+            value_row(
                 "Mag / Green",
-                slider(-1.0f32..=1.0f32, self.magenta_green, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::ColorBalanceMagentaGreen(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:+.2}", self.magenta_green)
+                self.magenta_green,
+                -1.0..=1.0,
+                0.01,
+                Fmt::signed(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::ColorBalanceMagentaGreen(v)),
             ),
-            param_row(
+            value_row(
                 "Yel / Blue",
-                slider(-1.0f32..=1.0f32, self.yellow_blue, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::ColorBalanceYellowBlue(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:+.2}", self.yellow_blue)
+                self.yellow_blue,
+                -1.0..=1.0,
+                0.01,
+                Fmt::signed(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::ColorBalanceYellowBlue(v)),
             ),
         ])
     }
@@ -581,15 +556,13 @@ impl ModifierImpl for GaussianBlur {
         _image_size: Option<(u32, u32)>,
         _rotation: u8,
     ) -> Element<'_, Message> {
-        finish(column![param_row(
+        finish(column![value_row(
             "Radius",
-            slider(0.0f32..=100.0f32, self.radius, move |v| {
-                Message::UpdateModifier(index, ModifierParam::GaussianBlurRadius(v))
-            })
-            .step(0.5f32)
-            .width(Length::Fill)
-            .into(),
-            format!("{:.1}", self.radius)
+            self.radius,
+            0.0..=100.0,
+            0.5,
+            Fmt::num(1),
+            move |v| Message::UpdateModifier(index, ModifierParam::GaussianBlurRadius(v)),
         )])
     }
 }
@@ -639,25 +612,21 @@ impl ModifierImpl for MotionBlur {
         _rotation: u8,
     ) -> Element<'_, Message> {
         finish(column![
-            param_row(
+            value_row(
                 "Angle",
-                slider(0.0f32..=360.0f32, self.angle, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::MotionBlurAngle(v))
-                })
-                .step(0.5f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.0}\u{00b0}", self.angle)
+                self.angle,
+                0.0..=360.0,
+                0.5,
+                Fmt::num(0).suffix("\u{00b0}"),
+                move |v| Message::UpdateModifier(index, ModifierParam::MotionBlurAngle(v)),
             ),
-            param_row(
+            value_row(
                 "Distance",
-                slider(0.0f32..=200.0f32, self.distance, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::MotionBlurDistance(v))
-                })
-                .step(0.5f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.0}", self.distance)
+                self.distance,
+                0.0..=200.0,
+                0.5,
+                Fmt::num(0),
+                move |v| Message::UpdateModifier(index, ModifierParam::MotionBlurDistance(v)),
             ),
         ])
     }
@@ -700,15 +669,13 @@ impl ModifierImpl for RadialBlur {
         _image_size: Option<(u32, u32)>,
         _rotation: u8,
     ) -> Element<'_, Message> {
-        finish(column![param_row(
+        finish(column![value_row(
             "Amount",
-            slider(0.0f32..=100.0f32, self.amount, move |v| {
-                Message::UpdateModifier(index, ModifierParam::RadialBlurAmount(v))
-            })
-            .step(0.5f32)
-            .width(Length::Fill)
-            .into(),
-            format!("{:.0}", self.amount)
+            self.amount,
+            0.0..=100.0,
+            0.5,
+            Fmt::num(0),
+            move |v| Message::UpdateModifier(index, ModifierParam::RadialBlurAmount(v)),
         )])
     }
 }
@@ -789,25 +756,21 @@ impl ModifierImpl for Halftone {
         _rotation: u8,
     ) -> Element<'_, Message> {
         finish(column![
-            param_row(
+            value_row(
                 "Size",
-                slider(2.0f32..=50.0f32, self.size, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::HalftoneSize(v))
-                })
-                .step(0.1f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.0}", self.size)
+                self.size,
+                2.0..=50.0,
+                0.1,
+                Fmt::num(0),
+                move |v| Message::UpdateModifier(index, ModifierParam::HalftoneSize(v)),
             ),
-            param_row(
+            value_row(
                 "Angle",
-                slider(0.0f32..=90.0f32, self.angle, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::HalftoneAngle(v))
-                })
-                .step(0.5f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.0}\u{00b0}", self.angle)
+                self.angle,
+                0.0..=90.0,
+                0.5,
+                Fmt::num(0).suffix("\u{00b0}"),
+                move |v| Message::UpdateModifier(index, ModifierParam::HalftoneAngle(v)),
             ),
         ])
     }
@@ -858,25 +821,21 @@ impl ModifierImpl for PixelSort {
         _rotation: u8,
     ) -> Element<'_, Message> {
         finish(column![
-            param_row(
+            value_row(
                 "Threshold",
-                slider(0.0f32..=1.0f32, self.threshold, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::PixelSortThreshold(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.threshold)
+                self.threshold,
+                0.0..=1.0,
+                0.01,
+                Fmt::num(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::PixelSortThreshold(v)),
             ),
-            param_row(
+            value_row(
                 "Angle",
-                slider(0.0f32..=360.0f32, self.angle, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::PixelSortAngle(v))
-                })
-                .step(0.5f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.0}\u{00b0}", self.angle)
+                self.angle,
+                0.0..=360.0,
+                0.5,
+                Fmt::num(0).suffix("\u{00b0}"),
+                move |v| Message::UpdateModifier(index, ModifierParam::PixelSortAngle(v)),
             ),
         ])
     }
@@ -960,35 +919,29 @@ impl ModifierImpl for Vignette {
         _rotation: u8,
     ) -> Element<'_, Message> {
         finish(column![
-            param_row(
+            value_row(
                 "Strength",
-                slider(0.0f32..=1.0f32, self.strength, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::VignetteStrength(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.strength)
+                self.strength,
+                0.0..=1.0,
+                0.01,
+                Fmt::num(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::VignetteStrength(v)),
             ),
-            param_row(
+            value_row(
                 "Size",
-                slider(0.0f32..=1.0f32, self.size, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::VignetteSize(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.size)
+                self.size,
+                0.0..=1.0,
+                0.01,
+                Fmt::num(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::VignetteSize(v)),
             ),
-            param_row(
+            value_row(
                 "Softness",
-                slider(0.0f32..=1.0f32, self.softness, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::VignetteSoftness(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.softness)
+                self.softness,
+                0.0..=1.0,
+                0.01,
+                Fmt::num(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::VignetteSoftness(v)),
             ),
         ])
     }
@@ -1048,15 +1001,13 @@ impl ModifierImpl for ChromaticAberration {
         _image_size: Option<(u32, u32)>,
         _rotation: u8,
     ) -> Element<'_, Message> {
-        finish(column![param_row(
+        finish(column![value_row(
             "Amount",
-            slider(0.0f32..=50.0f32, self.amount, move |v| {
-                Message::UpdateModifier(index, ModifierParam::ChromaticAberrationAmount(v))
-            })
-            .step(0.1f32)
-            .width(Length::Fill)
-            .into(),
-            format!("{:.1}", self.amount)
+            self.amount,
+            0.0..=50.0,
+            0.1,
+            Fmt::num(1),
+            move |v| Message::UpdateModifier(index, ModifierParam::ChromaticAberrationAmount(v)),
         )])
     }
 }
@@ -1106,14 +1057,13 @@ impl ModifierImpl for Posterize {
         _image_size: Option<(u32, u32)>,
         _rotation: u8,
     ) -> Element<'_, Message> {
-        finish(column![param_row(
+        finish(column![value_row(
             "Levels",
-            slider(2u32..=32u32, self.levels, move |v| {
-                Message::UpdateModifier(index, ModifierParam::PosterizeLevels(v))
-            })
-            .width(Length::Fill)
-            .into(),
-            self.levels.to_string()
+            self.levels as f32,
+            2.0..=32.0,
+            1.0,
+            Fmt::num(0),
+            move |v| Message::UpdateModifier(index, ModifierParam::PosterizeLevels(v.round() as u32)),
         )])
     }
 }
@@ -1164,15 +1114,13 @@ impl ModifierImpl for Threshold {
         _image_size: Option<(u32, u32)>,
         _rotation: u8,
     ) -> Element<'_, Message> {
-        finish(column![param_row(
+        finish(column![value_row(
             "Cutoff",
-            slider(0.0f32..=1.0f32, self.cutoff, move |v| {
-                Message::UpdateModifier(index, ModifierParam::ThresholdCutoff(v))
-            })
-            .step(0.01f32)
-            .width(Length::Fill)
-            .into(),
-            format!("{:.2}", self.cutoff)
+            self.cutoff,
+            0.0..=1.0,
+            0.01,
+            Fmt::num(2),
+            move |v| Message::UpdateModifier(index, ModifierParam::ThresholdCutoff(v)),
         )])
     }
 }
@@ -1269,45 +1217,37 @@ impl ModifierImpl for Grain {
         _rotation: u8,
     ) -> Element<'_, Message> {
         finish(column![
-            param_row(
+            value_row(
                 "Amount",
-                slider(0.0f32..=1.0f32, self.amount, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::GrainAmount(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.amount)
+                self.amount,
+                0.0..=1.0,
+                0.01,
+                Fmt::num(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::GrainAmount(v)),
             ),
-            param_row(
+            value_row(
                 "Size",
-                slider(0.5f32..=32.0f32, self.size, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::GrainSize(v))
-                })
-                .step(0.5f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.1}px", self.size)
+                self.size,
+                0.5..=32.0,
+                0.5,
+                Fmt::num(1).suffix("px"),
+                move |v| Message::UpdateModifier(index, ModifierParam::GrainSize(v)),
             ),
-            param_row(
+            value_row(
                 "Roughness",
-                slider(0.0f32..=1.0f32, self.roughness, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::GrainRoughness(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.roughness)
+                self.roughness,
+                0.0..=1.0,
+                0.01,
+                Fmt::num(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::GrainRoughness(v)),
             ),
-            param_row(
+            value_row(
                 "Seed",
-                slider(0.0f32..=99.0f32, self.seed, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::GrainSeed(v))
-                })
-                .step(1.0f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{}", self.seed as u32)
+                self.seed,
+                0.0..=99.0,
+                1.0,
+                Fmt::num(0),
+                move |v| Message::UpdateModifier(index, ModifierParam::GrainSeed(v)),
             ),
         ])
     }
@@ -1411,42 +1351,24 @@ impl ModifierImpl for Crop {
             )
         };
         finish(column![
-            param_row(
+            value_row(
                 "X",
-                slider(0.0f32..=(iw - 1.0).max(0.0), cx, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::CropX(v))
-                })
-                .step(1.0f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{}", cx as u32)
+                cx,
+                0.0..=(iw - 1.0).max(0.0),
+                1.0,
+                Fmt::num(0),
+                move |v| Message::UpdateModifier(index, ModifierParam::CropX(v)),
             ),
-            param_row(
+            value_row(
                 "Y",
-                slider(0.0f32..=(ih - 1.0).max(0.0), cy, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::CropY(v))
-                })
-                .step(1.0f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{}", cy as u32)
+                cy,
+                0.0..=(ih - 1.0).max(0.0),
+                1.0,
+                Fmt::num(0),
+                move |v| Message::UpdateModifier(index, ModifierParam::CropY(v)),
             ),
-            param_row(
-                "Width",
-                slider(1.0f32..=vis_w_max.max(1.0), vis_w, w_msg)
-                    .step(1.0f32)
-                    .width(Length::Fill)
-                    .into(),
-                format!("{}", vis_w as u32)
-            ),
-            param_row(
-                "Height",
-                slider(1.0f32..=vis_h_max.max(1.0), vis_h, h_msg)
-                    .step(1.0f32)
-                    .width(Length::Fill)
-                    .into(),
-                format!("{}", vis_h as u32)
-            ),
+            value_row("Width", vis_w, 1.0..=vis_w_max.max(1.0), 1.0, Fmt::num(0), w_msg),
+            value_row("Height", vis_h, 1.0..=vis_h_max.max(1.0), 1.0, Fmt::num(0), h_msg),
         ])
     }
 }
@@ -1528,86 +1450,45 @@ impl ModifierImpl for Text {
                 .on_input(move |v| Message::UpdateModifier(index, ModifierParam::TextContent(v)))
                 .size(11)
                 .padding([4, 6]),
-            param_row(
-                "X",
-                slider(0.0f32..=1.0f32, self.x, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::TextX(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.x)
-            ),
-            param_row(
-                "Y",
-                slider(0.0f32..=1.0f32, self.y, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::TextY(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.y)
-            ),
-            param_row(
+            value_row("X", self.x, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
+                Message::UpdateModifier(index, ModifierParam::TextX(v))
+            }),
+            value_row("Y", self.y, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
+                Message::UpdateModifier(index, ModifierParam::TextY(v))
+            }),
+            value_row(
                 "Size",
-                slider(4.0f32..=200.0f32, self.size, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::TextSize(v))
-                })
-                .step(0.5f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.0}", self.size)
+                self.size,
+                4.0..=200.0,
+                0.5,
+                Fmt::num(0),
+                move |v| Message::UpdateModifier(index, ModifierParam::TextSize(v)),
             ),
-            param_row(
+            value_row(
                 "Rotation",
-                slider(-180.0f32..=180.0f32, self.rotation, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::TextRotation(v))
-                })
-                .step(0.5f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.0}\u{00b0}", self.rotation)
+                self.rotation,
+                -180.0..=180.0,
+                0.5,
+                Fmt::num(0).suffix("\u{00b0}"),
+                move |v| Message::UpdateModifier(index, ModifierParam::TextRotation(v)),
             ),
-            param_row(
+            value_row(
                 "Opacity",
-                slider(0.0f32..=1.0f32, self.opacity, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::TextOpacity(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.opacity)
+                self.opacity,
+                0.0..=1.0,
+                0.01,
+                Fmt::num(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::TextOpacity(v)),
             ),
-            param_row(
-                "R",
-                slider(0.0f32..=1.0f32, self.r, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::TextR(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.r)
-            ),
-            param_row(
-                "G",
-                slider(0.0f32..=1.0f32, self.g, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::TextG(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.g)
-            ),
-            param_row(
-                "B",
-                slider(0.0f32..=1.0f32, self.b, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::TextB(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.b)
-            ),
+            value_row("R", self.r, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
+                Message::UpdateModifier(index, ModifierParam::TextR(v))
+            }),
+            value_row("G", self.g, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
+                Message::UpdateModifier(index, ModifierParam::TextG(v))
+            }),
+            value_row("B", self.b, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
+                Message::UpdateModifier(index, ModifierParam::TextB(v))
+            }),
         ])
     }
 }
@@ -1661,35 +1542,29 @@ impl ModifierImpl for Drawing {
         _rotation: u8,
     ) -> Element<'_, Message> {
         finish(column![
-            param_row(
+            value_row(
                 "Opacity",
-                slider(0.0f32..=1.0f32, self.opacity, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::DrawingOpacity(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.opacity)
+                self.opacity,
+                0.0..=1.0,
+                0.01,
+                Fmt::num(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::DrawingOpacity(v)),
             ),
-            param_row(
+            value_row(
                 "Size",
-                slider(1.0f32..=100.0f32, self.size, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::DrawingSize(v))
-                })
-                .step(0.5f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.0}", self.size)
+                self.size,
+                1.0..=100.0,
+                0.5,
+                Fmt::num(0),
+                move |v| Message::UpdateModifier(index, ModifierParam::DrawingSize(v)),
             ),
-            param_row(
+            value_row(
                 "Hardness",
-                slider(0.0f32..=1.0f32, self.hardness, move |v| {
-                    Message::UpdateModifier(index, ModifierParam::DrawingHardness(v))
-                })
-                .step(0.01f32)
-                .width(Length::Fill)
-                .into(),
-                format!("{:.2}", self.hardness)
+                self.hardness,
+                0.0..=1.0,
+                0.01,
+                Fmt::num(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::DrawingHardness(v)),
             ),
         ])
     }

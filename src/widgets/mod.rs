@@ -7,3 +7,4 @@ pub mod scale_entry;
 pub mod slide_in;
 pub mod theme_picker;
 pub mod timeline;
+pub mod value_slider;
