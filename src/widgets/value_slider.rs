@@ -4,12 +4,13 @@ use iced::advanced::text::{self, Paragraph, Text};
 use iced::advanced::widget::tree::{self, Tree};
 use iced::advanced::{self, Clipboard, Layout, Shell, Widget};
 use iced::alignment::{Horizontal, Vertical};
+use iced::gradient::Linear;
 use iced::keyboard::key::Named;
 use iced::keyboard::{self, Key};
 use iced::mouse;
 use iced::{
-    Background, Border, Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Renderer,
-    Size,
+    Background, Border, Color, Element, Event, Font, Gradient, Length, Pixels, Point, Radians,
+    Rectangle, Renderer, Size,
 };
 
 use crate::styles::radius;
@@ -57,12 +58,54 @@ impl Fmt {
 const DRAG_THRESHOLD: f32 = 3.0;
 const FINE_SENSITIVITY: f32 = 0.2;
 
+const fn rgb(r: f32, g: f32, b: f32) -> Color {
+    Color { r, g, b, a: 1.0 }
+}
+
+static HUE_STOPS: [(f32, Color); 7] = [
+    (0.0, rgb(1.0, 0.0, 0.0)),
+    (1.0 / 6.0, rgb(1.0, 1.0, 0.0)),
+    (2.0 / 6.0, rgb(0.0, 1.0, 0.0)),
+    (3.0 / 6.0, rgb(0.0, 1.0, 1.0)),
+    (4.0 / 6.0, rgb(0.0, 0.0, 1.0)),
+    (5.0 / 6.0, rgb(1.0, 0.0, 1.0)),
+    (1.0, rgb(1.0, 0.0, 0.0)),
+];
+static CYAN_RED: [(f32, Color); 2] = [(0.0, rgb(0.0, 0.8, 0.9)), (1.0, rgb(0.95, 0.15, 0.15))];
+static MAGENTA_GREEN: [(f32, Color); 2] = [(0.0, rgb(0.9, 0.1, 0.8)), (1.0, rgb(0.1, 0.8, 0.2))];
+static YELLOW_BLUE: [(f32, Color); 2] = [(0.0, rgb(0.95, 0.85, 0.1)), (1.0, rgb(0.15, 0.3, 0.95))];
+
+#[derive(Debug, Clone, Copy)]
+pub enum Track {
+    Fill,
+    Gradient(&'static [(f32, Color)]),
+}
+
+impl Track {
+    pub fn hue() -> Self {
+        Track::Gradient(&HUE_STOPS)
+    }
+
+    pub fn cyan_red() -> Self {
+        Track::Gradient(&CYAN_RED)
+    }
+
+    pub fn magenta_green() -> Self {
+        Track::Gradient(&MAGENTA_GREEN)
+    }
+
+    pub fn yellow_blue() -> Self {
+        Track::Gradient(&YELLOW_BLUE)
+    }
+}
+
 pub struct ValueSlider<Message> {
     value: f32,
     min: f32,
     max: f32,
     step: f32,
     fmt: Fmt,
+    track: Track,
     on_change: Box<dyn Fn(f32) -> Message>,
     height: f32,
     text_size: f32,
@@ -80,6 +123,7 @@ impl<Message> ValueSlider<Message> {
             max: *range.end(),
             step: 0.0,
             fmt: Fmt::num(2),
+            track: Track::Fill,
             on_change: Box::new(on_change),
             height: 16.0,
             text_size: 10.0,
@@ -93,6 +137,11 @@ impl<Message> ValueSlider<Message> {
 
     pub fn format(mut self, fmt: Fmt) -> Self {
         self.fmt = fmt;
+        self
+    }
+
+    pub fn track(mut self, track: Track) -> Self {
+        self.track = track;
         self
     }
 
@@ -379,26 +428,98 @@ where
         );
 
         if !editing {
-            let fill_w = (bounds.width * self.fraction()).round();
-            if fill_w > 0.0 {
-                renderer.fill_quad(
-                    Quad {
-                        bounds: Rectangle {
-                            width: fill_w,
-                            ..bounds
+            match self.track {
+                Track::Fill => {
+                    let fill_w = (bounds.width * self.fraction()).round();
+                    if fill_w > 0.0 {
+                        renderer.fill_quad(
+                            Quad {
+                                bounds: Rectangle {
+                                    width: fill_w,
+                                    ..bounds
+                                },
+                                border: Border {
+                                    radius: radius().into(),
+                                    ..Border::default()
+                                },
+                                ..Quad::default()
+                            },
+                            Background::Color(if active {
+                                palette.primary.base.color.scale_alpha(0.45)
+                            } else {
+                                palette.primary.base.color.scale_alpha(0.30)
+                            }),
+                        );
+                    }
+                }
+                Track::Gradient(stops) => {
+                    let mut linear = Linear::new(Radians(std::f32::consts::FRAC_PI_2));
+                    for (offset, color) in stops {
+                        linear = linear.add_stop(*offset, *color);
+                    }
+                    renderer.fill_quad(
+                        Quad {
+                            bounds,
+                            border: Border {
+                                radius: radius().into(),
+                                ..Border::default()
+                            },
+                            ..Quad::default()
                         },
-                        border: Border {
-                            radius: radius().into(),
-                            ..Border::default()
+                        Background::Gradient(Gradient::Linear(linear)),
+                    );
+
+                    let marker_x = (bounds.x + bounds.width * self.fraction())
+                        .clamp(bounds.x + 2.0, bounds.x + bounds.width - 2.0);
+                    renderer.fill_quad(
+                        Quad {
+                            bounds: Rectangle {
+                                x: marker_x - 2.0,
+                                y: bounds.y,
+                                width: 4.0,
+                                height: bounds.height,
+                            },
+                            border: Border {
+                                radius: 1.0.into(),
+                                ..Border::default()
+                            },
+                            ..Quad::default()
                         },
-                        ..Quad::default()
-                    },
-                    Background::Color(if active {
-                        palette.primary.base.color.scale_alpha(0.45)
-                    } else {
-                        palette.primary.base.color.scale_alpha(0.30)
-                    }),
-                );
+                        Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.5)),
+                    );
+                    renderer.fill_quad(
+                        Quad {
+                            bounds: Rectangle {
+                                x: marker_x - 1.0,
+                                y: bounds.y + 1.0,
+                                width: 2.0,
+                                height: bounds.height - 2.0,
+                            },
+                            ..Quad::default()
+                        },
+                        Background::Color(Color::WHITE),
+                    );
+
+                    let label = self.fmt.render(self.value);
+                    let pill_w = label.chars().count() as f32 * self.text_size * 0.62 + 8.0;
+                    let pill_h = self.text_size + 4.0;
+                    renderer.fill_quad(
+                        Quad {
+                            bounds: Rectangle {
+                                x: (bounds.center_x() - pill_w / 2.0).round(),
+                                y: (bounds.center_y() - pill_h / 2.0).round(),
+                                width: pill_w,
+                                height: pill_h,
+                            },
+                            border: Border {
+                                radius: 3.0.into(),
+                                ..Border::default()
+                            },
+                            ..Quad::default()
+                        },
+                        Background::Color(palette.background.base.color.scale_alpha(0.7)),
+                    );
+                }
             }
         }
 

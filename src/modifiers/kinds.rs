@@ -5,13 +5,14 @@ use std::ops::RangeInclusive;
 
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{Column, column, row, text, text_input};
-use iced::{Element, Length, padding};
+use iced::{Element, Length};
 
 use crate::app::Message;
 use crate::modifiers::cpu::{hash21, hsl_to_rgb, rgb_to_hsl};
 use crate::modifiers::gpu::{ModEntry, TileInfo, make_entry};
 use crate::modifiers::{ModifierImpl, ModifierParam, ids};
-use crate::widgets::value_slider::{Fmt, ValueSlider};
+use crate::widgets::angle_dial::AngleDial;
+use crate::widgets::value_slider::{Fmt, Track, ValueSlider};
 
 const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
 
@@ -24,7 +25,7 @@ fn clamped_luma(c: [f32; 4]) -> f32 {
 }
 
 fn finish(col: Column<'_, Message>) -> Element<'_, Message> {
-    col.spacing(4).padding(padding::top(4).bottom(2)).into()
+    col.spacing(6).into()
 }
 
 fn value_row<'a>(
@@ -43,6 +44,51 @@ fn value_row<'a>(
         ValueSlider::new(value, range, on_change)
             .step(step)
             .format(fmt),
+    ]
+    .align_y(Vertical::Center)
+    .spacing(4)
+    .into()
+}
+
+fn gradient_row<'a>(
+    label: &'a str,
+    value: f32,
+    range: RangeInclusive<f32>,
+    step: f32,
+    fmt: Fmt,
+    track: Track,
+    on_change: impl Fn(f32) -> Message + 'static,
+) -> Element<'a, Message> {
+    row![
+        text(label)
+            .size(10)
+            .width(Length::Fixed(58.0))
+            .align_x(Horizontal::Left),
+        ValueSlider::new(value, range, on_change)
+            .step(step)
+            .format(fmt)
+            .track(track),
+    ]
+    .align_y(Vertical::Center)
+    .spacing(4)
+    .into()
+}
+
+fn angle_row<'a>(
+    label: &'a str,
+    value: f32,
+    range: RangeInclusive<f32>,
+    on_change: impl Fn(f32) -> Message + Clone + 'static,
+) -> Element<'a, Message> {
+    row![
+        text(label)
+            .size(10)
+            .width(Length::Fixed(58.0))
+            .align_x(Horizontal::Left),
+        AngleDial::new(value, on_change.clone()),
+        ValueSlider::new(value, range, on_change)
+            .step(0.5)
+            .format(Fmt::num(0).suffix("\u{00b0}")),
     ]
     .align_y(Vertical::Center)
     .spacing(4)
@@ -279,12 +325,13 @@ impl ModifierImpl for HueSaturation {
         _rotation: u8,
     ) -> Element<'_, Message> {
         finish(column![
-            value_row(
+            gradient_row(
                 "Hue",
                 self.hue,
                 -180.0..=180.0,
                 0.5,
                 Fmt::signed(0).suffix("\u{00b0}"),
+                Track::hue(),
                 move |v| Message::UpdateModifier(index, ModifierParam::Hue(v)),
             ),
             value_row(
@@ -491,28 +538,31 @@ impl ModifierImpl for ColorBalance {
         _rotation: u8,
     ) -> Element<'_, Message> {
         finish(column![
-            value_row(
+            gradient_row(
                 "Cyan / Red",
                 self.cyan_red,
                 -1.0..=1.0,
                 0.01,
                 Fmt::signed(2),
+                Track::cyan_red(),
                 move |v| Message::UpdateModifier(index, ModifierParam::ColorBalanceCyanRed(v)),
             ),
-            value_row(
+            gradient_row(
                 "Mag / Green",
                 self.magenta_green,
                 -1.0..=1.0,
                 0.01,
                 Fmt::signed(2),
+                Track::magenta_green(),
                 move |v| Message::UpdateModifier(index, ModifierParam::ColorBalanceMagentaGreen(v)),
             ),
-            value_row(
+            gradient_row(
                 "Yel / Blue",
                 self.yellow_blue,
                 -1.0..=1.0,
                 0.01,
                 Fmt::signed(2),
+                Track::yellow_blue(),
                 move |v| Message::UpdateModifier(index, ModifierParam::ColorBalanceYellowBlue(v)),
             ),
         ])
@@ -612,14 +662,9 @@ impl ModifierImpl for MotionBlur {
         _rotation: u8,
     ) -> Element<'_, Message> {
         finish(column![
-            value_row(
-                "Angle",
-                self.angle,
-                0.0..=360.0,
-                0.5,
-                Fmt::num(0).suffix("\u{00b0}"),
-                move |v| Message::UpdateModifier(index, ModifierParam::MotionBlurAngle(v)),
-            ),
+            angle_row("Angle", self.angle, 0.0..=360.0, move |v| {
+                Message::UpdateModifier(index, ModifierParam::MotionBlurAngle(v))
+            }),
             value_row(
                 "Distance",
                 self.distance,
@@ -756,14 +801,9 @@ impl ModifierImpl for Halftone {
         _rotation: u8,
     ) -> Element<'_, Message> {
         finish(column![
-            value_row(
-                "Size",
-                self.size,
-                2.0..=50.0,
-                0.1,
-                Fmt::num(0),
-                move |v| Message::UpdateModifier(index, ModifierParam::HalftoneSize(v)),
-            ),
+            value_row("Size", self.size, 2.0..=50.0, 0.1, Fmt::num(0), move |v| {
+                Message::UpdateModifier(index, ModifierParam::HalftoneSize(v))
+            },),
             value_row(
                 "Angle",
                 self.angle,
@@ -829,14 +869,9 @@ impl ModifierImpl for PixelSort {
                 Fmt::num(2),
                 move |v| Message::UpdateModifier(index, ModifierParam::PixelSortThreshold(v)),
             ),
-            value_row(
-                "Angle",
-                self.angle,
-                0.0..=360.0,
-                0.5,
-                Fmt::num(0).suffix("\u{00b0}"),
-                move |v| Message::UpdateModifier(index, ModifierParam::PixelSortAngle(v)),
-            ),
+            angle_row("Angle", self.angle, 0.0..=360.0, move |v| {
+                Message::UpdateModifier(index, ModifierParam::PixelSortAngle(v))
+            }),
         ])
     }
 }
@@ -927,14 +962,9 @@ impl ModifierImpl for Vignette {
                 Fmt::num(2),
                 move |v| Message::UpdateModifier(index, ModifierParam::VignetteStrength(v)),
             ),
-            value_row(
-                "Size",
-                self.size,
-                0.0..=1.0,
-                0.01,
-                Fmt::num(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::VignetteSize(v)),
-            ),
+            value_row("Size", self.size, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
+                Message::UpdateModifier(index, ModifierParam::VignetteSize(v))
+            },),
             value_row(
                 "Softness",
                 self.softness,
@@ -1063,7 +1093,10 @@ impl ModifierImpl for Posterize {
             2.0..=32.0,
             1.0,
             Fmt::num(0),
-            move |v| Message::UpdateModifier(index, ModifierParam::PosterizeLevels(v.round() as u32)),
+            move |v| Message::UpdateModifier(
+                index,
+                ModifierParam::PosterizeLevels(v.round() as u32)
+            ),
         )])
     }
 }
@@ -1241,14 +1274,9 @@ impl ModifierImpl for Grain {
                 Fmt::num(2),
                 move |v| Message::UpdateModifier(index, ModifierParam::GrainRoughness(v)),
             ),
-            value_row(
-                "Seed",
-                self.seed,
-                0.0..=99.0,
-                1.0,
-                Fmt::num(0),
-                move |v| Message::UpdateModifier(index, ModifierParam::GrainSeed(v)),
-            ),
+            value_row("Seed", self.seed, 0.0..=99.0, 1.0, Fmt::num(0), move |v| {
+                Message::UpdateModifier(index, ModifierParam::GrainSeed(v))
+            },),
         ])
     }
 }
@@ -1367,8 +1395,22 @@ impl ModifierImpl for Crop {
                 Fmt::num(0),
                 move |v| Message::UpdateModifier(index, ModifierParam::CropY(v)),
             ),
-            value_row("Width", vis_w, 1.0..=vis_w_max.max(1.0), 1.0, Fmt::num(0), w_msg),
-            value_row("Height", vis_h, 1.0..=vis_h_max.max(1.0), 1.0, Fmt::num(0), h_msg),
+            value_row(
+                "Width",
+                vis_w,
+                1.0..=vis_w_max.max(1.0),
+                1.0,
+                Fmt::num(0),
+                w_msg
+            ),
+            value_row(
+                "Height",
+                vis_h,
+                1.0..=vis_h_max.max(1.0),
+                1.0,
+                Fmt::num(0),
+                h_msg
+            ),
         ])
     }
 }
@@ -1456,14 +1498,9 @@ impl ModifierImpl for Text {
             value_row("Y", self.y, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
                 Message::UpdateModifier(index, ModifierParam::TextY(v))
             }),
-            value_row(
-                "Size",
-                self.size,
-                4.0..=200.0,
-                0.5,
-                Fmt::num(0),
-                move |v| Message::UpdateModifier(index, ModifierParam::TextSize(v)),
-            ),
+            value_row("Size", self.size, 4.0..=200.0, 0.5, Fmt::num(0), move |v| {
+                Message::UpdateModifier(index, ModifierParam::TextSize(v))
+            },),
             value_row(
                 "Rotation",
                 self.rotation,
@@ -1550,14 +1587,9 @@ impl ModifierImpl for Drawing {
                 Fmt::num(2),
                 move |v| Message::UpdateModifier(index, ModifierParam::DrawingOpacity(v)),
             ),
-            value_row(
-                "Size",
-                self.size,
-                1.0..=100.0,
-                0.5,
-                Fmt::num(0),
-                move |v| Message::UpdateModifier(index, ModifierParam::DrawingSize(v)),
-            ),
+            value_row("Size", self.size, 1.0..=100.0, 0.5, Fmt::num(0), move |v| {
+                Message::UpdateModifier(index, ModifierParam::DrawingSize(v))
+            },),
             value_row(
                 "Hardness",
                 self.hardness,

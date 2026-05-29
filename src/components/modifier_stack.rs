@@ -79,8 +79,8 @@ fn icon_btn<'a>(icon: &'static [u8], msg: Message) -> Element<'a, Message> {
     button(
         svg(Handle::from_memory(icon))
             .style(svg_style)
-            .width(Length::Fixed(20.0))
-            .height(Length::Fixed(20.0)),
+            .width(Length::Fixed(18.0))
+            .height(Length::Fixed(18.0)),
     )
     .padding(Padding::from([1, 1]))
     .style(plain_icon_button_style)
@@ -112,8 +112,8 @@ fn card<'a>(
             "../../assets/icons/grip.svg"
         )))
         .style(svg_style)
-        .width(Length::Fixed(20.0))
-        .height(Length::Fixed(20.0)),
+        .width(Length::Fixed(18.0))
+        .height(Length::Fixed(18.0)),
     )
     .on_press(Message::StartModifierDrag(index))
     .interaction(if dragging {
@@ -125,7 +125,13 @@ fn card<'a>(
     let header = row![
         grip,
         icon_btn(arrow_icon, Message::ToggleModifierExpanded(index)),
-        text(modifier.kind.name()).size(11).width(Length::Fill),
+        container(
+            text(modifier.kind.name())
+                .size(10)
+                .wrapping(text::Wrapping::None),
+        )
+        .width(Length::Fill)
+        .clip(true),
         icon_btn(circle_icon, Message::ToggleModifierEnabled(index)),
         icon_btn(
             include_bytes!("../../assets/icons/close.svg"),
@@ -135,7 +141,7 @@ fn card<'a>(
     .align_y(Vertical::Center)
     .spacing(2);
 
-    let mut card_col = column![header];
+    let mut card_col = column![header].spacing(5);
 
     if modifier.expanded {
         card_col = card_col.push(rule::horizontal(1));
@@ -149,7 +155,7 @@ fn card<'a>(
             } else {
                 modifier_card_style
             })
-            .padding([3.0, PAD])
+            .padding([6.0, PAD])
             .width(Length::Fill),
     )
     .on_release(Message::SetActiveModifier(index))

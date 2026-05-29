@@ -1,3 +1,4 @@
+pub mod angle_dial;
 pub mod crop_overlay;
 pub mod histogram;
 pub mod loading_spinner;
