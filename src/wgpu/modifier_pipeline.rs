@@ -8,7 +8,7 @@ use iced::wgpu::{
 use crate::{
     modifiers::{
         Modifier,
-        gpu::{ModUniforms, TileInfo, build_mod_uniforms},
+        gpu::{ModUniforms, TileInfo, build_segment_uniforms},
     },
     wgpu::{
         gpu,
@@ -96,10 +96,55 @@ struct TileOutput {
     height: u32,
 }
 
+struct ScratchTarget {
+    _tex: Texture,
+    view: TextureView,
+    width: u32,
+    height: u32,
+}
+
+impl ScratchTarget {
+    fn new(device: &Device, format: TextureFormat, width: u32, height: u32) -> Self {
+        let tex = gpu::texture_2d(
+            device,
+            width,
+            height,
+            format,
+            TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            Some("modifier-scratch"),
+        );
+        let view = tex.create_view(&Default::default());
+        Self {
+            _tex: tex,
+            view,
+            width,
+            height,
+        }
+    }
+}
+
+fn segment_modifiers(modifiers: &[Modifier]) -> Vec<Vec<&Modifier>> {
+    let mut segments: Vec<Vec<&Modifier>> = Vec::new();
+    let mut current: Vec<&Modifier> = Vec::new();
+    for m in modifiers.iter().filter(|m| m.has_visible_effect()) {
+        if m.kind.is_resampling() && !current.is_empty() {
+            segments.push(std::mem::take(&mut current));
+        }
+        current.push(m);
+    }
+    if !current.is_empty() {
+        segments.push(current);
+    }
+    segments
+}
+
 pub struct ModifierPipeline {
     tile_outputs: Vec<Option<TileOutput>>,
     tile_display_bgs_linear: Vec<Option<BindGroup>>,
     tile_display_bgs_nearest: Vec<Option<BindGroup>>,
+
+    scratch_a: Option<ScratchTarget>,
+    scratch_b: Option<ScratchTarget>,
 
     combined: CombinedPass,
     display_bgl: BindGroupLayout,
@@ -152,6 +197,8 @@ impl ModifierPipeline {
             tile_outputs: Vec::new(),
             tile_display_bgs_linear: Vec::new(),
             tile_display_bgs_nearest: Vec::new(),
+            scratch_a: None,
+            scratch_b: None,
             combined: CombinedPass::new(device, format),
             display_bgl,
             trilinear_sampler,
@@ -168,6 +215,17 @@ impl ModifierPipeline {
             self.tile_display_bgs_nearest.get(i)?.as_ref()
         } else {
             self.tile_display_bgs_linear.get(i)?.as_ref()
+        }
+    }
+
+    fn ensure_scratch(&mut self, device: &Device, w: u32, h: u32) {
+        let stale =
+            |s: &Option<ScratchTarget>| s.as_ref().is_none_or(|t| t.width != w || t.height != h);
+        if stale(&self.scratch_a) {
+            self.scratch_a = Some(ScratchTarget::new(device, self.format, w, h));
+        }
+        if stale(&self.scratch_b) {
+            self.scratch_b = Some(ScratchTarget::new(device, self.format, w, h));
         }
     }
 
@@ -193,6 +251,8 @@ impl ModifierPipeline {
 
         let physical_scale = source.physical_scale;
         let downscale = physical_scale < 1.0;
+
+        let mut segments: Option<Vec<Vec<&Modifier>>> = None;
 
         for ti in 0..n_tiles {
             let tile = &source.tiles[ti];
@@ -257,26 +317,39 @@ impl ModifierPipeline {
                     full_h: source.full_height,
                 };
 
-                let uniforms = build_mod_uniforms(modifiers, &tile_info);
-                self.combined.write_uniforms(queue, &uniforms);
+                let segs = segments.get_or_insert_with(|| segment_modifiers(modifiers));
+                let n_seg = segs.len();
+                if n_seg > 1 {
+                    self.ensure_scratch(device, eff_w, eff_h);
+                }
 
-                let mut encoder =
-                    device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
-                        label: Some(&format!("modifier-tile{ti}-encoder")),
-                    });
-
+                let combined = &self.combined;
+                let sampler = &self.trilinear_sampler;
                 let output_view = &self.tile_outputs[ti].as_ref().unwrap().view;
+                let mut prev: &TextureView = &tile.source_view;
+                for (k, seg) in segs.iter().enumerate() {
+                    let out: &TextureView = if k == n_seg - 1 {
+                        output_view
+                    } else if k % 2 == 0 {
+                        &self.scratch_a.as_ref().unwrap().view
+                    } else {
+                        &self.scratch_b.as_ref().unwrap().view
+                    };
 
-                self.combined.run(
-                    device,
-                    &mut encoder,
-                    &tile.source_view,
-                    output_view,
-                    &self.trilinear_sampler,
-                );
+                    let uniforms = build_segment_uniforms(seg, &tile_info);
+                    combined.write_uniforms(queue, &uniforms);
+
+                    let mut encoder =
+                        device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
+                            label: Some(&format!("modifier-tile{ti}-pass{k}-encoder")),
+                        });
+                    combined.run(device, &mut encoder, prev, out, sampler);
+                    queue.submit([encoder.finish()]);
+
+                    prev = out;
+                }
 
                 self.tile_outputs[ti].as_mut().unwrap().valid = true;
-                queue.submit([encoder.finish()]);
             }
 
             let output_view = &self.tile_outputs[ti].as_ref().unwrap().view;

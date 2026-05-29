@@ -1,5 +1,4 @@
 use std::collections::hash_map::DefaultHasher;
-use std::fmt;
 
 use iced::Element;
 
@@ -11,36 +10,35 @@ use crate::modifiers::kinds::{
     Threshold, Vibrance, Vignette,
 };
 
-/// Behaviour of a single modifier. Each modifier kind is a struct in
-/// [`crate::modifiers::kinds`] that implements this trait, so all of a
-/// modifier's logic (defaults, identity, GPU packing, CPU sampling, hashing and
-/// its UI) lives in one place.
 pub trait ModifierImpl {
     fn name(&self) -> &'static str;
 
-    /// Whether the modifier currently changes the image. Used to skip identity
-    /// modifiers on both the GPU and CPU paths.
     fn has_effect(&self) -> bool {
         true
     }
 
+    fn is_resampling(&self) -> bool {
+        false
+    }
+
     fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>);
 
-    /// Pack into a GPU `ModEntry`, or `None` if the modifier has no GPU pass.
     fn pack(&self, _tile: &TileInfo) -> Option<ModEntry> {
         None
     }
 
-    /// CPU evaluation for one pixel (used by the colour picker, histogram and
-    /// export). Returns the input unchanged for modifiers without a CPU path.
     fn apply_cpu(&self, _img_w: u32, _img_h: u32, _uv: [f32; 2], c: [f32; 4]) -> [f32; 4] {
         c
     }
 
     fn hash(&self, hasher: &mut DefaultHasher);
 
-    fn view(&self, index: usize, image_size: Option<(u32, u32)>, rotation: u8)
-    -> Element<'_, Message>;
+    fn view(
+        &self,
+        index: usize,
+        image_size: Option<(u32, u32)>,
+        rotation: u8,
+    ) -> Element<'_, Message>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,18 +62,6 @@ pub enum ModifierType {
     Crop,
     Text,
     Drawing,
-}
-
-impl ModifierType {
-    pub fn name(&self) -> &'static str {
-        ModifierKind::from(self.clone()).name()
-    }
-}
-
-impl fmt::Display for ModifierType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name())
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -181,6 +167,10 @@ impl ModifierKind {
 
     pub fn has_effect(&self) -> bool {
         self.as_impl().has_effect()
+    }
+
+    pub fn is_resampling(&self) -> bool {
+        self.as_impl().is_resampling()
     }
 
     pub fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>) {

@@ -40,11 +40,11 @@ pub(crate) fn make_entry(kind: u32, params: &[f32]) -> ModEntry {
     e
 }
 
-pub fn build_mod_uniforms(modifiers: &[Modifier], tile: &TileInfo) -> ModUniforms {
+pub fn build_segment_uniforms(segment: &[&Modifier], tile: &TileInfo) -> ModUniforms {
     let mut u = ModUniforms::zeroed();
-    for m in modifiers {
-        if !m.has_visible_effect() || u.count >= 32 {
-            continue;
+    for m in segment {
+        if u.count >= 32 {
+            break;
         }
         if let Some(entry) = m.kind.pack(tile) {
             u.entries[u.count as usize] = entry;

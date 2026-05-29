@@ -22,17 +22,23 @@ pub(crate) fn apply_modifiers(
                 (uv[0] - (uv[0] - 0.5) * scale).clamp(0.0, 1.0),
                 (uv[1] - (uv[1] - 0.5) * scale).clamp(0.0, 1.0),
             ];
-            let mut cr = sample_pixel(pixels, img_w, img_h, r_uv[0], r_uv[1]);
-            let mut cb = sample_pixel(pixels, img_w, img_h, b_uv[0], b_uv[1]);
-            for prev in &modifiers[..i] {
-                if !prev.has_visible_effect()
-                    || matches!(prev.kind, ModifierKind::ChromaticAberration(_))
-                {
-                    continue;
-                }
-                cr = prev.kind.apply_cpu(img_w, img_h, r_uv, cr);
-                cb = prev.kind.apply_cpu(img_w, img_h, b_uv, cb);
-            }
+            let prior = &modifiers[..i];
+            let cr = apply_modifiers(
+                prior,
+                pixels,
+                img_w,
+                img_h,
+                r_uv,
+                sample_pixel(pixels, img_w, img_h, r_uv[0], r_uv[1]),
+            );
+            let cb = apply_modifiers(
+                prior,
+                pixels,
+                img_w,
+                img_h,
+                b_uv,
+                sample_pixel(pixels, img_w, img_h, b_uv[0], b_uv[1]),
+            );
             c[0] = cr[0];
             c[2] = cb[2];
         } else {

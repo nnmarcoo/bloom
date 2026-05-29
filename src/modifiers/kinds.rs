@@ -17,6 +17,10 @@ fn hash_f32(v: f32, hasher: &mut DefaultHasher) {
     v.to_bits().hash(hasher);
 }
 
+fn clamped_luma(c: [f32; 4]) -> f32 {
+    c[0].clamp(0.0, 1.0) * LUMA[0] + c[1].clamp(0.0, 1.0) * LUMA[1] + c[2].clamp(0.0, 1.0) * LUMA[2]
+}
+
 fn finish(col: Column<'_, Message>) -> Element<'_, Message> {
     col.spacing(4).padding(padding::top(4).bottom(2)).into()
 }
@@ -41,10 +45,6 @@ fn param_row<'a>(
     .spacing(4)
     .into()
 }
-
-// ---------------------------------------------------------------------------
-// Levels
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub struct Levels {
@@ -108,7 +108,12 @@ impl ModifierImpl for Levels {
         hash_f32(self.highlights, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![
             param_row(
                 "Shadows",
@@ -143,10 +148,6 @@ impl ModifierImpl for Levels {
         ])
     }
 }
-
-// ---------------------------------------------------------------------------
-// Brightness / Contrast
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Default)]
 pub struct BrightnessContrast {
@@ -191,7 +192,12 @@ impl ModifierImpl for BrightnessContrast {
         hash_f32(self.contrast, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![
             param_row(
                 "Brightness",
@@ -216,10 +222,6 @@ impl ModifierImpl for BrightnessContrast {
         ])
     }
 }
-
-// ---------------------------------------------------------------------------
-// Hue / Saturation
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Default)]
 pub struct HueSaturation {
@@ -277,7 +279,12 @@ impl ModifierImpl for HueSaturation {
         hash_f32(self.lightness, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![
             param_row(
                 "Hue",
@@ -312,10 +319,6 @@ impl ModifierImpl for HueSaturation {
         ])
     }
 }
-
-// ---------------------------------------------------------------------------
-// Exposure
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Default)]
 pub struct Exposure {
@@ -354,7 +357,12 @@ impl ModifierImpl for Exposure {
         hash_f32(self.exposure, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![param_row(
             "Exposure",
             slider(-5.0f32..=5.0f32, self.exposure, move |v| {
@@ -367,10 +375,6 @@ impl ModifierImpl for Exposure {
         )])
     }
 }
-
-// ---------------------------------------------------------------------------
-// Vibrance
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Default)]
 pub struct Vibrance {
@@ -422,7 +426,12 @@ impl ModifierImpl for Vibrance {
         hash_f32(self.saturation, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![
             param_row(
                 "Vibrance",
@@ -447,10 +456,6 @@ impl ModifierImpl for Vibrance {
         ])
     }
 }
-
-// ---------------------------------------------------------------------------
-// Color Balance
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Default)]
 pub struct ColorBalance {
@@ -498,7 +503,12 @@ impl ModifierImpl for ColorBalance {
         hash_f32(self.yellow_blue, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![
             param_row(
                 "Cyan / Red",
@@ -534,10 +544,6 @@ impl ModifierImpl for ColorBalance {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Gaussian Blur (UI scaffold; no GPU/CPU pass yet)
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone)]
 pub struct GaussianBlur {
     pub radius: f32,
@@ -569,7 +575,12 @@ impl ModifierImpl for GaussianBlur {
         hash_f32(self.radius, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![param_row(
             "Radius",
             slider(0.0f32..=100.0f32, self.radius, move |v| {
@@ -582,10 +593,6 @@ impl ModifierImpl for GaussianBlur {
         )])
     }
 }
-
-// ---------------------------------------------------------------------------
-// Motion Blur (UI scaffold)
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub struct MotionBlur {
@@ -625,7 +632,12 @@ impl ModifierImpl for MotionBlur {
         hash_f32(self.distance, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![
             param_row(
                 "Angle",
@@ -650,10 +662,6 @@ impl ModifierImpl for MotionBlur {
         ])
     }
 }
-
-// ---------------------------------------------------------------------------
-// Radial Blur (UI scaffold)
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub struct RadialBlur {
@@ -686,7 +694,12 @@ impl ModifierImpl for RadialBlur {
         hash_f32(self.amount, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![param_row(
             "Amount",
             slider(0.0f32..=100.0f32, self.amount, move |v| {
@@ -699,10 +712,6 @@ impl ModifierImpl for RadialBlur {
         )])
     }
 }
-
-// ---------------------------------------------------------------------------
-// Halftone
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub struct Halftone {
@@ -756,9 +765,7 @@ impl ModifierImpl for Halftone {
         let cell_x = rot_x.floor() + 0.5;
         let cell_y = rot_y.floor() + 0.5;
         let dist = ((rot_x - cell_x).powi(2) + (rot_y - cell_y).powi(2)).sqrt();
-        let luma = c[0].clamp(0.0, 1.0) * LUMA[0]
-            + c[1].clamp(0.0, 1.0) * LUMA[1]
-            + c[2].clamp(0.0, 1.0) * LUMA[2];
+        let luma = clamped_luma(c);
         let radius = luma.sqrt() * 0.5;
         let aa = 1.0 / self.size.max(1.0);
         let t = ((dist - (radius - aa)) / (2.0 * aa)).clamp(0.0, 1.0);
@@ -775,7 +782,12 @@ impl ModifierImpl for Halftone {
         hash_f32(self.angle, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![
             param_row(
                 "Size",
@@ -800,10 +812,6 @@ impl ModifierImpl for Halftone {
         ])
     }
 }
-
-// ---------------------------------------------------------------------------
-// Pixel Sort (UI scaffold)
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub struct PixelSort {
@@ -843,7 +851,12 @@ impl ModifierImpl for PixelSort {
         hash_f32(self.angle, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![
             param_row(
                 "Threshold",
@@ -868,10 +881,6 @@ impl ModifierImpl for PixelSort {
         ])
     }
 }
-
-// ---------------------------------------------------------------------------
-// Vignette
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub struct Vignette {
@@ -944,7 +953,12 @@ impl ModifierImpl for Vignette {
         hash_f32(self.softness, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![
             param_row(
                 "Strength",
@@ -980,10 +994,6 @@ impl ModifierImpl for Vignette {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Chromatic Aberration
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone)]
 pub struct ChromaticAberration {
     pub amount: f32,
@@ -1002,6 +1012,10 @@ impl ModifierImpl for ChromaticAberration {
 
     fn has_effect(&self) -> bool {
         self.amount != 0.0
+    }
+
+    fn is_resampling(&self) -> bool {
+        true
     }
 
     fn apply_param(&mut self, param: ModifierParam, _img_size: Option<(u32, u32)>) {
@@ -1023,15 +1037,17 @@ impl ModifierImpl for ChromaticAberration {
         ))
     }
 
-    // CPU evaluation is handled specially in `cpu::apply_modifiers` because it
-    // resamples neighbouring pixels; the default identity here is never used.
-
     fn hash(&self, hasher: &mut DefaultHasher) {
         13u8.hash(hasher);
         hash_f32(self.amount, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![param_row(
             "Amount",
             slider(0.0f32..=50.0f32, self.amount, move |v| {
@@ -1044,10 +1060,6 @@ impl ModifierImpl for ChromaticAberration {
         )])
     }
 }
-
-// ---------------------------------------------------------------------------
-// Posterize
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub struct Posterize {
@@ -1088,7 +1100,12 @@ impl ModifierImpl for Posterize {
         self.levels.hash(hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![param_row(
             "Levels",
             slider(2u32..=32u32, self.levels, move |v| {
@@ -1100,10 +1117,6 @@ impl ModifierImpl for Posterize {
         )])
     }
 }
-
-// ---------------------------------------------------------------------------
-// Threshold
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub struct Threshold {
@@ -1132,9 +1145,7 @@ impl ModifierImpl for Threshold {
     }
 
     fn apply_cpu(&self, _w: u32, _h: u32, _uv: [f32; 2], mut c: [f32; 4]) -> [f32; 4] {
-        let luma = c[0].clamp(0.0, 1.0) * LUMA[0]
-            + c[1].clamp(0.0, 1.0) * LUMA[1]
-            + c[2].clamp(0.0, 1.0) * LUMA[2];
+        let luma = clamped_luma(c);
         let v = if luma >= self.cutoff { 1.0 } else { 0.0 };
         c[0] = v;
         c[1] = v;
@@ -1147,7 +1158,12 @@ impl ModifierImpl for Threshold {
         hash_f32(self.cutoff, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![param_row(
             "Cutoff",
             slider(0.0f32..=1.0f32, self.cutoff, move |v| {
@@ -1160,10 +1176,6 @@ impl ModifierImpl for Threshold {
         )])
     }
 }
-
-// ---------------------------------------------------------------------------
-// Grain
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub struct Grain {
@@ -1232,11 +1244,8 @@ impl ModifierImpl for Grain {
         let t = self.roughness.clamp(0.0, 1.0);
         let wx = fx * fx * (3.0 - 2.0 * fx) * (1.0 - t) + if fx >= 0.5 { 1.0 } else { 0.0 } * t;
         let wy = fy * fy * (3.0 - 2.0 * fy) * (1.0 - t) + if fy >= 0.5 { 1.0 } else { 0.0 } * t;
-        let noise =
-            (n00 * (1.0 - wx) + n10 * wx) * (1.0 - wy) + (n01 * (1.0 - wx) + n11 * wx) * wy;
-        let luma = c[0].clamp(0.0, 1.0) * LUMA[0]
-            + c[1].clamp(0.0, 1.0) * LUMA[1]
-            + c[2].clamp(0.0, 1.0) * LUMA[2];
+        let noise = (n00 * (1.0 - wx) + n10 * wx) * (1.0 - wy) + (n01 * (1.0 - wx) + n11 * wx) * wy;
+        let luma = clamped_luma(c);
         let luma_weight = 4.0 * luma * (1.0 - luma);
         let grain = (noise - 0.5) * self.amount * luma_weight;
         for v in c.iter_mut().take(3) {
@@ -1253,7 +1262,12 @@ impl ModifierImpl for Grain {
         hash_f32(self.seed, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![
             param_row(
                 "Amount",
@@ -1298,10 +1312,6 @@ impl ModifierImpl for Grain {
         ])
     }
 }
-
-// ---------------------------------------------------------------------------
-// Crop (applied as a display-pass UV transform, not a GPU/CPU modifier)
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub struct Crop {
@@ -1367,7 +1377,12 @@ impl ModifierImpl for Crop {
         hash_f32(self.height, hasher);
     }
 
-    fn view(&self, index: usize, image_size: Option<(u32, u32)>, rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        image_size: Option<(u32, u32)>,
+        rotation: u8,
+    ) -> Element<'_, Message> {
         let (cx, cy, cw, ch) = (self.x, self.y, self.width, self.height);
         let (iw, ih) = image_size
             .map(|(w, h)| (w as f32, h as f32))
@@ -1436,10 +1451,6 @@ impl ModifierImpl for Crop {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Text (UI scaffold)
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone)]
 pub struct Text {
     pub content: String,
@@ -1506,7 +1517,12 @@ impl ModifierImpl for Text {
         hash_f32(self.b, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![
             text_input("Type something...", &self.content)
                 .on_input(move |v| Message::UpdateModifier(index, ModifierParam::TextContent(v)))
@@ -1596,10 +1612,6 @@ impl ModifierImpl for Text {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Drawing (UI scaffold)
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone)]
 pub struct Drawing {
     pub opacity: f32,
@@ -1642,7 +1654,12 @@ impl ModifierImpl for Drawing {
         hash_f32(self.hardness, hasher);
     }
 
-    fn view(&self, index: usize, _image_size: Option<(u32, u32)>, _rotation: u8) -> Element<'_, Message> {
+    fn view(
+        &self,
+        index: usize,
+        _image_size: Option<(u32, u32)>,
+        _rotation: u8,
+    ) -> Element<'_, Message> {
         finish(column![
             param_row(
                 "Opacity",

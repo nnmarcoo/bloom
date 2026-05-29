@@ -214,13 +214,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let r_tile = clamp((r_full - tile_origin) / tile_size, vec2<f32>(0.0), vec2<f32>(1.0));
             let b_tile = clamp((b_full - tile_origin) / tile_size, vec2<f32>(0.0), vec2<f32>(1.0));
 
-            var cr = textureSample(t_image, s_image, r_tile);
-            var cb = textureSample(t_image, s_image, b_tile);
-            for (var j = 0u; j < i; j++) {
-                cr = apply_entry(u.entries[j], r_tile, cr);
-                cb = apply_entry(u.entries[j], b_tile, cb);
-            }
-
+            let cr = textureSample(t_image, s_image, r_tile);
+            let cb = textureSample(t_image, s_image, b_tile);
             c = vec4<f32>(cr.r, c.g, cb.b, c.a);
         } else {
             c = apply_entry(e, in.uv, c);
