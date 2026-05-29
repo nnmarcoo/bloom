@@ -81,6 +81,14 @@ fn hash21(ix: i32, iy: i32, seed: i32) -> f32 {
     return f32(h) / 4294967295.0;
 }
 
+fn grain_value(cx: i32, cy: i32, wx: f32, wy: f32, seed: i32) -> f32 {
+    let n00 = hash21(cx,     cy,     seed);
+    let n10 = hash21(cx + 1, cy,     seed);
+    let n01 = hash21(cx,     cy + 1, seed);
+    let n11 = hash21(cx + 1, cy + 1, seed);
+    return mix(mix(n00, n10, wx), mix(n01, n11, wx), wy);
+}
+
 fn apply_entry(e: ModEntry, tile_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
     let kind = bitcast<u32>(e.data[0].x);
     let p0 = e.data[0].y;
@@ -91,6 +99,7 @@ fn apply_entry(e: ModEntry, tile_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
     let p5 = e.data[1].z;
     let p6 = e.data[1].w;
     let p7 = e.data[2].x;
+    let p8 = e.data[2].y;
     var c = c_in;
 
     switch kind {
@@ -145,27 +154,32 @@ fn apply_entry(e: ModEntry, tile_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
             c = vec4<f32>(c.r + p0, c.g + p1, c.b + p2, c.a);
         }
         case 10u: {
-            let full_px_x = p4 + tile_uv.x * p6;
-            let full_px_y = p5 + tile_uv.y * p7;
-            let iseed = i32(p3);
+            let full_px_x = p3 + tile_uv.x * p5;
+            let full_px_y = p4 + tile_uv.y * p6;
+            let iseed = i32(p2);
             let sz = max(p1, 0.5);
             let gx = full_px_x / sz;
             let gy = full_px_y / sz;
-            let cx = floor(gx);
-            let cy = floor(gy);
+            let cx = i32(floor(gx));
+            let cy = i32(floor(gy));
             let fx = fract(gx);
             let fy = fract(gy);
-            let n00 = hash21(i32(cx),     i32(cy),     iseed);
-            let n10 = hash21(i32(cx) + 1, i32(cy),     iseed);
-            let n01 = hash21(i32(cx),     i32(cy) + 1, iseed);
-            let n11 = hash21(i32(cx) + 1, i32(cy) + 1, iseed);
-            let t = clamp(p2, 0.0, 1.0);
-            let wx = mix(fx * fx * (3.0 - 2.0 * fx), step(0.5, fx), t);
-            let wy = mix(fy * fy * (3.0 - 2.0 * fy), step(0.5, fy), t);
-            let noise = mix(mix(n00, n10, wx), mix(n01, n11, wx), wy);
+            let wx = fx * fx * (3.0 - 2.0 * fx);
+            let wy = fy * fy * (3.0 - 2.0 * fy);
+            let mono = grain_value(cx, cy, wx, wy, iseed);
+            let color = clamp(p7, 0.0, 1.0);
+            let noise = mix(
+                vec3<f32>(mono),
+                vec3<f32>(
+                    grain_value(cx, cy, wx, wy, iseed + 101),
+                    grain_value(cx, cy, wx, wy, iseed + 211),
+                    grain_value(cx, cy, wx, wy, iseed + 307),
+                ),
+                color,
+            );
             let luma = dot(clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.2126, 0.7152, 0.0722));
-            let luma_weight = 4.0 * luma * (1.0 - luma);
-            let grain = (noise - 0.5) * p0 * luma_weight;
+            let luma_weight = mix(1.0, 4.0 * luma * (1.0 - luma), clamp(p8, 0.0, 1.0));
+            let grain = (noise - vec3<f32>(0.5)) * p0 * luma_weight;
             c = vec4<f32>(c.rgb + grain, c.a);
         }
         case 16u: {

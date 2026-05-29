@@ -1162,8 +1162,9 @@ impl ModifierImpl for Threshold {
 pub struct Grain {
     pub amount: f32,
     pub size: f32,
-    pub roughness: f32,
     pub seed: f32,
+    pub color: f32,
+    pub response: f32,
 }
 
 impl Default for Grain {
@@ -1171,8 +1172,9 @@ impl Default for Grain {
         Self {
             amount: 0.2,
             size: 1.0,
-            roughness: 0.5,
             seed: 0.0,
+            color: 0.0,
+            response: 0.5,
         }
     }
 }
@@ -1190,8 +1192,9 @@ impl ModifierImpl for Grain {
         match param {
             ModifierParam::GrainAmount(v) => self.amount = v,
             ModifierParam::GrainSize(v) => self.size = v,
-            ModifierParam::GrainRoughness(v) => self.roughness = v,
             ModifierParam::GrainSeed(v) => self.seed = v,
+            ModifierParam::GrainColor(v) => self.color = v,
+            ModifierParam::GrainResponse(v) => self.response = v,
             _ => {}
         }
     }
@@ -1202,12 +1205,13 @@ impl ModifierImpl for Grain {
             &[
                 self.amount,
                 self.size,
-                self.roughness,
                 self.seed,
                 tile.tile_x as f32,
                 tile.tile_y as f32,
                 tile.tile_w as f32,
                 tile.tile_h as f32,
+                self.color,
+                self.response,
             ],
         ))
     }
@@ -1216,21 +1220,29 @@ impl ModifierImpl for Grain {
         let gx = uv[0] * img_w as f32 / self.size.max(0.5);
         let gy = uv[1] * img_h as f32 / self.size.max(0.5);
         let iseed = self.seed as i32;
-        let (cx, cy) = (gx.floor(), gy.floor());
+        let (cx, cy) = (gx.floor() as i32, gy.floor() as i32);
         let (fx, fy) = (gx.fract(), gy.fract());
-        let n00 = hash21(cx as i32, cy as i32, iseed);
-        let n10 = hash21(cx as i32 + 1, cy as i32, iseed);
-        let n01 = hash21(cx as i32, cy as i32 + 1, iseed);
-        let n11 = hash21(cx as i32 + 1, cy as i32 + 1, iseed);
-        let t = self.roughness.clamp(0.0, 1.0);
-        let wx = fx * fx * (3.0 - 2.0 * fx) * (1.0 - t) + if fx >= 0.5 { 1.0 } else { 0.0 } * t;
-        let wy = fy * fy * (3.0 - 2.0 * fy) * (1.0 - t) + if fy >= 0.5 { 1.0 } else { 0.0 } * t;
-        let noise = (n00 * (1.0 - wx) + n10 * wx) * (1.0 - wy) + (n01 * (1.0 - wx) + n11 * wx) * wy;
+        let wx = fx * fx * (3.0 - 2.0 * fx);
+        let wy = fy * fy * (3.0 - 2.0 * fy);
+        let sample = |seed: i32| {
+            let n00 = hash21(cx, cy, seed);
+            let n10 = hash21(cx + 1, cy, seed);
+            let n01 = hash21(cx, cy + 1, seed);
+            let n11 = hash21(cx + 1, cy + 1, seed);
+            (n00 * (1.0 - wx) + n10 * wx) * (1.0 - wy) + (n01 * (1.0 - wx) + n11 * wx) * wy
+        };
+        let mono = sample(iseed);
+        let color = self.color.clamp(0.0, 1.0);
+        let noise = [
+            mono + (sample(iseed + 101) - mono) * color,
+            mono + (sample(iseed + 211) - mono) * color,
+            mono + (sample(iseed + 307) - mono) * color,
+        ];
         let luma = clamped_luma(c);
-        let luma_weight = 4.0 * luma * (1.0 - luma);
-        let grain = (noise - 0.5) * self.amount * luma_weight;
-        for v in c.iter_mut().take(3) {
-            *v += grain;
+        let response = self.response.clamp(0.0, 1.0);
+        let luma_weight = 1.0 + (4.0 * luma * (1.0 - luma) - 1.0) * response;
+        for (v, n) in c.iter_mut().take(3).zip(noise) {
+            *v += (n - 0.5) * self.amount * luma_weight;
         }
         c
     }
@@ -1239,8 +1251,9 @@ impl ModifierImpl for Grain {
         16u8.hash(hasher);
         hash_f32(self.amount, hasher);
         hash_f32(self.size, hasher);
-        hash_f32(self.roughness, hasher);
         hash_f32(self.seed, hasher);
+        hash_f32(self.color, hasher);
+        hash_f32(self.response, hasher);
     }
 
     fn view(
@@ -1267,12 +1280,20 @@ impl ModifierImpl for Grain {
                 move |v| Message::UpdateModifier(index, ModifierParam::GrainSize(v)),
             ),
             value_row(
-                "Roughness",
-                self.roughness,
+                "Response",
+                self.response,
                 0.0..=1.0,
                 0.01,
                 Fmt::num(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::GrainRoughness(v)),
+                move |v| Message::UpdateModifier(index, ModifierParam::GrainResponse(v)),
+            ),
+            value_row(
+                "Color",
+                self.color,
+                0.0..=1.0,
+                0.01,
+                Fmt::num(2),
+                move |v| Message::UpdateModifier(index, ModifierParam::GrainColor(v)),
             ),
             value_row("Seed", self.seed, 0.0..=99.0, 1.0, Fmt::num(0), move |v| {
                 Message::UpdateModifier(index, ModifierParam::GrainSeed(v))
