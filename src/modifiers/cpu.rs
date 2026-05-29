@@ -23,17 +23,15 @@ pub(crate) fn apply_modifiers(
                 (uv[1] - (uv[1] - 0.5) * scale).clamp(0.0, 1.0),
             ];
             let prior = &modifiers[..i];
-            let cr = apply_modifiers(
+            let cr = apply_prior_non_resampling(
                 prior,
-                pixels,
                 img_w,
                 img_h,
                 r_uv,
                 sample_pixel(pixels, img_w, img_h, r_uv[0], r_uv[1]),
             );
-            let cb = apply_modifiers(
+            let cb = apply_prior_non_resampling(
                 prior,
-                pixels,
                 img_w,
                 img_h,
                 b_uv,
@@ -46,6 +44,22 @@ pub(crate) fn apply_modifiers(
         }
     }
     c.map(|v| v.clamp(0.0, 1.0))
+}
+
+fn apply_prior_non_resampling(
+    modifiers: &[Modifier],
+    img_w: u32,
+    img_h: u32,
+    uv: [f32; 2],
+    mut c: [f32; 4],
+) -> [f32; 4] {
+    for m in modifiers {
+        if !m.has_visible_effect() || m.kind.is_resampling() {
+            continue;
+        }
+        c = m.kind.apply_cpu(img_w, img_h, uv, c);
+    }
+    c
 }
 
 pub(crate) fn pixel_to_f32(p: &[u8]) -> [f32; 4] {

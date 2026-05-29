@@ -29,6 +29,10 @@ fn app_icon() -> Option<window::Icon> {
 }
 
 fn main() -> iced::Result {
+    let _ = rayon::ThreadPoolBuilder::new()
+        .thread_name(|i| format!("bloom-rayon-{i}"))
+        .build_global();
+
     let media = env::args().nth(1).map(PathBuf::from);
     let config = config::Config::load();
     let level = if config.always_on_top {
