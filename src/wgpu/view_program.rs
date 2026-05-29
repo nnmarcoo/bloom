@@ -13,7 +13,7 @@ use rayon::prelude::*;
 
 use crate::{
     app::Message,
-    modifiers::{Modifier, ModifierKind, cpu},
+    modifiers::{Modifier, cpu},
     wgpu::{
         media::animation::Animation,
         media::exif_data::ExifData,
@@ -121,17 +121,11 @@ impl ViewProgram {
 
     fn reset_crop_to_image(&mut self) {
         for m in &mut self.modifiers {
-            if let ModifierKind::Crop {
-                x,
-                y,
-                width,
-                height,
-            } = &mut m.kind
-            {
-                *x = 0.0;
-                *y = 0.0;
-                *width = self.image_size.x;
-                *height = self.image_size.y;
+            if let Some(crop) = m.kind.as_crop_mut() {
+                crop.x = 0.0;
+                crop.y = 0.0;
+                crop.width = self.image_size.x;
+                crop.height = self.image_size.y;
             }
         }
     }
@@ -377,19 +371,15 @@ impl ViewProgram {
             if !m.enabled {
                 return None;
             }
-            if let ModifierKind::Crop {
-                x,
-                y,
-                width,
-                height,
-            } = m.kind
-            {
-                let iw = self.image_size.x;
-                let ih = self.image_size.y;
-                Some([x / iw, y / ih, (x + width) / iw, (y + height) / ih])
-            } else {
-                None
-            }
+            let crop = m.kind.as_crop()?;
+            let iw = self.image_size.x;
+            let ih = self.image_size.y;
+            Some([
+                crop.x / iw,
+                crop.y / ih,
+                (crop.x + crop.width) / iw,
+                (crop.y + crop.height) / ih,
+            ])
         })
     }
 
@@ -796,164 +786,7 @@ fn hash_modifiers(modifiers: &[Modifier]) -> u64 {
     modifiers.len().hash(&mut hasher);
     for m in modifiers {
         m.enabled.hash(&mut hasher);
-        hash_kind(&mut hasher, &m.kind);
+        m.kind.hash_into(&mut hasher);
     }
     hasher.finish()
-}
-
-fn hash_kind(h: &mut DefaultHasher, kind: &ModifierKind) {
-    let bits = |v: f32, h: &mut DefaultHasher| v.to_bits().hash(h);
-    match kind {
-        ModifierKind::Levels {
-            shadows,
-            midtones,
-            highlights,
-        } => {
-            1u8.hash(h);
-            bits(*shadows, h);
-            bits(*midtones, h);
-            bits(*highlights, h);
-        }
-        ModifierKind::BrightnessContrast {
-            brightness,
-            contrast,
-        } => {
-            2u8.hash(h);
-            bits(*brightness, h);
-            bits(*contrast, h);
-        }
-        ModifierKind::HueSaturation {
-            hue,
-            saturation,
-            lightness,
-        } => {
-            3u8.hash(h);
-            bits(*hue, h);
-            bits(*saturation, h);
-            bits(*lightness, h);
-        }
-        ModifierKind::Exposure { exposure } => {
-            4u8.hash(h);
-            bits(*exposure, h);
-        }
-        ModifierKind::Vibrance {
-            vibrance,
-            saturation,
-        } => {
-            5u8.hash(h);
-            bits(*vibrance, h);
-            bits(*saturation, h);
-        }
-        ModifierKind::ColorBalance {
-            cyan_red,
-            magenta_green,
-            yellow_blue,
-        } => {
-            6u8.hash(h);
-            bits(*cyan_red, h);
-            bits(*magenta_green, h);
-            bits(*yellow_blue, h);
-        }
-        ModifierKind::GaussianBlur { radius } => {
-            7u8.hash(h);
-            bits(*radius, h);
-        }
-        ModifierKind::MotionBlur { angle, distance } => {
-            8u8.hash(h);
-            bits(*angle, h);
-            bits(*distance, h);
-        }
-        ModifierKind::RadialBlur { amount } => {
-            9u8.hash(h);
-            bits(*amount, h);
-        }
-        ModifierKind::Halftone { size, angle } => {
-            10u8.hash(h);
-            bits(*size, h);
-            bits(*angle, h);
-        }
-        ModifierKind::PixelSort { threshold, angle } => {
-            11u8.hash(h);
-            bits(*threshold, h);
-            bits(*angle, h);
-        }
-        ModifierKind::Vignette {
-            strength,
-            size,
-            softness,
-        } => {
-            12u8.hash(h);
-            bits(*strength, h);
-            bits(*size, h);
-            bits(*softness, h);
-        }
-        ModifierKind::ChromaticAberration { amount } => {
-            13u8.hash(h);
-            bits(*amount, h);
-        }
-        ModifierKind::Posterize { levels } => {
-            14u8.hash(h);
-            levels.hash(h);
-        }
-        ModifierKind::Threshold { cutoff } => {
-            15u8.hash(h);
-            bits(*cutoff, h);
-        }
-        ModifierKind::Grain {
-            amount,
-            size,
-            roughness,
-            seed,
-        } => {
-            16u8.hash(h);
-            bits(*amount, h);
-            bits(*size, h);
-            bits(*roughness, h);
-            bits(*seed, h);
-        }
-        ModifierKind::Crop {
-            x,
-            y,
-            width,
-            height,
-        } => {
-            17u8.hash(h);
-            bits(*x, h);
-            bits(*y, h);
-            bits(*width, h);
-            bits(*height, h);
-        }
-        ModifierKind::Text {
-            content,
-            x,
-            y,
-            size,
-            rotation,
-            opacity,
-            r,
-            g,
-            b,
-        } => {
-            18u8.hash(h);
-            content.hash(h);
-            bits(*x, h);
-            bits(*y, h);
-            bits(*size, h);
-            bits(*rotation, h);
-            bits(*opacity, h);
-            bits(*r, h);
-            bits(*g, h);
-            bits(*b, h);
-        }
-        ModifierKind::Drawing {
-            opacity,
-            size,
-            hardness,
-        } => {
-            19u8.hash(h);
-            bits(*opacity, h);
-            bits(*size, h);
-            bits(*hardness, h);
-        }
-    }
 }

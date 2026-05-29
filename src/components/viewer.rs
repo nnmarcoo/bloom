@@ -12,7 +12,7 @@ use crate::{
     components::notifications::NotificationEntry,
     components::{edit_panel, info_panel, notifications},
     gallery::Gallery,
-    modifiers::{Modifier, ModifierKind},
+    modifiers::Modifier,
     styles::{PAD, spinner_bg_style},
     wgpu::view_program::ViewProgram,
     widgets::{
@@ -59,16 +59,21 @@ pub fn view<'a>(
         && let Some((crop_idx, crop_m)) = modifiers
             .iter()
             .enumerate()
-            .find(|(_, m)| m.enabled && matches!(m.kind, ModifierKind::Crop { .. }))
-        && let ModifierKind::Crop {
-            x,
-            y,
-            width,
-            height,
-        } = crop_m.kind
+            .find(|(_, m)| m.enabled && m.kind.as_crop().is_some())
+        && let Some(crop) = crop_m.kind.as_crop()
     {
         layers.push(
-            CropOverlay::new(program.clone(), crop_idx, x, y, width, height, img_w, img_h).into(),
+            CropOverlay::new(
+                program.clone(),
+                crop_idx,
+                crop.x,
+                crop.y,
+                crop.width,
+                crop.height,
+                img_w,
+                img_h,
+            )
+            .into(),
         );
     }
 

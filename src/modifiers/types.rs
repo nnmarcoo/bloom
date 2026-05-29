@@ -1,4 +1,47 @@
+use std::collections::hash_map::DefaultHasher;
 use std::fmt;
+
+use iced::Element;
+
+use crate::app::Message;
+use crate::modifiers::gpu::{ModEntry, TileInfo};
+use crate::modifiers::kinds::{
+    BrightnessContrast, ChromaticAberration, ColorBalance, Crop, Drawing, Exposure, GaussianBlur,
+    Grain, Halftone, HueSaturation, Levels, MotionBlur, PixelSort, Posterize, RadialBlur, Text,
+    Threshold, Vibrance, Vignette,
+};
+
+/// Behaviour of a single modifier. Each modifier kind is a struct in
+/// [`crate::modifiers::kinds`] that implements this trait, so all of a
+/// modifier's logic (defaults, identity, GPU packing, CPU sampling, hashing and
+/// its UI) lives in one place.
+pub trait ModifierImpl {
+    fn name(&self) -> &'static str;
+
+    /// Whether the modifier currently changes the image. Used to skip identity
+    /// modifiers on both the GPU and CPU paths.
+    fn has_effect(&self) -> bool {
+        true
+    }
+
+    fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>);
+
+    /// Pack into a GPU `ModEntry`, or `None` if the modifier has no GPU pass.
+    fn pack(&self, _tile: &TileInfo) -> Option<ModEntry> {
+        None
+    }
+
+    /// CPU evaluation for one pixel (used by the colour picker, histogram and
+    /// export). Returns the input unchanged for modifiers without a CPU path.
+    fn apply_cpu(&self, _img_w: u32, _img_h: u32, _uv: [f32; 2], c: [f32; 4]) -> [f32; 4] {
+        c
+    }
+
+    fn hash(&self, hasher: &mut DefaultHasher);
+
+    fn view(&self, index: usize, image_size: Option<(u32, u32)>, rotation: u8)
+    -> Element<'_, Message>;
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModifierType {
@@ -25,27 +68,7 @@ pub enum ModifierType {
 
 impl ModifierType {
     pub fn name(&self) -> &'static str {
-        match self {
-            ModifierType::Levels => "Levels",
-            ModifierType::BrightnessContrast => "Brightness / Contrast",
-            ModifierType::HueSaturation => "Hue / Saturation",
-            ModifierType::Exposure => "Exposure",
-            ModifierType::Vibrance => "Vibrance",
-            ModifierType::ColorBalance => "Color Balance",
-            ModifierType::GaussianBlur => "Gaussian Blur",
-            ModifierType::MotionBlur => "Motion Blur",
-            ModifierType::RadialBlur => "Radial Blur",
-            ModifierType::Halftone => "Halftone",
-            ModifierType::PixelSort => "Pixel Sort",
-            ModifierType::Vignette => "Vignette",
-            ModifierType::ChromaticAberration => "Chromatic Aberration",
-            ModifierType::Posterize => "Posterize",
-            ModifierType::Threshold => "Threshold",
-            ModifierType::Grain => "Grain",
-            ModifierType::Crop => "Crop",
-            ModifierType::Text => "Text",
-            ModifierType::Drawing => "Drawing",
-        }
+        ModifierKind::from(self.clone()).name()
     }
 }
 
@@ -72,275 +95,130 @@ impl Modifier {
     }
 
     pub fn has_visible_effect(&self) -> bool {
-        if !self.enabled {
-            return false;
-        }
-        match &self.kind {
-            ModifierKind::Exposure { exposure } => *exposure != 0.0,
-            ModifierKind::Levels {
-                shadows,
-                midtones,
-                highlights,
-            } => *shadows != 0.0 || *midtones != 1.0 || *highlights != 1.0,
-            ModifierKind::BrightnessContrast {
-                brightness,
-                contrast,
-            } => *brightness != 0.0 || *contrast != 0.0,
-            ModifierKind::HueSaturation {
-                hue,
-                saturation,
-                lightness,
-            } => *hue != 0.0 || *saturation != 0.0 || *lightness != 0.0,
-            ModifierKind::Vignette { strength, .. } => *strength != 0.0,
-            ModifierKind::Posterize { .. } => true,
-            ModifierKind::Threshold { .. } => true,
-            ModifierKind::Vibrance {
-                vibrance,
-                saturation,
-            } => *vibrance != 0.0 || *saturation != 0.0,
-            ModifierKind::ColorBalance {
-                cyan_red,
-                magenta_green,
-                yellow_blue,
-            } => *cyan_red != 0.0 || *magenta_green != 0.0 || *yellow_blue != 0.0,
-            ModifierKind::Grain { amount, .. } => *amount != 0.0,
-            ModifierKind::ChromaticAberration { amount, .. } => *amount != 0.0,
-            ModifierKind::Halftone { .. } => true,
-            _ => false,
-        }
+        self.enabled && self.kind.has_effect()
     }
 
     pub fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>) {
-        match (&mut self.kind, param) {
-            (ModifierKind::Levels { shadows, .. }, ModifierParam::LevelsShadows(v)) => *shadows = v,
-            (ModifierKind::Levels { midtones, .. }, ModifierParam::LevelsMidtones(v)) => {
-                *midtones = v
-            }
-            (ModifierKind::Levels { highlights, .. }, ModifierParam::LevelsHighlights(v)) => {
-                *highlights = v
-            }
-            (ModifierKind::BrightnessContrast { brightness, .. }, ModifierParam::Brightness(v)) => {
-                *brightness = v
-            }
-            (ModifierKind::BrightnessContrast { contrast, .. }, ModifierParam::Contrast(v)) => {
-                *contrast = v
-            }
-            (ModifierKind::HueSaturation { hue, .. }, ModifierParam::Hue(v)) => *hue = v,
-            (ModifierKind::HueSaturation { saturation, .. }, ModifierParam::Saturation(v)) => {
-                *saturation = v
-            }
-            (ModifierKind::HueSaturation { lightness, .. }, ModifierParam::Lightness(v)) => {
-                *lightness = v
-            }
-            (ModifierKind::Exposure { exposure }, ModifierParam::Exposure(v)) => *exposure = v,
-            (ModifierKind::Vibrance { vibrance, .. }, ModifierParam::Vibrance(v)) => *vibrance = v,
-            (ModifierKind::Vibrance { saturation, .. }, ModifierParam::VibranceSaturation(v)) => {
-                *saturation = v
-            }
-            (
-                ModifierKind::ColorBalance { cyan_red, .. },
-                ModifierParam::ColorBalanceCyanRed(v),
-            ) => *cyan_red = v,
-            (
-                ModifierKind::ColorBalance { magenta_green, .. },
-                ModifierParam::ColorBalanceMagentaGreen(v),
-            ) => *magenta_green = v,
-            (
-                ModifierKind::ColorBalance { yellow_blue, .. },
-                ModifierParam::ColorBalanceYellowBlue(v),
-            ) => *yellow_blue = v,
-            (ModifierKind::GaussianBlur { radius }, ModifierParam::GaussianBlurRadius(v)) => {
-                *radius = v
-            }
-            (ModifierKind::MotionBlur { angle, .. }, ModifierParam::MotionBlurAngle(v)) => {
-                *angle = v
-            }
-            (ModifierKind::MotionBlur { distance, .. }, ModifierParam::MotionBlurDistance(v)) => {
-                *distance = v
-            }
-            (ModifierKind::RadialBlur { amount }, ModifierParam::RadialBlurAmount(v)) => {
-                *amount = v
-            }
-            (ModifierKind::Halftone { size, .. }, ModifierParam::HalftoneSize(v)) => *size = v,
-            (ModifierKind::Halftone { angle, .. }, ModifierParam::HalftoneAngle(v)) => *angle = v,
-            (ModifierKind::PixelSort { threshold, .. }, ModifierParam::PixelSortThreshold(v)) => {
-                *threshold = v
-            }
-            (ModifierKind::PixelSort { angle, .. }, ModifierParam::PixelSortAngle(v)) => *angle = v,
-            (ModifierKind::Vignette { strength, .. }, ModifierParam::VignetteStrength(v)) => {
-                *strength = v
-            }
-            (ModifierKind::Vignette { size, .. }, ModifierParam::VignetteSize(v)) => *size = v,
-            (ModifierKind::Vignette { softness, .. }, ModifierParam::VignetteSoftness(v)) => {
-                *softness = v
-            }
-            (
-                ModifierKind::ChromaticAberration { amount, .. },
-                ModifierParam::ChromaticAberrationAmount(v),
-            ) => *amount = v,
-            (ModifierKind::Posterize { levels }, ModifierParam::PosterizeLevels(v)) => *levels = v,
-            (ModifierKind::Threshold { cutoff }, ModifierParam::ThresholdCutoff(v)) => *cutoff = v,
-            (ModifierKind::Grain { amount, .. }, ModifierParam::GrainAmount(v)) => *amount = v,
-            (ModifierKind::Grain { size, .. }, ModifierParam::GrainSize(v)) => *size = v,
-            (ModifierKind::Grain { roughness, .. }, ModifierParam::GrainRoughness(v)) => {
-                *roughness = v
-            }
-            (ModifierKind::Grain { seed, .. }, ModifierParam::GrainSeed(v)) => *seed = v,
-            (ModifierKind::Crop { x, width, .. }, ModifierParam::CropX(v)) => {
-                let right = *x + *width;
-                *x = v.round().clamp(0.0, right - 1.0);
-                *width = (right - *x).max(1.0);
-            }
-            (ModifierKind::Crop { y, height, .. }, ModifierParam::CropY(v)) => {
-                let bottom = *y + *height;
-                *y = v.round().clamp(0.0, bottom - 1.0);
-                *height = (bottom - *y).max(1.0);
-            }
-            (ModifierKind::Crop { x, width, .. }, ModifierParam::CropWidth(v)) => {
-                *width = v.round().max(1.0);
-                if let Some((iw, _)) = img_size {
-                    *width = width.min(iw as f32 - *x);
-                }
-            }
-            (ModifierKind::Crop { y, height, .. }, ModifierParam::CropHeight(v)) => {
-                *height = v.round().max(1.0);
-                if let Some((_, ih)) = img_size {
-                    *height = height.min(ih as f32 - *y);
-                }
-            }
-            (ModifierKind::Text { content, .. }, ModifierParam::TextContent(v)) => *content = v,
-            (ModifierKind::Text { x, .. }, ModifierParam::TextX(v)) => *x = v,
-            (ModifierKind::Text { y, .. }, ModifierParam::TextY(v)) => *y = v,
-            (ModifierKind::Text { size, .. }, ModifierParam::TextSize(v)) => *size = v,
-            (ModifierKind::Text { rotation, .. }, ModifierParam::TextRotation(v)) => *rotation = v,
-            (ModifierKind::Text { opacity, .. }, ModifierParam::TextOpacity(v)) => *opacity = v,
-            (ModifierKind::Text { r, .. }, ModifierParam::TextR(v)) => *r = v,
-            (ModifierKind::Text { g, .. }, ModifierParam::TextG(v)) => *g = v,
-            (ModifierKind::Text { b, .. }, ModifierParam::TextB(v)) => *b = v,
-            (ModifierKind::Drawing { opacity, .. }, ModifierParam::DrawingOpacity(v)) => {
-                *opacity = v
-            }
-            (ModifierKind::Drawing { size, .. }, ModifierParam::DrawingSize(v)) => *size = v,
-            (ModifierKind::Drawing { hardness, .. }, ModifierParam::DrawingHardness(v)) => {
-                *hardness = v
-            }
-            _ => {}
-        }
+        self.kind.apply_param(param, img_size);
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum ModifierKind {
-    Levels {
-        shadows: f32,
-        midtones: f32,
-        highlights: f32,
-    },
-    BrightnessContrast {
-        brightness: f32,
-        contrast: f32,
-    },
-    HueSaturation {
-        hue: f32,
-        saturation: f32,
-        lightness: f32,
-    },
-    Exposure {
-        exposure: f32,
-    },
-    Vibrance {
-        vibrance: f32,
-        saturation: f32,
-    },
-    ColorBalance {
-        cyan_red: f32,
-        magenta_green: f32,
-        yellow_blue: f32,
-    },
-    GaussianBlur {
-        radius: f32,
-    },
-    MotionBlur {
-        angle: f32,
-        distance: f32,
-    },
-    RadialBlur {
-        amount: f32,
-    },
-    Halftone {
-        size: f32,
-        angle: f32,
-    },
-    PixelSort {
-        threshold: f32,
-        angle: f32,
-    },
-    Vignette {
-        strength: f32,
-        size: f32,
-        softness: f32,
-    },
-    ChromaticAberration {
-        amount: f32,
-    },
-    Posterize {
-        levels: u32,
-    },
-    Threshold {
-        cutoff: f32,
-    },
-    Grain {
-        amount: f32,
-        size: f32,
-        roughness: f32,
-        seed: f32,
-    },
-    Crop {
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-    },
-    Text {
-        content: String,
-        x: f32,
-        y: f32,
-        size: f32,
-        rotation: f32,
-        opacity: f32,
-        r: f32,
-        g: f32,
-        b: f32,
-    },
-    Drawing {
-        opacity: f32,
-        size: f32,
-        hardness: f32,
-    },
+    Levels(Levels),
+    BrightnessContrast(BrightnessContrast),
+    HueSaturation(HueSaturation),
+    Exposure(Exposure),
+    Vibrance(Vibrance),
+    ColorBalance(ColorBalance),
+    GaussianBlur(GaussianBlur),
+    MotionBlur(MotionBlur),
+    RadialBlur(RadialBlur),
+    Halftone(Halftone),
+    PixelSort(PixelSort),
+    Vignette(Vignette),
+    ChromaticAberration(ChromaticAberration),
+    Posterize(Posterize),
+    Threshold(Threshold),
+    Grain(Grain),
+    Crop(Crop),
+    Text(Text),
+    Drawing(Drawing),
 }
 
 impl ModifierKind {
-    pub fn name(&self) -> &'static str {
+    fn as_impl(&self) -> &dyn ModifierImpl {
         match self {
-            ModifierKind::Levels { .. } => "Levels",
-            ModifierKind::BrightnessContrast { .. } => "Brightness / Contrast",
-            ModifierKind::HueSaturation { .. } => "Hue / Saturation",
-            ModifierKind::Exposure { .. } => "Exposure",
-            ModifierKind::Vibrance { .. } => "Vibrance",
-            ModifierKind::ColorBalance { .. } => "Color Balance",
-            ModifierKind::GaussianBlur { .. } => "Gaussian Blur",
-            ModifierKind::MotionBlur { .. } => "Motion Blur",
-            ModifierKind::RadialBlur { .. } => "Radial Blur",
-            ModifierKind::Halftone { .. } => "Halftone",
-            ModifierKind::PixelSort { .. } => "Pixel Sort",
-            ModifierKind::Vignette { .. } => "Vignette",
-            ModifierKind::ChromaticAberration { .. } => "Chromatic Aberration",
-            ModifierKind::Posterize { .. } => "Posterize",
-            ModifierKind::Threshold { .. } => "Threshold",
-            ModifierKind::Grain { .. } => "Grain",
-            ModifierKind::Crop { .. } => "Crop",
-            ModifierKind::Text { .. } => "Text",
-            ModifierKind::Drawing { .. } => "Drawing",
+            ModifierKind::Levels(m) => m,
+            ModifierKind::BrightnessContrast(m) => m,
+            ModifierKind::HueSaturation(m) => m,
+            ModifierKind::Exposure(m) => m,
+            ModifierKind::Vibrance(m) => m,
+            ModifierKind::ColorBalance(m) => m,
+            ModifierKind::GaussianBlur(m) => m,
+            ModifierKind::MotionBlur(m) => m,
+            ModifierKind::RadialBlur(m) => m,
+            ModifierKind::Halftone(m) => m,
+            ModifierKind::PixelSort(m) => m,
+            ModifierKind::Vignette(m) => m,
+            ModifierKind::ChromaticAberration(m) => m,
+            ModifierKind::Posterize(m) => m,
+            ModifierKind::Threshold(m) => m,
+            ModifierKind::Grain(m) => m,
+            ModifierKind::Crop(m) => m,
+            ModifierKind::Text(m) => m,
+            ModifierKind::Drawing(m) => m,
+        }
+    }
+
+    fn as_impl_mut(&mut self) -> &mut dyn ModifierImpl {
+        match self {
+            ModifierKind::Levels(m) => m,
+            ModifierKind::BrightnessContrast(m) => m,
+            ModifierKind::HueSaturation(m) => m,
+            ModifierKind::Exposure(m) => m,
+            ModifierKind::Vibrance(m) => m,
+            ModifierKind::ColorBalance(m) => m,
+            ModifierKind::GaussianBlur(m) => m,
+            ModifierKind::MotionBlur(m) => m,
+            ModifierKind::RadialBlur(m) => m,
+            ModifierKind::Halftone(m) => m,
+            ModifierKind::PixelSort(m) => m,
+            ModifierKind::Vignette(m) => m,
+            ModifierKind::ChromaticAberration(m) => m,
+            ModifierKind::Posterize(m) => m,
+            ModifierKind::Threshold(m) => m,
+            ModifierKind::Grain(m) => m,
+            ModifierKind::Crop(m) => m,
+            ModifierKind::Text(m) => m,
+            ModifierKind::Drawing(m) => m,
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        self.as_impl().name()
+    }
+
+    pub fn has_effect(&self) -> bool {
+        self.as_impl().has_effect()
+    }
+
+    pub fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>) {
+        self.as_impl_mut().apply_param(param, img_size);
+    }
+
+    pub fn pack(&self, tile: &TileInfo) -> Option<ModEntry> {
+        self.as_impl().pack(tile)
+    }
+
+    pub fn apply_cpu(&self, img_w: u32, img_h: u32, uv: [f32; 2], c: [f32; 4]) -> [f32; 4] {
+        self.as_impl().apply_cpu(img_w, img_h, uv, c)
+    }
+
+    pub fn hash_into(&self, hasher: &mut DefaultHasher) {
+        self.as_impl().hash(hasher);
+    }
+
+    pub fn view(
+        &self,
+        index: usize,
+        image_size: Option<(u32, u32)>,
+        rotation: u8,
+    ) -> Element<'_, Message> {
+        self.as_impl().view(index, image_size, rotation)
+    }
+
+    pub fn as_crop(&self) -> Option<&Crop> {
+        match self {
+            ModifierKind::Crop(c) => Some(c),
+            _ => None,
+        }
+    }
+
+    pub fn as_crop_mut(&mut self) -> Option<&mut Crop> {
+        match self {
+            ModifierKind::Crop(c) => Some(c),
+            _ => None,
         }
     }
 }
@@ -348,80 +226,29 @@ impl ModifierKind {
 impl From<ModifierType> for ModifierKind {
     fn from(t: ModifierType) -> Self {
         match t {
-            ModifierType::Levels => ModifierKind::Levels {
-                shadows: 0.0,
-                midtones: 1.0,
-                highlights: 1.0,
-            },
-            ModifierType::BrightnessContrast => ModifierKind::BrightnessContrast {
-                brightness: 0.0,
-                contrast: 0.0,
-            },
-            ModifierType::HueSaturation => ModifierKind::HueSaturation {
-                hue: 0.0,
-                saturation: 0.0,
-                lightness: 0.0,
-            },
-            ModifierType::Exposure => ModifierKind::Exposure { exposure: 0.0 },
-            ModifierType::Vibrance => ModifierKind::Vibrance {
-                vibrance: 0.0,
-                saturation: 0.0,
-            },
-            ModifierType::ColorBalance => ModifierKind::ColorBalance {
-                cyan_red: 0.0,
-                magenta_green: 0.0,
-                yellow_blue: 0.0,
-            },
-            ModifierType::GaussianBlur => ModifierKind::GaussianBlur { radius: 5.0 },
-            ModifierType::MotionBlur => ModifierKind::MotionBlur {
-                angle: 0.0,
-                distance: 20.0,
-            },
-            ModifierType::RadialBlur => ModifierKind::RadialBlur { amount: 10.0 },
-            ModifierType::Halftone => ModifierKind::Halftone {
-                size: 10.0,
-                angle: 45.0,
-            },
-            ModifierType::PixelSort => ModifierKind::PixelSort {
-                threshold: 0.5,
-                angle: 90.0,
-            },
-            ModifierType::Vignette => ModifierKind::Vignette {
-                strength: 0.5,
-                size: 0.5,
-                softness: 0.5,
-            },
-            ModifierType::ChromaticAberration => ModifierKind::ChromaticAberration { amount: 5.0 },
-            ModifierType::Posterize => ModifierKind::Posterize { levels: 4 },
-            ModifierType::Threshold => ModifierKind::Threshold { cutoff: 0.5 },
-            ModifierType::Grain => ModifierKind::Grain {
-                amount: 0.2,
-                size: 1.0,
-                roughness: 0.5,
-                seed: 0.0,
-            },
-            ModifierType::Crop => ModifierKind::Crop {
-                x: 0.0,
-                y: 0.0,
-                width: 1.0,
-                height: 1.0,
-            },
-            ModifierType::Text => ModifierKind::Text {
-                content: String::new(),
-                x: 0.5,
-                y: 0.5,
-                size: 48.0,
-                rotation: 0.0,
-                opacity: 1.0,
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
-            },
-            ModifierType::Drawing => ModifierKind::Drawing {
-                opacity: 1.0,
-                size: 10.0,
-                hardness: 0.8,
-            },
+            ModifierType::Levels => ModifierKind::Levels(Levels::default()),
+            ModifierType::BrightnessContrast => {
+                ModifierKind::BrightnessContrast(BrightnessContrast::default())
+            }
+            ModifierType::HueSaturation => ModifierKind::HueSaturation(HueSaturation::default()),
+            ModifierType::Exposure => ModifierKind::Exposure(Exposure::default()),
+            ModifierType::Vibrance => ModifierKind::Vibrance(Vibrance::default()),
+            ModifierType::ColorBalance => ModifierKind::ColorBalance(ColorBalance::default()),
+            ModifierType::GaussianBlur => ModifierKind::GaussianBlur(GaussianBlur::default()),
+            ModifierType::MotionBlur => ModifierKind::MotionBlur(MotionBlur::default()),
+            ModifierType::RadialBlur => ModifierKind::RadialBlur(RadialBlur::default()),
+            ModifierType::Halftone => ModifierKind::Halftone(Halftone::default()),
+            ModifierType::PixelSort => ModifierKind::PixelSort(PixelSort::default()),
+            ModifierType::Vignette => ModifierKind::Vignette(Vignette::default()),
+            ModifierType::ChromaticAberration => {
+                ModifierKind::ChromaticAberration(ChromaticAberration::default())
+            }
+            ModifierType::Posterize => ModifierKind::Posterize(Posterize::default()),
+            ModifierType::Threshold => ModifierKind::Threshold(Threshold::default()),
+            ModifierType::Grain => ModifierKind::Grain(Grain::default()),
+            ModifierType::Crop => ModifierKind::Crop(Crop::default()),
+            ModifierType::Text => ModifierKind::Text(Text::default()),
+            ModifierType::Drawing => ModifierKind::Drawing(Drawing::default()),
         }
     }
 }

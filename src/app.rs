@@ -25,7 +25,7 @@ use crate::{
     config::{Config, UI_SCALE_DEFAULT, UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP},
     gallery::Gallery,
     keybinds::{Action, KeyBinding},
-    modifiers::{Modifier, ModifierKind, ModifierParam, ModifierType},
+    modifiers::{Modifier, ModifierKind, ModifierParam, ModifierType, kinds::Crop},
     styles, tasks,
     wgpu::{
         media::image_data::MediaData, passes::checkerboard::CheckerboardUniforms,
@@ -481,7 +481,7 @@ impl App {
                         .program
                         .modifiers
                         .iter()
-                        .position(|m| matches!(m.kind, ModifierKind::Crop { .. }))
+                        .position(|m| m.kind.as_crop().is_some())
                     {
                         self.active_modifier = Some(idx);
                     } else {
@@ -493,12 +493,12 @@ impl App {
                         let idx = self.program.modifiers.len();
                         self.program
                             .modifiers
-                            .push(Modifier::new(ModifierKind::Crop {
+                            .push(Modifier::new(ModifierKind::Crop(Crop {
                                 x: 0.0,
                                 y: 0.0,
                                 width: iw,
                                 height: ih,
-                            }));
+                            })));
                         self.active_modifier = Some(idx);
                         self.program.mark_dirty();
                     }
@@ -555,7 +555,7 @@ impl App {
                         .program
                         .modifiers
                         .iter()
-                        .any(|m| matches!(m.kind, ModifierKind::Crop { .. }));
+                        .any(|m| m.kind.as_crop().is_some());
                 if already_has_crop {
                     self.notifications
                         .push(NotificationEntry::new(Notification::warning(
@@ -568,12 +568,12 @@ impl App {
                             .image_size()
                             .map(|(w, h)| (w as f32, h as f32))
                             .unwrap_or((1.0, 1.0));
-                        ModifierKind::Crop {
+                        ModifierKind::Crop(Crop {
                             x: 0.0,
                             y: 0.0,
                             width: iw,
                             height: ih,
-                        }
+                        })
                     } else {
                         ModifierKind::from(t)
                     };
@@ -614,17 +614,12 @@ impl App {
             }
             Message::SetCropRect(i, x, y, w, h) => {
                 if let Some(m) = self.program.modifiers.get_mut(i)
-                    && let ModifierKind::Crop {
-                        x: cx,
-                        y: cy,
-                        width: cw,
-                        height: ch,
-                    } = &mut m.kind
+                    && let Some(crop) = m.kind.as_crop_mut()
                 {
-                    *cx = x;
-                    *cy = y;
-                    *cw = w;
-                    *ch = h;
+                    crop.x = x;
+                    crop.y = y;
+                    crop.width = w;
+                    crop.height = h;
                 }
                 self.program.mark_dirty();
             }
