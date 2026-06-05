@@ -8,9 +8,9 @@ use iced::wgpu::{
     Extent3d, FragmentState, LoadOp, MultisampleState, Operations, PipelineCompilationOptions,
     PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue, RenderPassColorAttachment,
     RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType,
-    SamplerDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Texture,
-    TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
-    TextureView, TextureViewDescriptor, TextureViewDimension, VertexState,
+    ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Texture, TextureDescriptor,
+    TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
+    TextureViewDescriptor, TextureViewDimension, VertexState,
 };
 
 pub fn fullscreen_pipeline(
@@ -230,6 +230,7 @@ pub fn blit_pipeline(device: &Device, format: TextureFormat) -> (RenderPipeline,
     (pipeline, bgl)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn generate_hw_mipmaps(
     encoder: &mut CommandEncoder,
     device: &Device,
@@ -238,14 +239,8 @@ pub fn generate_hw_mipmaps(
     format: TextureFormat,
     blit_pipeline: &RenderPipeline,
     blit_bgl: &BindGroupLayout,
+    linear_sampler: &Sampler,
 ) {
-    let linear_sampler = device.create_sampler(&SamplerDescriptor {
-        label: Some("blit-linear-sampler"),
-        mag_filter: iced::wgpu::FilterMode::Linear,
-        min_filter: iced::wgpu::FilterMode::Linear,
-        ..Default::default()
-    });
-
     for mip in 1..mip_level_count {
         let src_view = texture.create_view(&TextureViewDescriptor {
             label: Some(&format!("blit-src-mip{}", mip - 1)),
@@ -274,7 +269,7 @@ pub fn generate_hw_mipmaps(
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: BindingResource::Sampler(&linear_sampler),
+                    resource: BindingResource::Sampler(linear_sampler),
                 },
             ],
         });

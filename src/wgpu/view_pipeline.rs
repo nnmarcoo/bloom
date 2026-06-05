@@ -286,58 +286,42 @@ impl ViewPipeline {
         bounds: &Rectangle,
         smooth_zoom_in: bool,
     ) {
-        if let Some(mp) = &self.modifier_pipeline {
-            if let Some(source) = &self.source {
-                let zoomed_out = source.physical_scale < 1.0 - 1e-6;
+        let mut bind_groups: Vec<&BindGroup> = Vec::new();
+
+        if let Some(source) = &self.source {
+            let zoomed_out = source.physical_scale < 1.0 - 1e-6;
+            if let Some(mp) = &self.modifier_pipeline {
                 let nearest = !smooth_zoom_in && !zoomed_out;
                 for (i, tile) in source.tiles.iter().enumerate() {
                     if tile_ndc_culled(tile.last_ndc_rect) {
                         continue;
                     }
                     if let Some(bg) = mp.tile_display_bg(i, nearest) {
-                        self.draw_display_pass(encoder, target, clip_bounds, bounds, bg);
+                        bind_groups.push(bg);
                     }
                 }
+            } else {
+                for tile in &source.tiles {
+                    if tile_ndc_culled(tile.last_ndc_rect) {
+                        continue;
+                    }
+                    bind_groups.push(if zoomed_out {
+                        &tile.zoom_out_bind_group
+                    } else if smooth_zoom_in {
+                        &tile.linear_bind_group
+                    } else {
+                        &tile.nearest_bind_group
+                    });
+                }
             }
+        } else {
+            bind_groups.push(&self.placeholder_bind_group);
+        }
+
+        if bind_groups.is_empty() {
             return;
         }
 
-        if let Some(source) = &self.source {
-            let zoomed_out = source.physical_scale < 1.0 - 1e-6;
-            for tile in &source.tiles {
-                if tile_ndc_culled(tile.last_ndc_rect) {
-                    continue;
-                }
-
-                let bind_group = if zoomed_out {
-                    &tile.zoom_out_bind_group
-                } else if smooth_zoom_in {
-                    &tile.linear_bind_group
-                } else {
-                    &tile.nearest_bind_group
-                };
-
-                self.draw_display_pass(encoder, target, clip_bounds, bounds, bind_group);
-            }
-        } else {
-            self.draw_display_pass(
-                encoder,
-                target,
-                clip_bounds,
-                bounds,
-                &self.placeholder_bind_group,
-            );
-        }
-    }
-
-    fn draw_display_pass(
-        &self,
-        encoder: &mut CommandEncoder,
-        target: &TextureView,
-        clip_bounds: &Rectangle<u32>,
-        bounds: &Rectangle,
-        bind_group: &BindGroup,
-    ) {
         let sf = self.scale_factor;
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("display-pass"),
@@ -369,7 +353,10 @@ impl ViewPipeline {
             clip_bounds.width,
             clip_bounds.height,
         );
-        self.display.draw(&mut pass, bind_group);
+
+        for bg in bind_groups {
+            self.display.draw(&mut pass, bg);
+        }
     }
 
     pub fn needs_upload(&self, image_id: ImageId) -> bool {

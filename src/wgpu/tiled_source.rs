@@ -99,27 +99,45 @@ impl TiledSource {
                     Some(&format!("{label}:source")),
                 );
 
-                let row_bytes = (tw * 4) as usize;
-                tile_pixels.clear();
-                for r in 0..th {
-                    let row_start = (ty + r) as usize * src_stride + tx as usize * 4;
-                    tile_pixels.extend_from_slice(&image_pixels[row_start..row_start + row_bytes]);
-                }
+                if tw == image.width {
+                    queue.write_texture(
+                        source_texture.as_image_copy(),
+                        image_pixels.as_slice(),
+                        TexelCopyBufferLayout {
+                            offset: (ty as usize * src_stride) as u64,
+                            bytes_per_row: Some(tw * 4),
+                            rows_per_image: None,
+                        },
+                        Extent3d {
+                            width: tw,
+                            height: th,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                } else {
+                    let row_bytes = (tw * 4) as usize;
+                    tile_pixels.clear();
+                    for r in 0..th {
+                        let row_start = (ty + r) as usize * src_stride + tx as usize * 4;
+                        tile_pixels
+                            .extend_from_slice(&image_pixels[row_start..row_start + row_bytes]);
+                    }
 
-                queue.write_texture(
-                    source_texture.as_image_copy(),
-                    &tile_pixels,
-                    TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(tw * 4),
-                        rows_per_image: None,
-                    },
-                    Extent3d {
-                        width: tw,
-                        height: th,
-                        depth_or_array_layers: 1,
-                    },
-                );
+                    queue.write_texture(
+                        source_texture.as_image_copy(),
+                        &tile_pixels,
+                        TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(tw * 4),
+                            rows_per_image: None,
+                        },
+                        Extent3d {
+                            width: tw,
+                            height: th,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
 
                 if mipmap_zoom_out {
                     let mut encoder =
@@ -134,6 +152,7 @@ impl TiledSource {
                         TextureFormat::Rgba8Unorm,
                         blit_pipeline,
                         blit_bgl,
+                        linear_sampler,
                     );
                     queue.submit(std::iter::once(encoder.finish()));
                 }
