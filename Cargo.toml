@@ -22,7 +22,7 @@ glam = { version = "0.32.0", features = ["bytemuck"] }
 # Image decoding
 # TODO: file-format for magic-byte detection (would fix APNG misnamed as .png and other)
 image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "gif", "tiff", "webp", "bmp", "ico", "qoi", "pnm", "tga", "dds", "ff", "hdr", "exr"] }
-gif = { version = "0.14.1", default-features = false, features = ["std", "raii_no_panic"] }
+gif = { version = "0.14.1", default-features = false, features = ["std", "raii_no_panic", "color_quant"] }
 gif-dispose = "6.0.0"
 image-webp = "0.2.4"
 jxl-oxide = "0.12.5"

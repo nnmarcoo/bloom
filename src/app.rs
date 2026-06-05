@@ -625,12 +625,13 @@ impl App {
             }
             Message::ExportImage => {
                 if let Some(data) = self.program.export_data() {
+                    let ext = if data.frames.len() > 1 { "gif" } else { "png" };
                     let suggested = self
                         .gallery
                         .current()
                         .and_then(|p| p.file_stem())
-                        .map(|s| format!("{}.png", s.to_string_lossy()))
-                        .unwrap_or_else(|| "export.png".to_string());
+                        .map(|s| format!("{}.{ext}", s.to_string_lossy()))
+                        .unwrap_or_else(|| format!("export.{ext}"));
                     return tasks::export_image(data, suggested);
                 }
             }

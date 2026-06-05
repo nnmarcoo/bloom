@@ -487,11 +487,36 @@ impl ViewProgram {
     }
 
     pub fn export_data(&self) -> Option<crate::export::ExportData> {
-        let image = self.image.as_ref()?;
+        use crate::export::ExportFrame;
+
+        let (frames, still_index, width, height) = match &self.animation {
+            Some(anim) => {
+                let frames = anim
+                    .frames()
+                    .iter()
+                    .map(|f| ExportFrame {
+                        pixels: f.data.pixels_snapshot(),
+                        delay: f.delay,
+                    })
+                    .collect();
+                let first = &anim.frames()[0].data;
+                (frames, anim.current_index(), first.width, first.height)
+            }
+            None => {
+                let image = self.image.as_ref()?;
+                let frames = vec![ExportFrame {
+                    pixels: image.pixels_snapshot(),
+                    delay: std::time::Duration::ZERO,
+                }];
+                (frames, 0, image.width, image.height)
+            }
+        };
+
         Some(crate::export::ExportData {
-            pixels: image.pixels_snapshot(),
-            width: image.width,
-            height: image.height,
+            frames,
+            still_index,
+            width,
+            height,
             modifiers: self.modifiers.as_ref().clone(),
             crop: self.active_crop(),
             rotation: self.rotation,

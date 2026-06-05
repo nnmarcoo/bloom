@@ -45,6 +45,10 @@ impl Animation {
         self.frames.len()
     }
 
+    pub fn frames(&self) -> &[Frame] {
+        &self.frames
+    }
+
     pub fn current_index(&self) -> usize {
         self.current
     }
