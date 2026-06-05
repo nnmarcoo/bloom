@@ -76,7 +76,7 @@ pub struct ViewProgram {
     cursor_image_pos: Option<Vec2>,
     panning: bool,
     rotation: u8,
-    pub modifiers: Vec<Modifier>,
+    pub modifiers: Arc<Vec<Modifier>>,
     pub crop_tool_active: bool,
     dirty: Arc<std::sync::atomic::AtomicBool>,
     pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
@@ -105,7 +105,7 @@ impl Default for ViewProgram {
             mipmap_zoom_out: true,
             smooth_zoom_in: false,
             uploaded_mipmap_zoom_out: true,
-            modifiers: Vec::new(),
+            modifiers: Arc::new(Vec::new()),
             crop_tool_active: false,
             dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pre_clear_gpu: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -119,13 +119,18 @@ impl ViewProgram {
         self.dirty.store(true, std::sync::atomic::Ordering::Release);
     }
 
+    pub fn modifiers_mut(&mut self) -> &mut Vec<Modifier> {
+        Arc::make_mut(&mut self.modifiers)
+    }
+
     fn reset_crop_to_image(&mut self) {
-        for m in &mut self.modifiers {
+        let size = self.image_size;
+        for m in self.modifiers_mut() {
             if let Some(crop) = m.kind.as_crop_mut() {
                 crop.x = 0.0;
                 crop.y = 0.0;
-                crop.width = self.image_size.x;
-                crop.height = self.image_size.y;
+                crop.width = size.x;
+                crop.height = size.y;
             }
         }
     }
@@ -487,7 +492,7 @@ impl ViewProgram {
             pixels: image.pixels_snapshot(),
             width: image.width,
             height: image.height,
-            modifiers: self.modifiers.clone(),
+            modifiers: self.modifiers.as_ref().clone(),
             crop: self.active_crop(),
             rotation: self.rotation,
         })

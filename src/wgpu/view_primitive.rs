@@ -29,7 +29,7 @@ pub struct ViewPrimitive {
     pub checker_uniforms: CheckerboardUniforms,
     pub mipmap_zoom_out: bool,
     pub smooth_zoom_in: bool,
-    pub modifiers: Vec<Modifier>,
+    pub modifiers: Arc<Vec<Modifier>>,
     pub dirty: bool,
     pub pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
 }

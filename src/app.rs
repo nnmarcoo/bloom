@@ -492,7 +492,7 @@ impl App {
                             .unwrap_or((1.0, 1.0));
                         let idx = self.program.modifiers.len();
                         self.program
-                            .modifiers
+                            .modifiers_mut()
                             .push(Modifier::new(ModifierKind::Crop(Crop {
                                 x: 0.0,
                                 y: 0.0,
@@ -530,9 +530,9 @@ impl App {
                 if let (Some(src), Some(tgt)) = (source, target)
                     && src != tgt
                 {
-                    let m = self.program.modifiers.remove(src);
+                    let m = self.program.modifiers_mut().remove(src);
                     let insert_at = if tgt > src { tgt - 1 } else { tgt };
-                    self.program.modifiers.insert(insert_at, m);
+                    self.program.modifiers_mut().insert(insert_at, m);
                     self.program.mark_dirty();
                     if let Some(active) = self.active_modifier {
                         self.active_modifier = Some(if active == src {
@@ -577,7 +577,7 @@ impl App {
                     } else {
                         ModifierKind::from(t)
                     };
-                    self.program.modifiers.push(Modifier::new(kind));
+                    self.program.modifiers_mut().push(Modifier::new(kind));
                     let idx = self.program.modifiers.len() - 1;
                     self.active_modifier = Some(idx);
                     self.program.mark_dirty();
@@ -586,7 +586,7 @@ impl App {
             Message::RemoveModifier(i) => {
                 if i < self.program.modifiers.len() {
                     self.program.mark_dirty();
-                    self.program.modifiers.remove(i);
+                    self.program.modifiers_mut().remove(i);
                     self.active_modifier = match self.active_modifier {
                         Some(a) if a == i => None,
                         Some(a) if a > i => Some(a - 1),
@@ -595,25 +595,25 @@ impl App {
                 }
             }
             Message::ToggleModifierExpanded(i) => {
-                if let Some(m) = self.program.modifiers.get_mut(i) {
+                if let Some(m) = self.program.modifiers_mut().get_mut(i) {
                     m.expanded = !m.expanded;
                 }
             }
             Message::ToggleModifierEnabled(i) => {
-                if let Some(m) = self.program.modifiers.get_mut(i) {
+                if let Some(m) = self.program.modifiers_mut().get_mut(i) {
                     m.enabled = !m.enabled;
                 }
                 self.program.mark_dirty();
             }
             Message::UpdateModifier(i, param) => {
                 let img_size = self.program.image_size();
-                if let Some(m) = self.program.modifiers.get_mut(i) {
+                if let Some(m) = self.program.modifiers_mut().get_mut(i) {
                     m.apply_param(param, img_size);
                 }
                 self.program.mark_dirty();
             }
             Message::SetCropRect(i, x, y, w, h) => {
-                if let Some(m) = self.program.modifiers.get_mut(i)
+                if let Some(m) = self.program.modifiers_mut().get_mut(i)
                     && let Some(crop) = m.kind.as_crop_mut()
                 {
                     crop.x = x;
