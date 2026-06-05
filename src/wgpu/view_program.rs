@@ -489,30 +489,42 @@ impl ViewProgram {
     pub fn export_data(&self) -> Option<crate::export::ExportData> {
         use crate::export::ExportFrame;
 
-        let (frames, still_index, width, height) = match &self.animation {
-            Some(anim) => {
-                let frames = anim
-                    .frames()
-                    .iter()
-                    .map(|f| ExportFrame {
-                        pixels: f.data.pixels_snapshot(),
-                        delay: f.delay,
-                    })
-                    .collect();
-                let first = &anim.frames()[0].data;
-                (frames, anim.current_index(), first.width, first.height)
-            }
-            None => {
-                let image = self.image.as_ref()?;
-                let frames = vec![ExportFrame {
-                    pixels: image.pixels_snapshot(),
-                    delay: std::time::Duration::ZERO,
-                }];
-                (frames, 0, image.width, image.height)
-            }
+        let anim = match &self.animation {
+            Some(anim) => anim,
+            None => return self.export_frame_data(),
         };
 
-        Some(crate::export::ExportData {
+        let frames = anim
+            .frames()
+            .iter()
+            .map(|f| ExportFrame {
+                pixels: f.data.pixels_snapshot(),
+                delay: f.delay,
+            })
+            .collect();
+        let first = &anim.frames()[0].data;
+        Some(self.build_export(frames, anim.current_index(), first.width, first.height))
+    }
+
+    pub fn export_frame_data(&self) -> Option<crate::export::ExportData> {
+        use crate::export::ExportFrame;
+
+        let image = self.image.as_ref()?;
+        let frames = vec![ExportFrame {
+            pixels: image.pixels_snapshot(),
+            delay: std::time::Duration::ZERO,
+        }];
+        Some(self.build_export(frames, 0, image.width, image.height))
+    }
+
+    fn build_export(
+        &self,
+        frames: Vec<crate::export::ExportFrame>,
+        still_index: usize,
+        width: u32,
+        height: u32,
+    ) -> crate::export::ExportData {
+        crate::export::ExportData {
             frames,
             still_index,
             width,
@@ -520,7 +532,7 @@ impl ViewProgram {
             modifiers: self.modifiers.as_ref().clone(),
             crop: self.active_crop(),
             rotation: self.rotation,
-        })
+        }
     }
 
     pub fn cursor_info(&self) -> Option<(u32, u32, Vec2, [u8; 4])> {

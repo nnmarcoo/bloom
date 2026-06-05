@@ -25,6 +25,7 @@ pub fn view<'a>(
     show_edit: bool,
     show_checkerboard: bool,
     has_image: bool,
+    is_animation: bool,
     fit_lock: bool,
     export_progress: Option<f32>,
 ) -> Element<'a, Message> {
@@ -163,10 +164,11 @@ pub fn view<'a>(
                                 Message::Noop
                             }
                         ),
-                        menu_separator(),
-                        menu_item("About", Message::Noop),
-                        menu_item("Exit", Message::Exit),
-                    ],
+                    ]
+                    .extend(is_animation.then(|| menu_item("Export frame", Message::ExportFrame)))
+                    .push(menu_separator())
+                    .push(menu_item("About", Message::Noop))
+                    .push(menu_item("Exit", Message::Exit)),
                     180
                 ),
             )

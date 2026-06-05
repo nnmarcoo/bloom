@@ -164,6 +164,7 @@ pub enum Message {
     ModifierDragEnd,
     SetCropRect(usize, f32, f32, f32, f32),
     ExportImage,
+    ExportFrame,
     ExportProgress(f32),
     ExportDone(Result<String, String>),
     Noop,
@@ -626,12 +627,13 @@ impl App {
             Message::ExportImage => {
                 if let Some(data) = self.program.export_data() {
                     let ext = if data.frames.len() > 1 { "gif" } else { "png" };
-                    let suggested = self
-                        .gallery
-                        .current()
-                        .and_then(|p| p.file_stem())
-                        .map(|s| format!("{}.{ext}", s.to_string_lossy()))
-                        .unwrap_or_else(|| format!("export.{ext}"));
+                    let suggested = self.suggested_export_name(ext);
+                    return tasks::export_image(data, suggested);
+                }
+            }
+            Message::ExportFrame => {
+                if let Some(data) = self.program.export_frame_data() {
+                    let suggested = self.suggested_export_name("png");
                     return tasks::export_image(data, suggested);
                 }
             }
@@ -650,6 +652,14 @@ impl App {
             Message::Event(event) => return self.handle_event(event),
         }
         Task::none()
+    }
+
+    fn suggested_export_name(&self, ext: &str) -> String {
+        self.gallery
+            .current()
+            .and_then(|p| p.file_stem())
+            .map(|s| format!("{}.{ext}", s.to_string_lossy()))
+            .unwrap_or_else(|| format!("export.{ext}"))
     }
 
     fn apply_media(&mut self, media: MediaData) {
@@ -803,6 +813,7 @@ impl App {
             self.config.show_edit,
             self.program.show_checkerboard,
             self.gallery.current().is_some(),
+            self.program.animation_info().is_some(),
             self.config.fit_lock,
             self.export_progress,
         ))
