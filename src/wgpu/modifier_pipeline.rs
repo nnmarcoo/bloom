@@ -10,10 +10,7 @@ use crate::{
         Modifier,
         gpu::{ModUniforms, TileInfo, build_segment_uniforms},
     },
-    wgpu::{
-        gpu,
-        tiled_source::{Tile, TiledSource},
-    },
+    wgpu::{gpu, tiled_source::TiledSource, view_pipeline::tile_ndc_culled},
 };
 
 struct CombinedPass {
@@ -257,7 +254,7 @@ impl ModifierPipeline {
         for ti in 0..n_tiles {
             let tile = &source.tiles[ti];
 
-            if !is_tile_visible(tile) {
+            if tile_ndc_culled(tile.last_ndc_rect) {
                 self.tile_outputs[ti] = None;
                 self.tile_display_bgs_linear[ti] = None;
                 self.tile_display_bgs_nearest[ti] = None;
@@ -383,15 +380,6 @@ impl ModifierPipeline {
                 &self.nearest_sampler,
                 &format!("modifier-tile{ti}-display-nearest"),
             ));
-        }
-    }
-}
-
-fn is_tile_visible(tile: &Tile) -> bool {
-    match tile.last_ndc_rect {
-        None => true,
-        Some((min_ndc, max_ndc)) => {
-            !(max_ndc.x < -1.0 || min_ndc.x > 1.0 || max_ndc.y < -1.0 || min_ndc.y > 1.0)
         }
     }
 }

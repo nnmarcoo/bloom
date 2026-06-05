@@ -112,55 +112,47 @@ pub enum ModifierKind {
     Drawing(Drawing),
 }
 
+macro_rules! impl_modifier_dispatch {
+    ($($variant:ident),* $(,)?) => {
+        impl ModifierKind {
+            fn as_impl(&self) -> &dyn ModifierImpl {
+                match self {
+                    $(ModifierKind::$variant(m) => m,)*
+                }
+            }
+
+            fn as_impl_mut(&mut self) -> &mut dyn ModifierImpl {
+                match self {
+                    $(ModifierKind::$variant(m) => m,)*
+                }
+            }
+        }
+    };
+}
+
+impl_modifier_dispatch!(
+    Levels,
+    BrightnessContrast,
+    HueSaturation,
+    Exposure,
+    Vibrance,
+    ColorBalance,
+    GaussianBlur,
+    MotionBlur,
+    RadialBlur,
+    Halftone,
+    PixelSort,
+    Vignette,
+    ChromaticAberration,
+    Posterize,
+    Threshold,
+    Grain,
+    Crop,
+    Text,
+    Drawing,
+);
+
 impl ModifierKind {
-    fn as_impl(&self) -> &dyn ModifierImpl {
-        match self {
-            ModifierKind::Levels(m) => m,
-            ModifierKind::BrightnessContrast(m) => m,
-            ModifierKind::HueSaturation(m) => m,
-            ModifierKind::Exposure(m) => m,
-            ModifierKind::Vibrance(m) => m,
-            ModifierKind::ColorBalance(m) => m,
-            ModifierKind::GaussianBlur(m) => m,
-            ModifierKind::MotionBlur(m) => m,
-            ModifierKind::RadialBlur(m) => m,
-            ModifierKind::Halftone(m) => m,
-            ModifierKind::PixelSort(m) => m,
-            ModifierKind::Vignette(m) => m,
-            ModifierKind::ChromaticAberration(m) => m,
-            ModifierKind::Posterize(m) => m,
-            ModifierKind::Threshold(m) => m,
-            ModifierKind::Grain(m) => m,
-            ModifierKind::Crop(m) => m,
-            ModifierKind::Text(m) => m,
-            ModifierKind::Drawing(m) => m,
-        }
-    }
-
-    fn as_impl_mut(&mut self) -> &mut dyn ModifierImpl {
-        match self {
-            ModifierKind::Levels(m) => m,
-            ModifierKind::BrightnessContrast(m) => m,
-            ModifierKind::HueSaturation(m) => m,
-            ModifierKind::Exposure(m) => m,
-            ModifierKind::Vibrance(m) => m,
-            ModifierKind::ColorBalance(m) => m,
-            ModifierKind::GaussianBlur(m) => m,
-            ModifierKind::MotionBlur(m) => m,
-            ModifierKind::RadialBlur(m) => m,
-            ModifierKind::Halftone(m) => m,
-            ModifierKind::PixelSort(m) => m,
-            ModifierKind::Vignette(m) => m,
-            ModifierKind::ChromaticAberration(m) => m,
-            ModifierKind::Posterize(m) => m,
-            ModifierKind::Threshold(m) => m,
-            ModifierKind::Grain(m) => m,
-            ModifierKind::Crop(m) => m,
-            ModifierKind::Text(m) => m,
-            ModifierKind::Drawing(m) => m,
-        }
-    }
-
     pub fn name(&self) -> &'static str {
         self.as_impl().name()
     }

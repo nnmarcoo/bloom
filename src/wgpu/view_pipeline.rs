@@ -33,6 +33,13 @@ pub struct Uniforms {
     pub crop_uv: [f32; 4],
 }
 
+pub(crate) fn tile_ndc_culled(rect: Option<(Vec2, Vec2)>) -> bool {
+    matches!(
+        rect,
+        Some((min, max)) if max.x < -1.0 || min.x > 1.0 || max.y < -1.0 || min.y > 1.0
+    )
+}
+
 fn ndc_rect_of_transform(transform: &Mat4) -> (Vec2, Vec2) {
     let corners = [
         vec4(-1.0, -1.0, 0.0, 1.0),
@@ -284,12 +291,7 @@ impl ViewPipeline {
                 let zoomed_out = source.physical_scale < 1.0 - 1e-6;
                 let nearest = !smooth_zoom_in && !zoomed_out;
                 for (i, tile) in source.tiles.iter().enumerate() {
-                    if let Some((min_ndc, max_ndc)) = tile.last_ndc_rect
-                        && (max_ndc.x < -1.0
-                            || min_ndc.x > 1.0
-                            || max_ndc.y < -1.0
-                            || min_ndc.y > 1.0)
-                    {
+                    if tile_ndc_culled(tile.last_ndc_rect) {
                         continue;
                     }
                     if let Some(bg) = mp.tile_display_bg(i, nearest) {
@@ -301,14 +303,12 @@ impl ViewPipeline {
         }
 
         if let Some(source) = &self.source {
+            let zoomed_out = source.physical_scale < 1.0 - 1e-6;
             for tile in &source.tiles {
-                if let Some((min_ndc, max_ndc)) = tile.last_ndc_rect
-                    && (max_ndc.x < -1.0 || min_ndc.x > 1.0 || max_ndc.y < -1.0 || min_ndc.y > 1.0)
-                {
+                if tile_ndc_culled(tile.last_ndc_rect) {
                     continue;
                 }
 
-                let zoomed_out = source.physical_scale < 1.0 - 1e-6;
                 let bind_group = if zoomed_out {
                     &tile.zoom_out_bind_group
                 } else if smooth_zoom_in {
