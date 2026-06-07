@@ -28,6 +28,7 @@ pub fn view<'a>(
     loading: Option<&'a str>,
     show_info: bool,
     show_edit: bool,
+    show_bottom_bar: bool,
     path: Option<&'a Path>,
     gallery: &'a Gallery,
     theme: &'a Theme,
@@ -104,13 +105,19 @@ pub fn view<'a>(
         .width(Length::Fill)
         .into();
 
-    let viewer_with_menu: Element<'a, Message> = ContextMenu::new(viewer, || {
+    let bottom_bar_label = if show_bottom_bar {
+        "Hide Bottom Bar"
+    } else {
+        "Show Bottom Bar"
+    };
+    let viewer_with_menu: Element<'a, Message> = ContextMenu::new(viewer, move || {
         styled_menu(
             column![
                 menu_item("Copy Color", Message::CopyColor),
                 menu_item("Copy File Path", Message::CopyPath),
                 menu_separator(),
                 menu_item("Fit", Message::Fit),
+                menu_item(bottom_bar_label, Message::ToggleBottomBar),
             ],
             180,
         )

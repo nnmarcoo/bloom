@@ -44,6 +44,7 @@ pub struct Config {
     pub theme: Theme,
     pub show_info: bool,
     pub show_edit: bool,
+    pub show_bottom_bar: bool,
     pub show_checkerboard: bool,
     pub rounded: bool,
     pub decorations: bool,
@@ -66,6 +67,7 @@ impl Default for Config {
             theme: Theme::Dark,
             show_info: false,
             show_edit: false,
+            show_bottom_bar: true,
             show_checkerboard: false,
             rounded: true,
             decorations: true,
@@ -90,6 +92,8 @@ struct ConfigFile {
     show_info: bool,
     #[serde(default)]
     show_edit: bool,
+    #[serde(default = "default_true")]
+    show_bottom_bar: bool,
     #[serde(default)]
     show_checkerboard: bool,
     rounded: bool,
@@ -139,6 +143,7 @@ impl From<&Config> for ConfigFile {
             theme: c.theme.to_string(),
             show_info: c.show_info,
             show_edit: c.show_edit,
+            show_bottom_bar: c.show_bottom_bar,
             show_checkerboard: c.show_checkerboard,
             rounded: c.rounded,
             decorations: c.decorations,
@@ -169,6 +174,7 @@ impl From<ConfigFile> for Config {
             theme: theme_from_str(&f.theme),
             show_info: f.show_info,
             show_edit: f.show_edit,
+            show_bottom_bar: f.show_bottom_bar,
             show_checkerboard: f.show_checkerboard,
             rounded: f.rounded,
             decorations: f.decorations,

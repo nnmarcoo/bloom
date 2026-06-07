@@ -6,7 +6,7 @@ use crate::app::{Message, Tool};
 use crate::components::modifier_stack;
 use crate::modifiers::Modifier;
 use crate::styles::{EDIT_PANEL_WIDTH, PAD, bar_style, panel_divider_style};
-use crate::ui::{svg_button_active, svg_button_plain, with_tooltip};
+use crate::ui::{svg_button_active, svg_button_disabled, svg_button_plain, with_tooltip};
 
 fn tool_button<'a>(icon: &'static [u8], tool: Tool, selected_tool: &Tool) -> Element<'a, Message> {
     let msg = Message::SelectTool(tool.clone());
@@ -46,6 +46,16 @@ pub fn view<'a>(
                     selected_tool,
                 ),
                 "Crop",
+                Position::Left,
+            ),
+            with_tooltip(
+                svg_button_disabled(include_bytes!("../../assets/icons/text.svg")),
+                "Text (coming soon)",
+                Position::Left,
+            ),
+            with_tooltip(
+                svg_button_disabled(include_bytes!("../../assets/icons/pencil.svg")),
+                "Draw (coming soon)",
                 Position::Left,
             ),
         ]

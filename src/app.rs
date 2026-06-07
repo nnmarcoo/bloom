@@ -132,6 +132,7 @@ pub enum Message {
     PanEnded,
     CopyColor,
     CopyPath,
+    ToggleBottomBar,
     RotateCw,
     RotateCcw,
     Exit,
@@ -307,6 +308,10 @@ impl App {
             }
             Message::ToggleInfoColumn => {
                 self.config.show_info = !self.config.show_info;
+                self.config.save();
+            }
+            Message::ToggleBottomBar => {
+                self.config.show_bottom_bar = !self.config.show_bottom_bar;
                 self.config.save();
             }
             Message::ToggleInfoSection(label) => {
@@ -778,6 +783,7 @@ impl App {
             self.loading.as_deref(),
             self.config.show_info,
             self.config.show_edit,
+            self.config.show_bottom_bar,
             self.gallery.current().map(|p| p.as_path()),
             &self.gallery,
             &self.config.theme,
@@ -804,20 +810,23 @@ impl App {
             col = col.push(timeline_bar::view(total, position, !self.paused, timestamp));
         }
 
-        col.push(bottom_bar::view(
-            self.mode,
-            self.program.scale(),
-            self.program.rotation(),
-            self.focus_scale,
-            self.config.show_info,
-            self.config.show_edit,
-            self.program.show_checkerboard,
-            self.gallery.current().is_some(),
-            self.program.animation_info().is_some(),
-            self.config.fit_lock,
-            self.export_progress,
-        ))
-        .into()
+        if self.config.show_bottom_bar {
+            col = col.push(bottom_bar::view(
+                self.mode,
+                self.program.scale(),
+                self.program.rotation(),
+                self.focus_scale,
+                self.config.show_info,
+                self.config.show_edit,
+                self.program.show_checkerboard,
+                self.gallery.current().is_some(),
+                self.program.animation_info().is_some(),
+                self.config.fit_lock,
+                self.export_progress,
+            ));
+        }
+
+        col.into()
     }
 
     pub fn title(&self) -> String {

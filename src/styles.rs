@@ -64,6 +64,13 @@ pub fn svg_style(theme: &Theme, status: svg::Status) -> svg::Style {
     svg::Style { color: Some(color) }
 }
 
+pub fn svg_disabled_style(theme: &Theme, _status: svg::Status) -> svg::Style {
+    let palette = theme.extended_palette();
+    svg::Style {
+        color: Some(palette.background.base.text.scale_alpha(0.3)),
+    }
+}
+
 pub fn svg_color_style(color: Color) -> impl Fn(&Theme, svg::Status) -> svg::Style {
     move |_, _| svg::Style { color: Some(color) }
 }
