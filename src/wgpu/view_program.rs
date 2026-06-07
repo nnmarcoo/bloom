@@ -18,7 +18,7 @@ use crate::{
         media::animation::Animation,
         media::exif_data::ExifData,
         media::image_data::{ImageData, ImageId},
-        passes::checkerboard::CheckerboardUniforms,
+        passes::{checkerboard::CheckerboardUniforms, pixel_grid::PixelGridUniforms},
         scale::Scale,
         view_pipeline::Uniforms,
         view_primitive::ViewPrimitive,
@@ -70,6 +70,7 @@ pub struct ViewProgram {
     animation: Option<Animation>,
     pub show_checkerboard: bool,
     pub checker_uniforms: CheckerboardUniforms,
+    pub show_pixel_grid: bool,
     pub mipmap_zoom_out: bool,
     pub smooth_zoom_in: bool,
     uploaded_mipmap_zoom_out: bool,
@@ -99,6 +100,7 @@ impl Default for ViewProgram {
                 tile_size: 12.0,
                 _pad: [0.0; 3],
             },
+            show_pixel_grid: false,
             cursor_image_pos: None,
             panning: false,
             rotation: 0,
@@ -221,6 +223,32 @@ impl ViewProgram {
             * Mat4::from_translation(vec3(pan_ndc.x, pan_ndc.y, 0.0))
             * Mat4::from_rotation_z(angle)
             * Mat4::from_scale(vec3(aspect.x, aspect.y, 1.0))
+    }
+
+    fn grid_uniforms(&self, bounds: Rectangle) -> Option<PixelGridUniforms> {
+        let viewport = vec2(bounds.width, bounds.height);
+        if !self.show_pixel_grid
+            || self.image_size == Vec2::ZERO
+            || viewport.x < 1.0
+            || viewport.y < 1.0
+        {
+            return None;
+        }
+        let eff = self.effective_display_size();
+        let origin = if let Some([min_u, min_v, ..]) = self.active_crop() {
+            vec2(min_u * self.image_size.x, min_v * self.image_size.y)
+        } else {
+            Vec2::ZERO
+        };
+        let to_pixels =
+            Mat4::from_translation(vec3(0.5 * eff.x + origin.x, 0.5 * eff.y + origin.y, 0.0))
+                * Mat4::from_scale(vec3(0.5 * eff.x, -0.5 * eff.y, 1.0));
+        let screen_to_img = to_pixels * self.build_transform(viewport).inverse();
+        Some(PixelGridUniforms {
+            screen_to_img,
+            viewport: [bounds.x, bounds.y, viewport.x, viewport.y],
+            bounds_img: [origin.x, origin.y, origin.x + eff.x, origin.y + eff.y],
+        })
     }
 
     fn aspect(&self, viewport: Vec2) -> Vec2 {
@@ -643,6 +671,7 @@ impl Program<Message> for ViewProgram {
             bounds,
             show_checkerboard: self.show_checkerboard,
             checker_uniforms: self.checker_uniforms,
+            grid: self.grid_uniforms(bounds),
             mipmap_zoom_out: self.mipmap_zoom_out,
             smooth_zoom_in: self.smooth_zoom_in,
             modifiers: self.modifiers.clone(),

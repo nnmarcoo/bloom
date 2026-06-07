@@ -46,6 +46,7 @@ pub struct Config {
     pub show_edit: bool,
     pub show_bottom_bar: bool,
     pub show_checkerboard: bool,
+    pub show_pixel_grid: bool,
     pub rounded: bool,
     pub decorations: bool,
     pub always_on_top: bool,
@@ -69,6 +70,7 @@ impl Default for Config {
             show_edit: false,
             show_bottom_bar: true,
             show_checkerboard: false,
+            show_pixel_grid: false,
             rounded: true,
             decorations: true,
             always_on_top: false,
@@ -96,6 +98,8 @@ struct ConfigFile {
     show_bottom_bar: bool,
     #[serde(default)]
     show_checkerboard: bool,
+    #[serde(default)]
+    show_pixel_grid: bool,
     rounded: bool,
     #[serde(default = "default_true")]
     decorations: bool,
@@ -145,6 +149,7 @@ impl From<&Config> for ConfigFile {
             show_edit: c.show_edit,
             show_bottom_bar: c.show_bottom_bar,
             show_checkerboard: c.show_checkerboard,
+            show_pixel_grid: c.show_pixel_grid,
             rounded: c.rounded,
             decorations: c.decorations,
             always_on_top: c.always_on_top,
@@ -176,6 +181,7 @@ impl From<ConfigFile> for Config {
             show_edit: f.show_edit,
             show_bottom_bar: f.show_bottom_bar,
             show_checkerboard: f.show_checkerboard,
+            show_pixel_grid: f.show_pixel_grid,
             rounded: f.rounded,
             decorations: f.decorations,
             always_on_top: f.always_on_top,

@@ -12,7 +12,7 @@ use crate::{
     modifiers::Modifier,
     wgpu::{
         media::image_data::ImageData,
-        passes::checkerboard::CheckerboardUniforms,
+        passes::{checkerboard::CheckerboardUniforms, pixel_grid::PixelGridUniforms},
         view_pipeline::{Uniforms, ViewPipeline},
     },
 };
@@ -27,6 +27,7 @@ pub struct ViewPrimitive {
     pub bounds: Rectangle,
     pub show_checkerboard: bool,
     pub checker_uniforms: CheckerboardUniforms,
+    pub grid: Option<PixelGridUniforms>,
     pub mipmap_zoom_out: bool,
     pub smooth_zoom_in: bool,
     pub modifiers: Arc<Vec<Modifier>>,
@@ -74,6 +75,11 @@ impl Primitive for ViewPrimitive {
         if self.show_checkerboard {
             pipeline.update_checkerboard(queue, self.checker_uniforms);
         }
+        if let Some(mut grid) = self.grid {
+            let sf = viewport.scale_factor();
+            grid.viewport = grid.viewport.map(|v| v * sf);
+            pipeline.update_pixel_grid(queue, &grid);
+        }
         pipeline.prepare_modifiers(device, queue, &self.modifiers, self.dirty);
     }
 
@@ -94,5 +100,8 @@ impl Primitive for ViewPrimitive {
             &self.bounds,
             self.smooth_zoom_in,
         );
+        if self.grid.is_some() {
+            pipeline.render_pixel_grid(encoder, target, clip_bounds, &self.bounds);
+        }
     }
 }

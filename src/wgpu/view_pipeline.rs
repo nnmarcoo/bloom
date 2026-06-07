@@ -21,6 +21,7 @@ use crate::{
         passes::{
             checkerboard::{CheckerboardPass, CheckerboardUniforms},
             display::DisplayPass,
+            pixel_grid::{PixelGridPass, PixelGridUniforms},
         },
         tiled_source::TiledSource,
     },
@@ -56,6 +57,7 @@ fn ndc_rect_of_transform(transform: &Mat4) -> (Vec2, Vec2) {
 pub struct ViewPipeline {
     display: DisplayPass,
     checkerboard: CheckerboardPass,
+    pixel_grid: PixelGridPass,
     trilinear_sampler: Sampler,
     nearest_sampler: Sampler,
     linear_sampler: Sampler,
@@ -231,6 +233,10 @@ impl ViewPipeline {
         }
     }
 
+    pub fn update_pixel_grid(&self, queue: &Queue, uniforms: &PixelGridUniforms) {
+        self.pixel_grid.update(queue, uniforms);
+    }
+
     pub fn prepare_modifiers(
         &mut self,
         device: &Device,
@@ -275,6 +281,17 @@ impl ViewPipeline {
         bounds: &Rectangle,
     ) {
         self.checkerboard
+            .draw(encoder, target, clip_bounds, bounds, self.scale_factor);
+    }
+
+    pub fn render_pixel_grid(
+        &self,
+        encoder: &mut CommandEncoder,
+        target: &TextureView,
+        clip_bounds: &Rectangle<u32>,
+        bounds: &Rectangle,
+    ) {
+        self.pixel_grid
             .draw(encoder, target, clip_bounds, bounds, self.scale_factor);
     }
 
@@ -438,10 +455,12 @@ impl Pipeline for ViewPipeline {
         );
 
         let checkerboard = CheckerboardPass::new(device, format);
+        let pixel_grid = PixelGridPass::new(device, format);
 
         Self {
             display,
             checkerboard,
+            pixel_grid,
             trilinear_sampler,
             nearest_sampler,
             linear_sampler,

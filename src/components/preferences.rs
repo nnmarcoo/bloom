@@ -52,6 +52,7 @@ pub enum PreferenceMessage {
     SetRememberLast(bool),
     SetMipmapZoomOut(bool),
     SetSmoothZoomIn(bool),
+    SetPixelGrid(bool),
     SetPixelPreviewSize(u32),
     StartCapture(Action),
     CancelCapture,
@@ -118,6 +119,10 @@ pub fn update(
             pending.smooth_zoom_in = v;
             PreferenceOutcome::Open
         }
+        PreferenceMessage::SetPixelGrid(v) => {
+            pending.show_pixel_grid = v;
+            PreferenceOutcome::Open
+        }
         PreferenceMessage::SetPixelPreviewSize(v) => {
             pending.pixel_preview_size = v;
             PreferenceOutcome::Open
@@ -154,6 +159,7 @@ pub fn update(
             pending.remember_last = d.remember_last;
             pending.mipmap_zoom_out = d.mipmap_zoom_out;
             pending.smooth_zoom_in = d.smooth_zoom_in;
+            pending.show_pixel_grid = d.show_pixel_grid;
             pending.pixel_preview_size = d.pixel_preview_size;
             PreferenceOutcome::Open
         }
@@ -444,6 +450,14 @@ fn rendering_pane<'a>(pending: &'a Config, theme: &Theme) -> Element<'a, Message
             "Bilinear filtering, blends between neighbouring pixels when zoomed above 100%",
             toggler(pending.smooth_zoom_in)
                 .on_toggle(|v| Message::Preference(PreferenceMessage::SetSmoothZoomIn(v)))
+                .into(),
+            theme,
+        ),
+        setting(
+            "Pixel grid",
+            "Overlay a grid aligned to pixel boundaries when zoomed in far",
+            toggler(pending.show_pixel_grid)
+                .on_toggle(|v| Message::Preference(PreferenceMessage::SetPixelGrid(v)))
                 .into(),
             theme,
         ),

@@ -76,6 +76,7 @@ impl App {
         if config.show_checkerboard {
             program.checker_uniforms = checker_uniforms_from_theme(&config.theme);
         }
+        program.show_pixel_grid = config.show_pixel_grid;
         program.mipmap_zoom_out = config.mipmap_zoom_out;
         program.smooth_zoom_in = config.smooth_zoom_in;
         styles::set_radius(config.rounded);
@@ -344,6 +345,7 @@ impl App {
                             self.program.checker_uniforms =
                                 checker_uniforms_from_theme(&self.config.theme);
                         }
+                        self.program.show_pixel_grid = self.config.show_pixel_grid;
                         if mipmap_changed {
                             self.notifications
                                 .push(NotificationEntry::new(Notification::warning(
