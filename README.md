@@ -50,7 +50,7 @@
     <tr><td>GIF</td><td><code>.gif</code></td><td>Animated</td></tr>
     <tr><td>GIMP</td><td><code>.xcf</code></td><td>Layers composited top-to-bottom</td></tr>
     <tr><td>HDR (Radiance)</td><td><code>.hdr</code></td><td>Tonemapped (Reinhard)</td></tr>
-    <tr><td>HEIC / HEIF</td><td><code>.heic</code> <code>.heif</code></td><td>Source builds need <code>--features heif</code></td></tr>
+    <tr><td>HEIC / HEIF</td><td><code>.heic</code> <code>.heif</code></td><td>In default/<code>-heif</code> downloads; <code>--features heif</code> from source</td></tr>
     <tr><td>ICO</td><td><code>.ico</code></td><td>Largest available size</td></tr>
     <tr><td>JPEG</td><td><code>.jpg</code> <code>.jpeg</code></td><td></td></tr>
     <tr><td>JPEG 2000</td><td><code>.jp2</code> <code>.j2k</code> <code>.j2c</code> <code>.jpx</code></td><td></td></tr>
@@ -66,14 +66,26 @@
     <tr><td>SVG</td><td><code>.svg</code> <code>.svgz</code></td><td>Rasterized at native size</td></tr>
     <tr><td>TGA</td><td><code>.tga</code></td><td></td></tr>
     <tr><td>TIFF</td><td><code>.tif</code> <code>.tiff</code></td><td>No 64-bit float</td></tr>
-    <tr><td>Video</td><td><code>.mp4</code> <code>.m4v</code> <code>.mov</code> <code>.mkv</code> <code>.webm</code> <code>.avi</code> <code>.mpg</code> <code>.mpeg</code> <code>.ts</code> <code>.m2ts</code> <code>.wmv</code> <code>.flv</code></td><td>Playback with audio; source builds need <code>--features video</code></td></tr>
+    <tr><td>Video</td><td><code>.mp4</code> <code>.m4v</code> <code>.mov</code> <code>.mkv</code> <code>.webm</code> <code>.avi</code> <code>.mpg</code> <code>.mpeg</code> <code>.ts</code> <code>.m2ts</code> <code>.wmv</code> <code>.flv</code></td><td>Playback with audio; in the default download or <code>--features video</code> from source</td></tr>
     <tr><td>WebP</td><td><code>.webp</code></td><td>Static and animated</td></tr>
   </tbody>
 </table>
 
+## Download
+
+Prebuilt [releases](https://github.com/nnmarcoo/bloom/releases/latest) come in three flavors per platform — pick based on which formats you need:
+
+| Download | Includes | Size |
+| --- | --- | --- |
+| `bloom-<platform>` | Everything, including HEIC/HEIF and video | Largest |
+| `bloom-<platform>-heif` | Core formats + HEIC/HEIF, no video | Smaller |
+| `bloom-<platform>-minimal` | Core formats only | Smallest |
+
+Video is the bulk of the size (it bundles FFmpeg), so grab `-heif` or `-minimal` if you don't need it.
+
 ## Build
 
-> Prebuilt [releases](https://github.com/nnmarcoo/bloom/releases/latest) already bundle HEIC/HEIF and video support. The feature flags below only matter when building from source.
+> The feature flags below only matter when building from source — prebuilt downloads above already include them.
 
 ```sh
 cargo build --release
