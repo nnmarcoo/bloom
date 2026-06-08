@@ -107,6 +107,7 @@ pub struct VideoState {
     awaiting_seek: bool,
     stepped: bool,
     ended: bool,
+    stall_clock: Option<Duration>,
 }
 
 impl VideoState {
@@ -136,6 +137,10 @@ impl VideoState {
         let position = first.pts;
         let current = Arc::clone(&first.data);
 
+        if let Some(audio) = &audio {
+            audio.set_base(position);
+        }
+
         Ok(Self {
             info,
             current,
@@ -152,6 +157,7 @@ impl VideoState {
             awaiting_seek: false,
             stepped: false,
             ended: false,
+            stall_clock: None,
         })
     }
 
@@ -315,6 +321,7 @@ impl VideoState {
         let target = target.min(self.info.duration);
         self.expected_epoch += 1;
         self.ended = false;
+        self.stall_clock = None;
         self.awaiting_seek = true;
         self.stepped = false;
         self.position = target;
@@ -332,6 +339,22 @@ impl VideoState {
         match &self.audio {
             Some(audio) => audio.set_base(pts),
             None => self.clock.reset(pts),
+        }
+    }
+
+    fn poll_ended(&mut self) {
+        if !self.eos.load(Ordering::Relaxed) {
+            return;
+        }
+        let now = self.master_now();
+        if now + self.frame_interval() >= self.info.duration {
+            self.ended = true;
+            return;
+        }
+        if self.stall_clock == Some(now) {
+            self.ended = true;
+        } else {
+            self.stall_clock = Some(now);
         }
     }
 
@@ -377,9 +400,7 @@ impl VideoState {
                     advanced = true;
                 }
                 None => {
-                    if self.eos.load(Ordering::Relaxed) {
-                        self.ended = true;
-                    }
+                    self.poll_ended();
                     break;
                 }
             }
