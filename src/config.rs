@@ -52,7 +52,7 @@ pub struct Config {
     pub always_on_top: bool,
     pub autoplay: bool,
     pub remember_last: bool,
-    pub last_image: Option<PathBuf>,
+    pub last_media: Option<PathBuf>,
     pub mipmap_zoom_out: bool,
     pub smooth_zoom_in: bool,
     pub keymap: Keymap,
@@ -76,7 +76,7 @@ impl Default for Config {
             always_on_top: false,
             autoplay: true,
             remember_last: false,
-            last_image: None,
+            last_media: None,
             mipmap_zoom_out: true,
             smooth_zoom_in: false,
             keymap: Keymap::default(),
@@ -109,8 +109,8 @@ struct ConfigFile {
     autoplay: bool,
     #[serde(default)]
     remember_last: bool,
-    #[serde(default)]
-    last_image: Option<PathBuf>,
+    #[serde(default, alias = "last_image")]
+    last_media: Option<PathBuf>,
     #[serde(default = "default_true")]
     mipmap_zoom_out: bool,
     #[serde(default)]
@@ -155,7 +155,7 @@ impl From<&Config> for ConfigFile {
             always_on_top: c.always_on_top,
             autoplay: c.autoplay,
             remember_last: c.remember_last,
-            last_image: c.last_image.clone(),
+            last_media: c.last_media.clone(),
             mipmap_zoom_out: c.mipmap_zoom_out,
             smooth_zoom_in: c.smooth_zoom_in,
             keybinds: KeymapFile::from(&c.keymap),
@@ -187,7 +187,7 @@ impl From<ConfigFile> for Config {
             always_on_top: f.always_on_top,
             autoplay: f.autoplay,
             remember_last: f.remember_last,
-            last_image: f.last_image,
+            last_media: f.last_media,
             mipmap_zoom_out: f.mipmap_zoom_out,
             smooth_zoom_in: f.smooth_zoom_in,
             keymap: Keymap::from(f.keybinds),

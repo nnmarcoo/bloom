@@ -430,8 +430,8 @@ fn rendering_pane<'a>(pending: &'a Config, theme: &Theme) -> Element<'a, Message
             theme,
         ),
         setting(
-            "Remember last image",
-            "Open the last viewed image when no file is passed on launch",
+            "Remember last media",
+            "Open the last viewed file when no file is passed on launch",
             toggler(pending.remember_last)
                 .on_toggle(|v| Message::Preference(PreferenceMessage::SetRememberLast(v)))
                 .into(),

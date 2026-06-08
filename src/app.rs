@@ -202,7 +202,7 @@ impl App {
     pub fn new(path: Option<PathBuf>, config: Config) -> (Self, Task<Message>) {
         let effective_path = path.or_else(|| {
             if config.remember_last {
-                config.last_image.as_ref().filter(|p| p.exists()).cloned()
+                config.last_media.as_ref().filter(|p| p.exists()).cloned()
             } else {
                 None
             }
@@ -305,7 +305,7 @@ impl App {
                     self.loading = None;
                     self.apply_media(media);
                     if self.config.remember_last {
-                        self.config.last_image = self.gallery.current().cloned();
+                        self.config.last_media = self.gallery.current().cloned();
                         self.config.save();
                     }
                 }
