@@ -1,7 +1,7 @@
 <div align="center">
   <a href="https://github.com/nnmarcoo/bloom/releases/latest"><img src="assets/logo/banner.png" width="200" alt="bloom"></a>
   <br><br>
-  <p><em>hardware-accelerated image viewer built with Rust</em></p>
+  <p><em>hardware-accelerated media viewer built with Rust</em></p>
 
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0077aa?style=for-the-badge)
   ![License](https://img.shields.io/badge/license-GPL--3.0-0077aa?style=for-the-badge)
@@ -17,6 +17,7 @@
 - **GPU rendering** — hardware-accelerated via [wgpu](https://wgpu.rs) at any resolution
 - **Hardware mipmaps** — smooth zoomed-out views
 - **GIF, APNG & WebP** — animation playback with timeline scrubbing and frame controls
+- **Video** — MP4, MOV, MKV, WebM, AVI and more with audio, scrubbing, and frame stepping (requires `--features video`)
 - **Gallery** — browse every image in a folder
 - **Tiled textures** — handles images larger than GPU texture limits
 - **Pan and zoom** — 0.01× to 35×, with custom % input
@@ -65,6 +66,7 @@
     <tr><td>SVG</td><td><code>.svg</code> <code>.svgz</code></td><td>Rasterized at native size</td></tr>
     <tr><td>TGA</td><td><code>.tga</code></td><td></td></tr>
     <tr><td>TIFF</td><td><code>.tif</code> <code>.tiff</code></td><td>No 64-bit float</td></tr>
+    <tr><td>Video</td><td><code>.mp4</code> <code>.m4v</code> <code>.mov</code> <code>.mkv</code> <code>.webm</code> <code>.avi</code> <code>.mpg</code> <code>.mpeg</code> <code>.ts</code> <code>.m2ts</code> <code>.wmv</code> <code>.flv</code></td><td>Playback with audio; requires <code>--features video</code></td></tr>
     <tr><td>WebP</td><td><code>.webp</code></td><td>Static and animated</td></tr>
   </tbody>
 </table>
@@ -87,6 +89,20 @@ sudo dnf install libheif-devel # Fedora
 sudo pacman -S libheif         # Arch
 
 cargo build --release --features heif
+```
+
+For video playback, install FFmpeg (the `ffmpeg-next` bindings link against it) and build with the feature flag:
+
+```sh
+# macOS
+brew install ffmpeg
+
+# Linux
+sudo apt install libavformat-dev libavfilter-dev libavdevice-dev libclang-dev # Ubuntu/Debian
+sudo dnf install ffmpeg-devel clang                                           # Fedora
+sudo pacman -S ffmpeg clang                                                   # Arch
+
+cargo build --release --features video
 ```
 
 Requires a GPU with WebGPU support. On Windows, DX12 is used by default.

@@ -158,6 +158,19 @@
                             <RegistryValue Id='regCapRwl'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.rwl'   Type='string' Value='bloom.AssocFile'/>
                             <RegistryValue Id='regCapSrw'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.srw'   Type='string' Value='bloom.AssocFile'/>
                             <RegistryValue Id='regCapX3f'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.x3f'   Type='string' Value='bloom.AssocFile'/>
+                            <!-- Video -->
+                            <RegistryValue Id='regCapMp4'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.mp4'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapM4v'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.m4v'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapMov'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.mov'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapMkv'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.mkv'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapWebm'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.webm'  Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapAvi'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.avi'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapMpg'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.mpg'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapMpeg'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.mpeg'  Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapTs'     Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.ts'    Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapM2ts'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.m2ts'  Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapWmv'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.wmv'   Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regCapFlv'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.flv'   Type='string' Value='bloom.AssocFile'/>
                         </Component>
 
                         <!-- Common formats: jpg, jpeg, png, gif, bmp, webp, tif, tiff, ico, apng, pbm, pgm, ppm, tga -->
@@ -320,6 +333,34 @@
                             <RegistryValue Id='regExtX3fOwp'   Root='HKLM' Key='Software\Classes\.x3f\OpenWithProgids'   Name='bloom.AssocFile'   Type='string' Value=''/>
                         </Component>
 
+                        <!-- Video formats: mp4, m4v, mov, mkv, webm, avi, mpg, mpeg, ts, m2ts, wmv, flv -->
+                        <Component Id='AssocVideo' Guid='*'>
+                            <RegistryValue Id='regExtMp4'      Root='HKLM' Key='Software\Classes\.mp4'                                           Type='string' Value='bloom.AssocFile' KeyPath='yes'/>
+                            <RegistryValue Id='regExtMp4Owp'   Root='HKLM' Key='Software\Classes\.mp4\OpenWithProgids'   Name='bloom.AssocFile'   Type='string' Value=''/>
+                            <RegistryValue Id='regExtM4v'      Root='HKLM' Key='Software\Classes\.m4v'                                           Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regExtM4vOwp'   Root='HKLM' Key='Software\Classes\.m4v\OpenWithProgids'   Name='bloom.AssocFile'   Type='string' Value=''/>
+                            <RegistryValue Id='regExtMov'      Root='HKLM' Key='Software\Classes\.mov'                                           Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regExtMovOwp'   Root='HKLM' Key='Software\Classes\.mov\OpenWithProgids'   Name='bloom.AssocFile'   Type='string' Value=''/>
+                            <RegistryValue Id='regExtMkv'      Root='HKLM' Key='Software\Classes\.mkv'                                           Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regExtMkvOwp'   Root='HKLM' Key='Software\Classes\.mkv\OpenWithProgids'   Name='bloom.AssocFile'   Type='string' Value=''/>
+                            <RegistryValue Id='regExtWebm'     Root='HKLM' Key='Software\Classes\.webm'                                          Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regExtWebmOwp'  Root='HKLM' Key='Software\Classes\.webm\OpenWithProgids'  Name='bloom.AssocFile'   Type='string' Value=''/>
+                            <RegistryValue Id='regExtAvi'      Root='HKLM' Key='Software\Classes\.avi'                                           Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regExtAviOwp'   Root='HKLM' Key='Software\Classes\.avi\OpenWithProgids'   Name='bloom.AssocFile'   Type='string' Value=''/>
+                            <RegistryValue Id='regExtMpg'      Root='HKLM' Key='Software\Classes\.mpg'                                           Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regExtMpgOwp'   Root='HKLM' Key='Software\Classes\.mpg\OpenWithProgids'   Name='bloom.AssocFile'   Type='string' Value=''/>
+                            <RegistryValue Id='regExtMpeg'     Root='HKLM' Key='Software\Classes\.mpeg'                                          Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regExtMpegOwp'  Root='HKLM' Key='Software\Classes\.mpeg\OpenWithProgids'  Name='bloom.AssocFile'   Type='string' Value=''/>
+                            <RegistryValue Id='regExtTs'       Root='HKLM' Key='Software\Classes\.ts'                                            Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regExtTsOwp'    Root='HKLM' Key='Software\Classes\.ts\OpenWithProgids'    Name='bloom.AssocFile'   Type='string' Value=''/>
+                            <RegistryValue Id='regExtM2ts'     Root='HKLM' Key='Software\Classes\.m2ts'                                          Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regExtM2tsOwp'  Root='HKLM' Key='Software\Classes\.m2ts\OpenWithProgids'  Name='bloom.AssocFile'   Type='string' Value=''/>
+                            <RegistryValue Id='regExtWmv'      Root='HKLM' Key='Software\Classes\.wmv'                                           Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regExtWmvOwp'   Root='HKLM' Key='Software\Classes\.wmv\OpenWithProgids'   Name='bloom.AssocFile'   Type='string' Value=''/>
+                            <RegistryValue Id='regExtFlv'      Root='HKLM' Key='Software\Classes\.flv'                                           Type='string' Value='bloom.AssocFile'/>
+                            <RegistryValue Id='regExtFlvOwp'   Root='HKLM' Key='Software\Classes\.flv\OpenWithProgids'   Name='bloom.AssocFile'   Type='string' Value=''/>
+                        </Component>
+
                     </Directory>
                 </Directory>
             </Directory>
@@ -398,6 +439,15 @@
                     AllowAdvertise='no'
                     Absent='allow'>
                     <ComponentRef Id='AssocRaw'/>
+                </Feature>
+                <Feature
+                    Id='AssocVideoFeature'
+                    Title='Video formats (mp4, mov, mkv, webm, avi, ...)'
+                    Description='Associate bloom with video formats: MP4, M4V, MOV, MKV, WebM, AVI, MPEG, TS, M2TS, WMV, and FLV.'
+                    Level='0'
+                    AllowAdvertise='no'
+                    Absent='allow'>
+                    <ComponentRef Id='AssocVideo'/>
                 </Feature>
             </Feature>
 
