@@ -43,7 +43,8 @@ pub struct App {
     config: Config,
     editing_config: Option<Config>,
     preference_state: preferences::PreferenceState,
-    context_menu_pos: Option<Vec2>,
+    cursor_window: Vec2,
+    picked_color: Option<[u8; 4]>,
     paused: bool,
     scrubbing: bool,
     notifications: Vec<NotificationEntry>,
@@ -90,7 +91,8 @@ impl App {
             config,
             editing_config: None,
             preference_state: preferences::PreferenceState::default(),
-            context_menu_pos: None,
+            cursor_window: Vec2::ZERO,
+            picked_color: None,
             paused: false,
             scrubbing: false,
             notifications: Vec::new(),
@@ -127,8 +129,8 @@ pub enum Message {
     Preference(PreferenceMessage),
     ClipboardLoaded(MediaData),
     CursorMoved(Vec2),
-    CursorLeft,
-    ContextMenuOpened(Vec2),
+    CursorWindow(Vec2),
+    PickColor,
     PanStarted,
     PanEnded,
     CopyColor,
@@ -227,7 +229,6 @@ impl App {
                 }
             }
             Message::Fit => {
-                self.context_menu_pos = None;
                 let now = Instant::now();
                 let is_double = self
                     .last_fit_press
@@ -373,31 +374,24 @@ impl App {
                 }
             }
             Message::CursorMoved(pos) => {
-                if self.editing_config.is_none() && self.context_menu_pos.is_none() {
+                if self.editing_config.is_none() {
                     self.program.set_cursor_pos(Some(pos));
                 }
             }
-            Message::CursorLeft => {
-                self.context_menu_pos = None;
-            }
-            Message::ContextMenuOpened(pos) => {
-                self.context_menu_pos = Some(pos);
-                self.program.set_cursor_pos(Some(pos));
+            Message::CursorWindow(pos) => self.cursor_window = pos,
+            Message::PickColor => {
+                self.picked_color = self.program.color_at_window(self.cursor_window);
             }
             Message::PanStarted => {
-                self.context_menu_pos = None;
                 self.program.set_panning(true);
             }
             Message::PanEnded => self.program.set_panning(false),
             Message::CopyColor => {
-                if let Some(pos) = self.context_menu_pos.take()
-                    && let Some((_, _, [r, g, b, _])) = self.program.color_at(pos)
-                {
+                if let Some([r, g, b, _]) = self.picked_color {
                     clipboard::write_text(&format!("#{r:02X}{g:02X}{b:02X}"));
                 }
             }
             Message::CopyPath => {
-                self.context_menu_pos = None;
                 if let Some(path) = self.gallery.current() {
                     clipboard::write_text(&path.to_string_lossy());
                 }
@@ -848,7 +842,16 @@ impl App {
 
     pub fn subscription(&self) -> Subscription<Message> {
         let events = event::listen().map(Message::Event);
-        let mut subs = vec![events];
+        let picker = event::listen_with(|event, _status, _window| match event {
+            Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+                Some(Message::CursorWindow(Vec2::new(position.x, position.y)))
+            }
+            Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right)) => {
+                Some(Message::PickColor)
+            }
+            _ => None,
+        });
+        let mut subs = vec![events, picker];
 
         if let Some(delay) = (!self.paused && !self.scrubbing)
             .then(|| self.program.time_until_next_frame())

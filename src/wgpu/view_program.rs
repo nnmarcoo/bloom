@@ -495,12 +495,32 @@ impl ViewProgram {
         Some(local_px + origin)
     }
 
-    pub fn screen_to_image_pixel(&self, screen_pos: Vec2) -> Option<(u32, u32)> {
-        let img = self.screen_to_image_coords(screen_pos)?;
+    fn sample_pixel(&self, px: u32, py: u32, uv: [f32; 2]) -> Option<[u8; 4]> {
+        let image = self.image.as_ref()?;
+        let idx = (py as usize * image.width as usize + px as usize) * 4;
+        let pixels = image.pixels_snapshot();
+        let p = pixels.get(idx..idx + 4)?;
+        Some(cpu::f32_to_pixel(self.apply_modifiers_cpu(
+            &pixels,
+            image.width,
+            image.height,
+            uv,
+            cpu::pixel_to_f32(p),
+        )))
+    }
+
+    pub fn color_at_window(&self, window_pos: Vec2) -> Option<[u8; 4]> {
+        let local = window_pos - vec2(self.bounds.x, self.bounds.y);
+        let img = self.screen_to_image_coords(local)?;
         if img.x < 0.0 || img.y < 0.0 || img.x >= self.image_size.x || img.y >= self.image_size.y {
             return None;
         }
-        Some((img.x as u32, img.y as u32))
+        let (px, py) = (img.x as u32, img.y as u32);
+        self.sample_pixel(
+            px,
+            py,
+            [px as f32 / self.image_size.x, py as f32 / self.image_size.y],
+        )
     }
 
     fn apply_modifiers_cpu(
@@ -567,17 +587,7 @@ impl ViewProgram {
         let img = self.cursor_image_pos?;
         let (px, py) = (img.x as u32, img.y as u32);
         let uv = img / self.image_size;
-        let image = self.image.as_ref()?;
-        let idx = (py as usize * image.width as usize + px as usize) * 4;
-        let pixels = image.pixels_snapshot();
-        let p = pixels.get(idx..idx + 4)?;
-        let rgba = cpu::f32_to_pixel(self.apply_modifiers_cpu(
-            &pixels,
-            image.width,
-            image.height,
-            [uv.x, uv.y],
-            cpu::pixel_to_f32(p),
-        ));
+        let rgba = self.sample_pixel(px, py, [uv.x, uv.y])?;
         Some((px, py, uv, rgba))
     }
 
@@ -619,26 +629,6 @@ impl ViewProgram {
             }
         }
         Some(pixels)
-    }
-
-    pub fn color_at(&self, pos: Vec2) -> Option<(u32, u32, [u8; 4])> {
-        let (px, py) = self.screen_to_image_pixel(pos)?;
-        let image = self.image.as_ref()?;
-        let idx = (py as usize * image.width as usize + px as usize) * 4;
-        let pixels = image.pixels_snapshot();
-        let p = pixels.get(idx..idx + 4)?;
-        let uv = [
-            px as f32 / image.width as f32,
-            py as f32 / image.height as f32,
-        ];
-        let rgba = cpu::f32_to_pixel(self.apply_modifiers_cpu(
-            &pixels,
-            image.width,
-            image.height,
-            uv,
-            cpu::pixel_to_f32(p),
-        ));
-        Some((px, py, rgba))
     }
 
     pub fn release_image_pixels(&self) {
@@ -729,13 +719,6 @@ impl Program<Message> for ViewProgram {
 
         match state.drag {
             ViewDragState::Idle => {
-                if let Event::Mouse(mouse::Event::ButtonPressed(Button::Right)) = event
-                    && let Some(pos) = cursor.position_in(bounds)
-                {
-                    return Some(Action::publish(Message::ContextMenuOpened(Vec2::new(
-                        pos.x, pos.y,
-                    ))));
-                }
                 if let Event::Mouse(mouse::Event::ButtonPressed(Button::Left)) = event
                     && let Some(pos) = cursor.position_over(bounds)
                 {
@@ -748,9 +731,6 @@ impl Program<Message> for ViewProgram {
                     return Some(Action::publish(Message::CursorMoved(Vec2::new(
                         pos.x, pos.y,
                     ))));
-                }
-                if let Event::Mouse(mouse::Event::CursorLeft) = event {
-                    return Some(Action::publish(Message::CursorLeft));
                 }
             }
             ViewDragState::Panning(prev) => match event {
