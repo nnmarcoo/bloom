@@ -73,6 +73,7 @@ pub struct ViewProgram {
     pub show_pixel_grid: bool,
     pub mipmap_zoom_out: bool,
     pub smooth_zoom_in: bool,
+    pub loop_animations: bool,
     uploaded_mipmap_zoom_out: bool,
     cursor_image_pos: Option<Vec2>,
     panning: bool,
@@ -106,6 +107,7 @@ impl Default for ViewProgram {
             rotation: 0,
             mipmap_zoom_out: true,
             smooth_zoom_in: false,
+            loop_animations: true,
             uploaded_mipmap_zoom_out: true,
             modifiers: Arc::new(Vec::new()),
             crop_tool_active: false,
@@ -341,7 +343,8 @@ impl ViewProgram {
         })
     }
 
-    pub fn set_animation(&mut self, anim: Animation) {
+    pub fn set_animation(&mut self, mut anim: Animation) {
+        anim.set_looping(self.loop_animations);
         let first = Arc::clone(anim.current_image());
         self.image_size = vec2(first.width as f32, first.height as f32);
         self.image = Some(first);
@@ -388,6 +391,17 @@ impl ViewProgram {
         {
             self.image = Some(frame);
         }
+    }
+
+    pub fn set_loop_animations(&mut self, looping: bool) {
+        self.loop_animations = looping;
+        if let Some(ref mut anim) = self.animation {
+            anim.set_looping(looping);
+        }
+    }
+
+    pub fn animation_ended(&self) -> bool {
+        self.animation.as_ref().is_some_and(Animation::ended)
     }
 
     pub fn time_until_next_frame(&self) -> Option<Duration> {

@@ -19,6 +19,8 @@ pub struct Animation {
     current: usize,
     current_timestamp: Duration,
     deadline: Instant,
+    looping: bool,
+    ended: bool,
 }
 
 impl Animation {
@@ -34,7 +36,20 @@ impl Animation {
             current: 0,
             current_timestamp: Duration::ZERO,
             deadline: Instant::now() + first_delay,
+            looping: true,
+            ended: false,
         })
+    }
+
+    pub fn set_looping(&mut self, looping: bool) {
+        self.looping = looping;
+        if looping {
+            self.ended = false;
+        }
+    }
+
+    pub fn ended(&self) -> bool {
+        self.ended
     }
 
     pub fn current_image(&self) -> &Arc<ImageData> {
@@ -70,6 +85,7 @@ impl Animation {
         self.current = index;
         self.current_timestamp = self.frames[..index].iter().map(|f| f.delay).sum();
         self.deadline = Instant::now() + self.frames[index].delay;
+        self.ended = false;
         Arc::clone(&self.frames[index].data)
     }
 
@@ -85,8 +101,13 @@ impl Animation {
         }
 
         loop {
+            let next = (self.current + 1) % self.frames.len();
+            if next == 0 && !self.looping {
+                self.ended = true;
+                return None;
+            }
             self.current_timestamp += self.frames[self.current].delay;
-            self.current = (self.current + 1) % self.frames.len();
+            self.current = next;
             if self.current == 0 {
                 self.current_timestamp = Duration::ZERO;
             }

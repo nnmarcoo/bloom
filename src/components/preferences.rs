@@ -49,6 +49,8 @@ pub enum PreferenceMessage {
     SetAlwaysOnTop(bool),
     SetUiScale(f32),
     SetAutoplay(bool),
+    SetLoopAnimations(bool),
+    SetLoopVideo(bool),
     SetRememberLast(bool),
     SetMipmapZoomOut(bool),
     SetSmoothZoomIn(bool),
@@ -107,6 +109,14 @@ pub fn update(
             pending.autoplay = v;
             PreferenceOutcome::Open
         }
+        PreferenceMessage::SetLoopAnimations(v) => {
+            pending.loop_animations = v;
+            PreferenceOutcome::Open
+        }
+        PreferenceMessage::SetLoopVideo(v) => {
+            pending.loop_video = v;
+            PreferenceOutcome::Open
+        }
         PreferenceMessage::SetRememberLast(v) => {
             pending.remember_last = v;
             PreferenceOutcome::Open
@@ -156,6 +166,8 @@ pub fn update(
         PreferenceMessage::ResetRendering => {
             let d = Config::default();
             pending.autoplay = d.autoplay;
+            pending.loop_animations = d.loop_animations;
+            pending.loop_video = d.loop_video;
             pending.remember_last = d.remember_last;
             pending.mipmap_zoom_out = d.mipmap_zoom_out;
             pending.smooth_zoom_in = d.smooth_zoom_in;
@@ -426,6 +438,22 @@ fn rendering_pane<'a>(pending: &'a Config, theme: &Theme) -> Element<'a, Message
             "Automatically play animations when opened",
             toggler(pending.autoplay)
                 .on_toggle(|v| Message::Preference(PreferenceMessage::SetAutoplay(v)))
+                .into(),
+            theme,
+        ),
+        setting(
+            "Loop animations",
+            "Restart GIF, APNG, and WebP animations automatically when they reach the end",
+            toggler(pending.loop_animations)
+                .on_toggle(|v| Message::Preference(PreferenceMessage::SetLoopAnimations(v)))
+                .into(),
+            theme,
+        ),
+        setting(
+            "Loop video",
+            "Restart videos automatically when they reach the end",
+            toggler(pending.loop_video)
+                .on_toggle(|v| Message::Preference(PreferenceMessage::SetLoopVideo(v)))
                 .into(),
             theme,
         ),

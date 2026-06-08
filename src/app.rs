@@ -92,6 +92,7 @@ impl App {
         program.show_pixel_grid = config.show_pixel_grid;
         program.mipmap_zoom_out = config.mipmap_zoom_out;
         program.smooth_zoom_in = config.smooth_zoom_in;
+        program.loop_animations = config.loop_animations;
         styles::set_radius(config.rounded);
         Self {
             program,
@@ -329,11 +330,21 @@ impl App {
                         self.scrub_sent = Some(target);
                     }
                     if video.is_ended() {
-                        self.paused = true;
+                        if self.config.loop_video {
+                            video.seek(Duration::ZERO, true);
+                            if !self.paused {
+                                video.play();
+                            }
+                        } else {
+                            self.paused = true;
+                        }
                     }
                     return Task::none();
                 }
                 self.program.tick_animation(now);
+                if self.program.animation_ended() {
+                    self.paused = true;
+                }
             }
             Message::MediaFailed(generation, err) => {
                 if generation == self.load_generation {
@@ -386,6 +397,8 @@ impl App {
                         self.config.save();
                         self.program.mipmap_zoom_out = self.config.mipmap_zoom_out;
                         self.program.smooth_zoom_in = self.config.smooth_zoom_in;
+                        self.program
+                            .set_loop_animations(self.config.loop_animations);
                         if self.program.show_checkerboard {
                             self.program.checker_uniforms =
                                 checker_uniforms_from_theme(&self.config.theme);
@@ -459,6 +472,9 @@ impl App {
                     return Task::none();
                 }
                 if !self.paused {
+                    if self.program.animation_ended() {
+                        self.program.seek_animation(0);
+                    }
                     self.program.resume_animation();
                 }
             }

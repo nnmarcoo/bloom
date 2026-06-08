@@ -51,6 +51,8 @@ pub struct Config {
     pub decorations: bool,
     pub always_on_top: bool,
     pub autoplay: bool,
+    pub loop_animations: bool,
+    pub loop_video: bool,
     pub remember_last: bool,
     pub last_media: Option<PathBuf>,
     pub mipmap_zoom_out: bool,
@@ -75,6 +77,8 @@ impl Default for Config {
             decorations: true,
             always_on_top: false,
             autoplay: true,
+            loop_animations: true,
+            loop_video: false,
             remember_last: false,
             last_media: None,
             mipmap_zoom_out: true,
@@ -107,6 +111,10 @@ struct ConfigFile {
     always_on_top: bool,
     #[serde(default = "default_true")]
     autoplay: bool,
+    #[serde(default = "default_true")]
+    loop_animations: bool,
+    #[serde(default)]
+    loop_video: bool,
     #[serde(default)]
     remember_last: bool,
     #[serde(default, alias = "last_image")]
@@ -154,6 +162,8 @@ impl From<&Config> for ConfigFile {
             decorations: c.decorations,
             always_on_top: c.always_on_top,
             autoplay: c.autoplay,
+            loop_animations: c.loop_animations,
+            loop_video: c.loop_video,
             remember_last: c.remember_last,
             last_media: c.last_media.clone(),
             mipmap_zoom_out: c.mipmap_zoom_out,
@@ -186,6 +196,8 @@ impl From<ConfigFile> for Config {
             decorations: f.decorations,
             always_on_top: f.always_on_top,
             autoplay: f.autoplay,
+            loop_animations: f.loop_animations,
+            loop_video: f.loop_video,
             remember_last: f.remember_last,
             last_media: f.last_media,
             mipmap_zoom_out: f.mipmap_zoom_out,
