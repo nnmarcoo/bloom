@@ -12,24 +12,38 @@ env:
 
 jobs:
   build:
-    name: ${{ matrix.name }}
+    name: ${{ matrix.platform }} (${{ matrix.variant }})
     runs-on: ${{ matrix.runner }}
+    env:
+      ARTIFACT: bloom-${{ matrix.platform }}${{ matrix.suffix }}.${{ matrix.ext }}
+      MSI: bloom-${{ matrix.platform }}${{ matrix.suffix }}.msi
     strategy:
       fail-fast: false
       matrix:
+        os: [linux, macos, windows]
+        variant: [minimal, heif, full]
         include:
-          - name: Linux x86_64
+          - os: linux
             runner: ubuntu-24.04
-            artifact: bloom-linux-x86_64.tar.gz
-
-          - name: macOS
+            platform: linux-x86_64
+            ext: tar.gz
+          - os: macos
             runner: macos-14
-            artifact: bloom-macos-arm64.dmg
-
-          - name: Windows x86_64
+            platform: macos-arm64
+            ext: dmg
+          - os: windows
             runner: windows-latest
-            artifact: bloom-windows-x86_64.zip
-            msi: bloom-windows-x86_64.msi
+            platform: windows-x86_64
+            ext: zip
+          - variant: minimal
+            features: ""
+            suffix: "-minimal"
+          - variant: heif
+            features: "heif"
+            suffix: "-heif"
+          - variant: full
+            features: "heif,video"
+            suffix: ""
 
     steps:
       - uses: actions/checkout@v4
@@ -39,25 +53,41 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
+        if: matrix.os == 'linux'
+        env:
+          FEATURES: ${{ matrix.features }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libheif-dev libdav1d-dev clang libclang-dev libasound2-dev
-          curl -fL -o /tmp/ffmpeg.tar.xz \
-            https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-shared-8.1.tar.xz
-          mkdir -p "$HOME/ffmpeg"
-          tar -xf /tmp/ffmpeg.tar.xz -C "$HOME/ffmpeg" --strip-components=1
-          sed -i "s|^prefix=.*|prefix=$HOME/ffmpeg|" "$HOME/ffmpeg/lib/pkgconfig/"*.pc
-          echo "FFMPEG_DIR=$HOME/ffmpeg" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=$HOME/ffmpeg/lib/pkgconfig" >> "$GITHUB_ENV"
-          echo 'RUSTFLAGS=-C link-arg=-Wl,-rpath,$ORIGIN/lib -C link-arg=-Wl,--disable-new-dtags' >> "$GITHUB_ENV"
+          sudo apt-get install -y pkg-config
+          if [[ "$FEATURES" == *heif* ]]; then
+            sudo apt-get install -y libheif-dev libdav1d-dev
+          fi
+          if [[ "$FEATURES" == *video* ]]; then
+            sudo apt-get install -y clang libclang-dev libasound2-dev
+            curl -fL -o /tmp/ffmpeg.tar.xz \
+              https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-shared-8.1.tar.xz
+            mkdir -p "$HOME/ffmpeg"
+            tar -xf /tmp/ffmpeg.tar.xz -C "$HOME/ffmpeg" --strip-components=1
+            sed -i "s|^prefix=.*|prefix=$HOME/ffmpeg|" "$HOME/ffmpeg/lib/pkgconfig/"*.pc
+            echo "FFMPEG_DIR=$HOME/ffmpeg" >> "$GITHUB_ENV"
+            echo "PKG_CONFIG_PATH=$HOME/ffmpeg/lib/pkgconfig" >> "$GITHUB_ENV"
+            echo 'RUSTFLAGS=-C link-arg=-Wl,-rpath,$ORIGIN/lib -C link-arg=-Wl,--disable-new-dtags' >> "$GITHUB_ENV"
+          fi
 
       - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install libheif dav1d ffmpeg
+        if: matrix.os == 'macos'
+        env:
+          FEATURES: ${{ matrix.features }}
+        run: |
+          if [[ "$FEATURES" == *heif* ]]; then
+            brew install libheif dav1d
+          fi
+          if [[ "$FEATURES" == *video* ]]; then
+            brew install ffmpeg
+          fi
 
       - name: Cache vcpkg packages (Windows)
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows' && contains(matrix.features, 'heif')
         uses: actions/cache@v4
         with:
           path: C:\vcpkg\installed
@@ -65,40 +95,50 @@ jobs:
           restore-keys: vcpkg-x64-windows-static-md-
 
       - name: Install dependencies (Windows)
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows'
         shell: pwsh
         env:
           VCPKG_MAX_CONCURRENCY: 2
+          FEATURES: ${{ matrix.features }}
         run: |
           choco install pkgconfiglite -y
-          vcpkg integrate install
-          vcpkg install libheif:x64-windows-static-md dav1d:x64-windows-static-md
-          $vcpkgInstalled = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
-          echo "LIBHEIF_DIR=$vcpkgInstalled" >> $env:GITHUB_ENV
-          echo "PKG_CONFIG_PATH=$vcpkgInstalled\lib\pkgconfig" >> $env:GITHUB_ENV
-          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
-          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip" -OutFile "$env:RUNNER_TEMP\ffmpeg.zip"
-          Expand-Archive -Path "$env:RUNNER_TEMP\ffmpeg.zip" -DestinationPath "$env:RUNNER_TEMP"
-          $extracted = (Get-ChildItem -Directory "$env:RUNNER_TEMP" -Filter "ffmpeg-n8.1*").FullName
-          echo "FFMPEG_DIR=$extracted" >> $env:GITHUB_ENV
+          if ($env:FEATURES -like "*heif*") {
+            vcpkg integrate install
+            vcpkg install libheif:x64-windows-static-md dav1d:x64-windows-static-md
+            $vcpkgInstalled = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
+            echo "LIBHEIF_DIR=$vcpkgInstalled" >> $env:GITHUB_ENV
+            echo "PKG_CONFIG_PATH=$vcpkgInstalled\lib\pkgconfig" >> $env:GITHUB_ENV
+          }
+          if ($env:FEATURES -like "*video*") {
+            echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+            Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip" -OutFile "$env:RUNNER_TEMP\ffmpeg.zip"
+            Expand-Archive -Path "$env:RUNNER_TEMP\ffmpeg.zip" -DestinationPath "$env:RUNNER_TEMP"
+            $extracted = (Get-ChildItem -Directory "$env:RUNNER_TEMP" -Filter "ffmpeg-n8.1*").FullName
+            echo "FFMPEG_DIR=$extracted" >> $env:GITHUB_ENV
+          }
 
       - name: Set macOS deployment target
-        if: runner.os == 'macOS'
+        if: matrix.os == 'macos'
         run: echo "MACOSX_DEPLOYMENT_TARGET=10.15" >> $GITHUB_ENV
 
       - name: Build
-        run: cargo build --release --features heif,video
+        run: cargo build --release ${{ matrix.features != '' && format('--features {0}', matrix.features) || '' }}
 
       - name: Package (Linux)
-        if: runner.os == 'Linux'
+        if: matrix.os == 'linux'
+        env:
+          FEATURES: ${{ matrix.features }}
         run: |
-          mkdir -p dist/lib
+          mkdir -p dist
           cp target/release/bloom dist/
-          cp -a "$FFMPEG_DIR"/lib/*.so* dist/lib/
-          tar -czf bloom-linux-x86_64.tar.gz -C dist .
+          if [[ "$FEATURES" == *video* ]]; then
+            mkdir -p dist/lib
+            cp -a "$FFMPEG_DIR"/lib/*.so* dist/lib/
+          fi
+          tar -czf "$ARTIFACT" -C dist .
 
       - name: Package (macOS)
-        if: runner.os == 'macOS'
+        if: matrix.os == 'macos'
         shell: bash
         run: |
           APP="bloom.app"
@@ -198,35 +238,42 @@ jobs:
           done
           codesign -f -s "-" "$BINARY"
 
-          hdiutil create -volname "Bloom" -srcfolder "$APP" -ov -format UDZO "${{ matrix.artifact }}"
+          hdiutil create -volname "Bloom" -srcfolder "$APP" -ov -format UDZO "$ARTIFACT"
 
       - uses: taiki-e/install-action@v2
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows'
         with:
           tool: cargo-wix
 
       - name: Package (Windows)
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows'
         shell: pwsh
+        env:
+          FEATURES: ${{ matrix.features }}
         run: |
-          $dllDir = "$env:RUNNER_TEMP\ffmpeg_dlls"
-          New-Item -ItemType Directory -Force -Path $dllDir | Out-Null
-          Copy-Item "$env:FFMPEG_DIR\bin\*.dll" -Destination $dllDir
-          & "$env:WIX\bin\heat.exe" dir "$dllDir" -nologo -cg FfmpegDlls -dr Bin -var var.FfmpegDllDir -ag -srd -sreg -scom -out wix\ffmpeg.wxs
-          cargo wix --no-build --nocapture -C "-dFfmpegDllDir=$dllDir" --output bloom-windows-x86_64.msi
-          $zipItems = @("target\release\bloom.exe") + (Get-ChildItem "$dllDir\*.dll").FullName
-          Compress-Archive -Path $zipItems -DestinationPath bloom-windows-x86_64.zip
+          $zipItems = @("target\release\bloom.exe")
+          if ($env:FEATURES -like "*video*") {
+            $dllDir = "$env:RUNNER_TEMP\ffmpeg_dlls"
+            New-Item -ItemType Directory -Force -Path $dllDir | Out-Null
+            Copy-Item "$env:FFMPEG_DIR\bin\*.dll" -Destination $dllDir
+            & "$env:WIX\bin\heat.exe" dir "$dllDir" -nologo -cg FfmpegDlls -dr Bin -var var.FfmpegDllDir -ag -srd -sreg -scom -out wix\ffmpeg.wxs
+            cargo wix --no-build --nocapture -C "-dVideo=true" -C "-dFfmpegDllDir=$dllDir" --output $env:MSI
+            $zipItems += (Get-ChildItem "$dllDir\*.dll").FullName
+          } else {
+            cargo wix --no-build --nocapture -C "-dVideo=false" --output $env:MSI
+          }
+          Compress-Archive -Path $zipItems -DestinationPath $env:ARTIFACT
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
+          name: ${{ env.ARTIFACT }}
+          path: ${{ env.ARTIFACT }}
 
       - uses: actions/upload-artifact@v4
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows'
         with:
-          name: ${{ matrix.msi }}
-          path: ${{ matrix.msi }}
+          name: ${{ env.MSI }}
+          path: ${{ env.MSI }}
 
   publish:
     name: Publish

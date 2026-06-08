@@ -395,7 +395,9 @@
             <ComponentRef Id='AssocHandler'/>
             <ComponentRef Id='AppCapabilities'/>
             <ComponentRef Id='ApplicationShortcut'/>
+<?if $(var.Video) = "true" ?>
             <ComponentGroupRef Id='FfmpegDlls'/>
+<?endif?>
 
             <Feature
                 Id='FileAssociations'
