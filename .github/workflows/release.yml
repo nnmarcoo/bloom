@@ -213,7 +213,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dllDir | Out-Null
           Copy-Item "$env:FFMPEG_DIR\bin\*.dll" -Destination $dllDir
           & "$env:WIX\bin\heat.exe" dir "$dllDir" -nologo -cg FfmpegDlls -dr Bin -var var.FfmpegDllDir -ag -srd -sreg -scom -out wix\ffmpeg.wxs
-          cargo wix --no-build --nocapture -C "-dFfmpegDllDir=$dllDir" --output bloom-windows-x86_64.msi wix\main.wxs wix\ffmpeg.wxs
+          cargo wix --no-build --nocapture -C "-dFfmpegDllDir=$dllDir" --output bloom-windows-x86_64.msi
           $zipItems = @("target\release\bloom.exe") + (Get-ChildItem "$dllDir\*.dll").FullName
           Compress-Archive -Path $zipItems -DestinationPath bloom-windows-x86_64.zip
 
