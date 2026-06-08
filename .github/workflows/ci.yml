@@ -24,10 +24,17 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libheif-dev libdav1d-dev
+          sudo apt-get install -y pkg-config libheif-dev libdav1d-dev clang libclang-dev
+          curl -fL -o /tmp/ffmpeg.tar.xz \
+            https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.0-latest-linux64-gpl-shared.tar.xz
+          mkdir -p "$HOME/ffmpeg"
+          tar -xf /tmp/ffmpeg.tar.xz -C "$HOME/ffmpeg" --strip-components=1
+          sed -i "s|^prefix=.*|prefix=$HOME/ffmpeg|" "$HOME/ffmpeg/lib/pkgconfig/"*.pc
+          echo "FFMPEG_DIR=$HOME/ffmpeg" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$HOME/ffmpeg/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: fmt
         run: cargo fmt --check
 
       - name: clippy
-        run: cargo clippy --features heif -- -D warnings
+        run: cargo clippy --features heif,video -- -D warnings

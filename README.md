@@ -17,7 +17,7 @@
 - **GPU rendering** — hardware-accelerated via [wgpu](https://wgpu.rs) at any resolution
 - **Hardware mipmaps** — smooth zoomed-out views
 - **GIF, APNG & WebP** — animation playback with timeline scrubbing and frame controls
-- **Video** — MP4, MOV, MKV, WebM, AVI and more with audio, scrubbing, and frame stepping (requires `--features video`)
+- **Video** — MP4, MOV, MKV, WebM, AVI and more with audio, scrubbing, and frame stepping
 - **Gallery** — browse every image in a folder
 - **Tiled textures** — handles images larger than GPU texture limits
 - **Pan and zoom** — 0.01× to 35×, with custom % input
@@ -50,7 +50,7 @@
     <tr><td>GIF</td><td><code>.gif</code></td><td>Animated</td></tr>
     <tr><td>GIMP</td><td><code>.xcf</code></td><td>Layers composited top-to-bottom</td></tr>
     <tr><td>HDR (Radiance)</td><td><code>.hdr</code></td><td>Tonemapped (Reinhard)</td></tr>
-    <tr><td>HEIC / HEIF</td><td><code>.heic</code> <code>.heif</code></td><td>Requires <code>--features heif</code></td></tr>
+    <tr><td>HEIC / HEIF</td><td><code>.heic</code> <code>.heif</code></td><td>Source builds need <code>--features heif</code></td></tr>
     <tr><td>ICO</td><td><code>.ico</code></td><td>Largest available size</td></tr>
     <tr><td>JPEG</td><td><code>.jpg</code> <code>.jpeg</code></td><td></td></tr>
     <tr><td>JPEG 2000</td><td><code>.jp2</code> <code>.j2k</code> <code>.j2c</code> <code>.jpx</code></td><td></td></tr>
@@ -66,12 +66,14 @@
     <tr><td>SVG</td><td><code>.svg</code> <code>.svgz</code></td><td>Rasterized at native size</td></tr>
     <tr><td>TGA</td><td><code>.tga</code></td><td></td></tr>
     <tr><td>TIFF</td><td><code>.tif</code> <code>.tiff</code></td><td>No 64-bit float</td></tr>
-    <tr><td>Video</td><td><code>.mp4</code> <code>.m4v</code> <code>.mov</code> <code>.mkv</code> <code>.webm</code> <code>.avi</code> <code>.mpg</code> <code>.mpeg</code> <code>.ts</code> <code>.m2ts</code> <code>.wmv</code> <code>.flv</code></td><td>Playback with audio; requires <code>--features video</code></td></tr>
+    <tr><td>Video</td><td><code>.mp4</code> <code>.m4v</code> <code>.mov</code> <code>.mkv</code> <code>.webm</code> <code>.avi</code> <code>.mpg</code> <code>.mpeg</code> <code>.ts</code> <code>.m2ts</code> <code>.wmv</code> <code>.flv</code></td><td>Playback with audio; source builds need <code>--features video</code></td></tr>
     <tr><td>WebP</td><td><code>.webp</code></td><td>Static and animated</td></tr>
   </tbody>
 </table>
 
 ## Build
+
+> Prebuilt [releases](https://github.com/nnmarcoo/bloom/releases/latest) already bundle HEIC/HEIF and video support. The feature flags below only matter when building from source.
 
 ```sh
 cargo build --release

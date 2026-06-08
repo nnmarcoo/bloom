@@ -42,11 +42,19 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libheif-dev libdav1d-dev
+          sudo apt-get install -y pkg-config libheif-dev libdav1d-dev clang libclang-dev
+          curl -fL -o /tmp/ffmpeg.tar.xz \
+            https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.0-latest-linux64-gpl-shared.tar.xz
+          mkdir -p "$HOME/ffmpeg"
+          tar -xf /tmp/ffmpeg.tar.xz -C "$HOME/ffmpeg" --strip-components=1
+          sed -i "s|^prefix=.*|prefix=$HOME/ffmpeg|" "$HOME/ffmpeg/lib/pkgconfig/"*.pc
+          echo "FFMPEG_DIR=$HOME/ffmpeg" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$HOME/ffmpeg/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo 'RUSTFLAGS=-C link-arg=-Wl,-rpath,$ORIGIN/lib -C link-arg=-Wl,--disable-new-dtags' >> "$GITHUB_ENV"
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install libheif dav1d
+        run: brew install libheif dav1d ffmpeg
 
       - name: Cache vcpkg packages (Windows)
         if: runner.os == 'Windows'
@@ -68,17 +76,26 @@ jobs:
           $vcpkgInstalled = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
           echo "LIBHEIF_DIR=$vcpkgInstalled" >> $env:GITHUB_ENV
           echo "PKG_CONFIG_PATH=$vcpkgInstalled\lib\pkgconfig" >> $env:GITHUB_ENV
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.0-latest-win64-gpl-shared.zip" -OutFile "$env:RUNNER_TEMP\ffmpeg.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\ffmpeg.zip" -DestinationPath "$env:RUNNER_TEMP"
+          $extracted = (Get-ChildItem -Directory "$env:RUNNER_TEMP" -Filter "ffmpeg-n8.0*").FullName
+          echo "FFMPEG_DIR=$extracted" >> $env:GITHUB_ENV
 
       - name: Set macOS deployment target
         if: runner.os == 'macOS'
         run: echo "MACOSX_DEPLOYMENT_TARGET=10.15" >> $GITHUB_ENV
 
       - name: Build
-        run: cargo build --release --features heif
+        run: cargo build --release --features heif,video
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
-        run: tar -czf bloom-linux-x86_64.tar.gz -C target/release bloom
+        run: |
+          mkdir -p dist/lib
+          cp target/release/bloom dist/
+          cp -a "$FFMPEG_DIR"/lib/*.so* dist/lib/
+          tar -czf bloom-linux-x86_64.tar.gz -C dist .
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
@@ -192,8 +209,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cargo wix --no-build --nocapture --output bloom-windows-x86_64.msi
-          Compress-Archive -Path target/release/bloom.exe -DestinationPath bloom-windows-x86_64.zip
+          $dllDir = "$env:RUNNER_TEMP\ffmpeg_dlls"
+          New-Item -ItemType Directory -Force -Path $dllDir | Out-Null
+          Copy-Item "$env:FFMPEG_DIR\bin\*.dll" -Destination $dllDir
+          & "$env:WIX\bin\heat.exe" dir "$dllDir" -nologo -cg FfmpegDlls -dr Bin -var var.FfmpegDllDir -ag -srd -sreg -scom -out wix\ffmpeg.wxs
+          cargo wix --no-build --nocapture -C "-dFfmpegDllDir=$dllDir" --output bloom-windows-x86_64.msi wix\main.wxs wix\ffmpeg.wxs
+          $zipItems = @("target\release\bloom.exe") + (Get-ChildItem "$dllDir\*.dll").FullName
+          Compress-Archive -Path $zipItems -DestinationPath bloom-windows-x86_64.zip
 
       - uses: actions/upload-artifact@v4
         with:

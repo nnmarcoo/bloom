@@ -395,6 +395,7 @@
             <ComponentRef Id='AssocHandler'/>
             <ComponentRef Id='AppCapabilities'/>
             <ComponentRef Id='ApplicationShortcut'/>
+            <ComponentGroupRef Id='FfmpegDlls'/>
 
             <Feature
                 Id='FileAssociations'
