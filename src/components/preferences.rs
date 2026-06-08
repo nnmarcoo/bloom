@@ -451,10 +451,20 @@ fn rendering_pane<'a>(pending: &'a Config, theme: &Theme) -> Element<'a, Message
         ),
         setting(
             "Loop video",
-            "Restart videos automatically when they reach the end",
-            toggler(pending.loop_video)
-                .on_toggle(|v| Message::Preference(PreferenceMessage::SetLoopVideo(v)))
-                .into(),
+            if cfg!(feature = "video") {
+                "Restart videos automatically when they reach the end"
+            } else {
+                "Video support is not built in this version"
+            },
+            {
+                let t = toggler(pending.loop_video);
+                if cfg!(feature = "video") {
+                    t.on_toggle(|v| Message::Preference(PreferenceMessage::SetLoopVideo(v)))
+                } else {
+                    t
+                }
+            }
+            .into(),
             theme,
         ),
         setting(
