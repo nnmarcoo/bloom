@@ -37,6 +37,8 @@ use super::exif_data::ExifData;
 pub enum MediaData {
     Image(Box<ImageData>),
     Animation(Animation),
+    #[cfg(feature = "video")]
+    Video(super::video::VideoInfo),
 }
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -755,6 +757,10 @@ impl ImageData {
         let media = match ext.as_str() {
             "gif" => MediaData::Animation(Self::load_gif(path)?),
             "apng" => MediaData::Animation(Self::load_apng(path)?),
+            #[cfg(feature = "video")]
+            e if super::video::VIDEO_EXTENSIONS.contains(&e) => {
+                MediaData::Video(super::video::probe_video(path)?)
+            }
             "webp" => {
                 let file = File::open(path).map_err(ImageError::IoError)?;
                 let decoder = image_webp::WebPDecoder::new(BufReader::new(file))

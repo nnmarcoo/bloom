@@ -261,14 +261,27 @@ impl ViewProgram {
     }
 
     pub fn set_image(&mut self, data: ImageData) {
+        self.set_display_image(Arc::new(data));
+    }
+
+    fn set_display_image(&mut self, data: Arc<ImageData>) {
         self.image_size = vec2(data.width as f32, data.height as f32);
-        self.image = Some(Arc::new(data));
+        self.image = Some(data);
         self.animation = None;
         self.cursor_image_pos = Some(self.image_size / 2.0);
         self.panning = false;
         self.rotation = 0;
         self.uploaded_mipmap_zoom_out = self.mipmap_zoom_out;
         self.reset_crop_to_image();
+    }
+
+    #[cfg(feature = "video")]
+    pub fn set_video_frame(&mut self, data: Arc<ImageData>, first: bool) {
+        if first {
+            self.set_display_image(data);
+        } else {
+            self.image = Some(data);
+        }
     }
 
     pub fn histogram(&self) -> Option<Histogram> {

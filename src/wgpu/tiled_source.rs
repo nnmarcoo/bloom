@@ -26,6 +26,7 @@ pub struct Tile {
     pub y: u32,
     pub width: u32,
     pub height: u32,
+    pub mip_count: u32,
 }
 
 pub struct TiledSource {
@@ -34,6 +35,86 @@ pub struct TiledSource {
     pub full_width: u32,
     pub full_height: u32,
     pub physical_scale: f32,
+    pub has_mipmaps: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_tile_texture(
+    queue: &Queue,
+    texture: &Texture,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    full_width: u32,
+    image_pixels: &[u8],
+    scratch: &mut Vec<u8>,
+) {
+    let src_stride = (full_width * 4) as usize;
+    if width == full_width {
+        queue.write_texture(
+            texture.as_image_copy(),
+            image_pixels,
+            TexelCopyBufferLayout {
+                offset: (y as usize * src_stride) as u64,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: None,
+            },
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+    } else {
+        let row_bytes = (width * 4) as usize;
+        scratch.clear();
+        for r in 0..height {
+            let row_start = (y + r) as usize * src_stride + x as usize * 4;
+            scratch.extend_from_slice(&image_pixels[row_start..row_start + row_bytes]);
+        }
+        queue.write_texture(
+            texture.as_image_copy(),
+            scratch,
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: None,
+            },
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn regen_tile_mipmaps(
+    device: &Device,
+    queue: &Queue,
+    texture: &Texture,
+    mip_count: u32,
+    blit_pipeline: &RenderPipeline,
+    blit_bgl: &BindGroupLayout,
+    linear_sampler: &Sampler,
+    label: &str,
+) {
+    let mut encoder = device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
+        label: Some(&format!("{label}:mip-encoder")),
+    });
+    gpu::generate_hw_mipmaps(
+        &mut encoder,
+        device,
+        texture,
+        mip_count,
+        TextureFormat::Rgba8Unorm,
+        blit_pipeline,
+        blit_bgl,
+        linear_sampler,
+    );
+    queue.submit(std::iter::once(encoder.finish()));
 }
 
 impl TiledSource {
@@ -62,7 +143,6 @@ impl TiledSource {
         let max_dim = device.limits().max_texture_dimension_2d;
         let cols = image.width.div_ceil(max_dim);
         let rows = image.height.div_ceil(max_dim);
-        let src_stride = (image.width * 4) as usize;
 
         let max_tile_bytes = (max_dim * max_dim * 4) as usize;
         let mut tile_pixels = Vec::with_capacity(max_tile_bytes);
@@ -99,62 +179,29 @@ impl TiledSource {
                     Some(&format!("{label}:source")),
                 );
 
-                if tw == image.width {
-                    queue.write_texture(
-                        source_texture.as_image_copy(),
-                        image_pixels.as_slice(),
-                        TexelCopyBufferLayout {
-                            offset: (ty as usize * src_stride) as u64,
-                            bytes_per_row: Some(tw * 4),
-                            rows_per_image: None,
-                        },
-                        Extent3d {
-                            width: tw,
-                            height: th,
-                            depth_or_array_layers: 1,
-                        },
-                    );
-                } else {
-                    let row_bytes = (tw * 4) as usize;
-                    tile_pixels.clear();
-                    for r in 0..th {
-                        let row_start = (ty + r) as usize * src_stride + tx as usize * 4;
-                        tile_pixels
-                            .extend_from_slice(&image_pixels[row_start..row_start + row_bytes]);
-                    }
-
-                    queue.write_texture(
-                        source_texture.as_image_copy(),
-                        &tile_pixels,
-                        TexelCopyBufferLayout {
-                            offset: 0,
-                            bytes_per_row: Some(tw * 4),
-                            rows_per_image: None,
-                        },
-                        Extent3d {
-                            width: tw,
-                            height: th,
-                            depth_or_array_layers: 1,
-                        },
-                    );
-                }
+                write_tile_texture(
+                    queue,
+                    &source_texture,
+                    tx,
+                    ty,
+                    tw,
+                    th,
+                    image.width,
+                    image_pixels.as_slice(),
+                    &mut tile_pixels,
+                );
 
                 if mipmap_zoom_out {
-                    let mut encoder =
-                        device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
-                            label: Some(&format!("{label}:mip-encoder")),
-                        });
-                    gpu::generate_hw_mipmaps(
-                        &mut encoder,
+                    regen_tile_mipmaps(
                         device,
+                        queue,
                         &source_texture,
                         mip_count,
-                        TextureFormat::Rgba8Unorm,
                         blit_pipeline,
                         blit_bgl,
                         linear_sampler,
+                        &label,
                     );
-                    queue.submit(std::iter::once(encoder.finish()));
                 }
 
                 let source_view = source_texture.create_view(&Default::default());
@@ -203,6 +250,7 @@ impl TiledSource {
                     y: ty,
                     width: tw,
                     height: th,
+                    mip_count,
                 });
             }
         }
@@ -213,6 +261,65 @@ impl TiledSource {
             full_width: image.width,
             full_height: image.height,
             physical_scale: 1.0,
+            has_mipmaps: mipmap_zoom_out,
         })
+    }
+
+    pub fn matches(&self, image: &ImageData, mipmap_zoom_out: bool) -> bool {
+        self.full_width == image.width
+            && self.full_height == image.height
+            && self.has_mipmaps == mipmap_zoom_out
+    }
+
+    pub fn write_frame(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        image: &ImageData,
+        blit_pipeline: &RenderPipeline,
+        blit_bgl: &BindGroupLayout,
+        linear_sampler: &Sampler,
+    ) -> Result<(), ViewError> {
+        let image_pixels = image.pixels_snapshot();
+        if image_pixels.len() < image.size_bytes() {
+            return Err(ViewError::ImageDataMismatch {
+                expected: image.size_bytes(),
+                actual: image_pixels.len(),
+            });
+        }
+
+        let full_width = self.full_width;
+        let needs_mips = self.has_mipmaps && self.physical_scale < 1.0 - 1e-6;
+        let mut scratch = Vec::new();
+
+        for (i, tile) in self.tiles.iter().enumerate() {
+            write_tile_texture(
+                queue,
+                &tile._source_texture,
+                tile.x,
+                tile.y,
+                tile.width,
+                tile.height,
+                full_width,
+                image_pixels.as_slice(),
+                &mut scratch,
+            );
+
+            if needs_mips && tile.mip_count > 1 {
+                regen_tile_mipmaps(
+                    device,
+                    queue,
+                    &tile._source_texture,
+                    tile.mip_count,
+                    blit_pipeline,
+                    blit_bgl,
+                    linear_sampler,
+                    &format!("tile{i}"),
+                );
+            }
+        }
+
+        self.image_id = image.id;
+        Ok(())
     }
 }

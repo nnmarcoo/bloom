@@ -47,6 +47,16 @@ pub struct App {
     picked_color: Option<[u8; 4]>,
     paused: bool,
     scrubbing: bool,
+    #[cfg(feature = "video")]
+    video: Option<crate::wgpu::media::video::VideoState>,
+    #[cfg(feature = "video")]
+    scrub_pending: Option<Duration>,
+    #[cfg(feature = "video")]
+    scrub_sent: Option<Duration>,
+    #[cfg(feature = "video")]
+    volume: f32,
+    #[cfg(feature = "video")]
+    muted: bool,
     notifications: Vec<NotificationEntry>,
     export_progress: Option<f32>,
     pub selected_tool: Tool,
@@ -63,6 +73,8 @@ pub enum Tool {
     Draw,
     Text,
 }
+
+type TransportView = (usize, f32, Option<(Duration, Duration)>);
 
 impl Default for App {
     fn default() -> Self {
@@ -95,6 +107,16 @@ impl App {
             picked_color: None,
             paused: false,
             scrubbing: false,
+            #[cfg(feature = "video")]
+            video: None,
+            #[cfg(feature = "video")]
+            scrub_pending: None,
+            #[cfg(feature = "video")]
+            scrub_sent: None,
+            #[cfg(feature = "video")]
+            volume: 1.0,
+            #[cfg(feature = "video")]
+            muted: false,
             notifications: Vec::new(),
             export_progress: None,
             selected_tool: Tool::Select,
@@ -148,6 +170,8 @@ pub enum Message {
     FrameNext,
     FramePrev,
     FrameSeek(usize),
+    SetVolume(f32),
+    ToggleMute,
     TimelineScrubStart,
     TimelineScrubEnd,
     UiScaleUp,
@@ -290,7 +314,27 @@ impl App {
                 self.loading = None;
                 self.apply_media(media);
             }
-            Message::AnimationTick(now) => self.program.tick_animation(now),
+            Message::AnimationTick(now) => {
+                #[cfg(feature = "video")]
+                if let Some(video) = self.video.as_mut() {
+                    if let Some(frame) = video.present() {
+                        self.program.set_video_frame(frame, false);
+                    }
+                    if self.scrubbing
+                        && !video.is_seeking()
+                        && self.scrub_pending != self.scrub_sent
+                        && let Some(target) = self.scrub_pending
+                    {
+                        video.seek(target, false);
+                        self.scrub_sent = Some(target);
+                    }
+                    if video.is_ended() {
+                        self.paused = true;
+                    }
+                    return Task::none();
+                }
+                self.program.tick_animation(now);
+            }
             Message::MediaFailed(generation, err) => {
                 if generation == self.load_generation {
                     self.loading = None;
@@ -402,22 +446,54 @@ impl App {
             }
             Message::TogglePlayback => {
                 self.paused = !self.paused;
+                #[cfg(feature = "video")]
+                if let Some(video) = self.video.as_mut() {
+                    if self.paused {
+                        video.pause();
+                    } else {
+                        if video.is_ended() {
+                            video.seek(Duration::ZERO, true);
+                        }
+                        video.play();
+                    }
+                    return Task::none();
+                }
                 if !self.paused {
                     self.program.resume_animation();
                 }
             }
             Message::FrameFirst => {
                 self.paused = true;
+                #[cfg(feature = "video")]
+                if let Some(video) = self.video.as_mut() {
+                    video.pause();
+                    video.seek(Duration::ZERO, true);
+                    return Task::none();
+                }
                 self.program.seek_animation(0);
             }
             Message::FrameLast => {
                 self.paused = true;
+                #[cfg(feature = "video")]
+                if let Some(video) = self.video.as_mut() {
+                    video.pause();
+                    let target = video.duration().saturating_sub(video.frame_interval());
+                    video.seek(target, true);
+                    return Task::none();
+                }
                 if let Some((_, total)) = self.program.animation_info() {
                     self.program.seek_animation(total.saturating_sub(1));
                 }
             }
             Message::FrameNext => {
                 self.paused = true;
+                #[cfg(feature = "video")]
+                if let Some(video) = self.video.as_mut() {
+                    if let Some(frame) = video.step(true) {
+                        self.program.set_video_frame(frame, false);
+                    }
+                    return Task::none();
+                }
                 if let Some((frame, total)) = self.program.animation_info() {
                     self.program
                         .seek_animation((frame + 1).min(total.saturating_sub(1)));
@@ -425,19 +501,79 @@ impl App {
             }
             Message::FramePrev => {
                 self.paused = true;
+                #[cfg(feature = "video")]
+                if let Some(video) = self.video.as_mut() {
+                    if let Some(frame) = video.step(false) {
+                        self.program.set_video_frame(frame, false);
+                    }
+                    return Task::none();
+                }
                 if let Some((frame, _)) = self.program.animation_info() {
                     self.program.seek_animation(frame.saturating_sub(1));
                 }
             }
             Message::FrameSeek(index) => {
+                #[cfg(feature = "video")]
+                if let Some(video) = self.video.as_mut() {
+                    let target = video.seek_target_from_step(index);
+                    if self.scrubbing {
+                        self.scrub_pending = Some(target);
+                        if !video.is_seeking() && self.scrub_sent != Some(target) {
+                            video.seek(target, false);
+                            self.scrub_sent = Some(target);
+                        }
+                    } else {
+                        video.seek(target, true);
+                    }
+                    return Task::none();
+                }
                 self.program.seek_animation(index);
                 if !self.paused && !self.scrubbing {
                     self.program.resume_animation();
                 }
             }
-            Message::TimelineScrubStart => self.scrubbing = true,
+            Message::SetVolume(_v) => {
+                #[cfg(feature = "video")]
+                {
+                    self.volume = _v.clamp(0.0, 2.0);
+                    self.muted = self.volume <= 0.0;
+                    if let Some(video) = &self.video {
+                        video.set_volume(self.volume);
+                    }
+                }
+            }
+            Message::ToggleMute => {
+                #[cfg(feature = "video")]
+                {
+                    self.muted = !self.muted;
+                    let effective = if self.muted { 0.0 } else { self.volume };
+                    if let Some(video) = &self.video {
+                        video.set_volume(effective);
+                    }
+                }
+            }
+            Message::TimelineScrubStart => {
+                self.scrubbing = true;
+                #[cfg(feature = "video")]
+                if let Some(video) = self.video.as_mut() {
+                    video.pause();
+                    self.scrub_pending = None;
+                    self.scrub_sent = None;
+                }
+            }
             Message::TimelineScrubEnd => {
                 self.scrubbing = false;
+                #[cfg(feature = "video")]
+                if let Some(video) = self.video.as_mut() {
+                    self.scrub_sent = None;
+                    if let Some(target) = self.scrub_pending.take() {
+                        video.seek(target, true);
+                    }
+                    if !self.paused {
+                        video.play();
+                    }
+                    return Task::none();
+                }
                 if !self.paused {
                     self.program.resume_animation();
                 }
@@ -663,13 +799,71 @@ impl App {
             .unwrap_or_else(|| format!("export.{ext}"))
     }
 
+    #[cfg(feature = "video")]
+    fn playback_active(&self) -> bool {
+        self.program.animation_info().is_some() || self.video.is_some()
+    }
+
+    #[cfg(not(feature = "video"))]
+    fn playback_active(&self) -> bool {
+        self.program.animation_info().is_some()
+    }
+
+    fn transport_view(&self) -> Option<TransportView> {
+        #[cfg(feature = "video")]
+        if let Some(video) = &self.video {
+            let dur = video.duration();
+            let pos = video.position();
+            let frac = if dur > Duration::ZERO {
+                (pos.as_secs_f32() / dur.as_secs_f32()).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let total = crate::wgpu::media::video::VIDEO_SCRUB_STEPS;
+            return Some((total, frac, Some((pos, dur))));
+        }
+
+        self.program.animation_info().map(|(frame, total)| {
+            let frac = if total > 1 {
+                frame as f32 / (total - 1) as f32
+            } else {
+                0.0
+            };
+            let timestamp = self
+                .program
+                .animation_timestamp()
+                .zip(self.program.animation_duration());
+            (total, frac, timestamp)
+        })
+    }
+
     fn apply_media(&mut self, media: MediaData) {
+        #[cfg(feature = "video")]
+        {
+            self.video = None;
+        }
         match media {
             MediaData::Image(data) => self.program.set_image(*data),
             MediaData::Animation(anim) => self.program.set_animation(anim),
+            #[cfg(feature = "video")]
+            MediaData::Video(info) => match crate::wgpu::media::video::VideoState::new(info) {
+                Ok(state) => {
+                    state.set_volume(if self.muted { 0.0 } else { self.volume });
+                    self.program
+                        .set_video_frame(std::sync::Arc::clone(&state.current), true);
+                    self.video = Some(state);
+                }
+                Err(e) => eprintln!("video load failed: {e}"),
+            },
         }
         self.paused = !self.config.autoplay;
         self.scrubbing = false;
+        #[cfg(feature = "video")]
+        if !self.paused
+            && let Some(video) = self.video.as_mut()
+        {
+            video.play();
+        }
         self.program.fit();
     }
 
@@ -757,7 +951,7 @@ impl App {
             Some(Action::ToolDraw) => Task::done(Message::SelectTool(Tool::Draw)),
             Some(Action::ToolText) => Task::done(Message::SelectTool(Tool::Text)),
             Some(Action::TogglePlayback) => {
-                if self.program.animation_info().is_some() {
+                if self.playback_active() {
                     Task::done(Message::TogglePlayback)
                 } else {
                     Task::none()
@@ -793,17 +987,22 @@ impl App {
             self.drag_hover_target,
         ));
 
-        if let Some((frame, total)) = self.program.animation_info() {
-            let position = if total > 1 {
-                frame as f32 / (total - 1) as f32
-            } else {
-                0.0
+        if let Some((total, position, timestamp)) = self.transport_view() {
+            #[cfg(feature = "video")]
+            let (volume, muted) = match &self.video {
+                Some(v) if v.has_audio() => (Some(self.volume), self.muted),
+                _ => (None, false),
             };
-            let timestamp = self
-                .program
-                .animation_timestamp()
-                .zip(self.program.animation_duration());
-            col = col.push(timeline_bar::view(total, position, !self.paused, timestamp));
+            #[cfg(not(feature = "video"))]
+            let (volume, muted): (Option<f32>, bool) = (None, false);
+            col = col.push(timeline_bar::view(
+                total,
+                position,
+                !self.paused,
+                timestamp,
+                volume,
+                muted,
+            ));
         }
 
         if self.config.show_bottom_bar {
@@ -816,7 +1015,7 @@ impl App {
                 self.config.show_edit,
                 self.program.show_checkerboard,
                 self.gallery.current().is_some(),
-                self.program.animation_info().is_some(),
+                self.playback_active(),
                 self.config.fit_lock,
                 self.export_progress,
             ));
@@ -853,10 +1052,20 @@ impl App {
         });
         let mut subs = vec![events, picker];
 
-        if let Some(delay) = (!self.paused && !self.scrubbing)
+        #[cfg(feature = "video")]
+        let tick = match &self.video {
+            Some(video) => (!self.paused || self.scrubbing || video.is_seeking())
+                .then(|| video.frame_interval()),
+            None => (!self.paused && !self.scrubbing)
+                .then(|| self.program.time_until_next_frame())
+                .flatten(),
+        };
+        #[cfg(not(feature = "video"))]
+        let tick = (!self.paused && !self.scrubbing)
             .then(|| self.program.time_until_next_frame())
-            .flatten()
-        {
+            .flatten();
+
+        if let Some(delay) = tick {
             let delay = delay.max(Duration::from_millis(1));
             subs.push(every(delay).map(Message::AnimationTick));
         }

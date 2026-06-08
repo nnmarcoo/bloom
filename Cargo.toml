@@ -57,6 +57,12 @@ rfd = "0.17.2"
 
 libheif-rs = { version = "2", default-features = false, features = ["v1_17"], optional = true }
 
+# Video (optional)
+ffmpeg-next = { version = "8", optional = true }
+cpal = { version = "0.16", optional = true }
+ringbuf = { version = "0.4", optional = true }
+crossbeam-channel = { version = "0.5", optional = true }
+
 # Config persistence
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.0.3"
@@ -65,6 +71,7 @@ rawler = "0.7.2"
 
 [features]
 heif = ["dep:libheif-rs"]
+video = ["dep:ffmpeg-next", "dep:cpal", "dep:ringbuf", "dep:crossbeam-channel"]
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"

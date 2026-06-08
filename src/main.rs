@@ -31,6 +31,7 @@ fn app_icon() -> Option<window::Icon> {
 fn main() -> iced::Result {
     let _ = rayon::ThreadPoolBuilder::new()
         .thread_name(|i| format!("bloom-rayon-{i}"))
+        .stack_size(8 * 1024 * 1024)
         .build_global();
 
     let media = env::args().nth(1).map(PathBuf::from);

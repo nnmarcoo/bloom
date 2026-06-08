@@ -67,6 +67,7 @@ pub struct ViewPipeline {
     _placeholder_uniform: Buffer,
     source: Option<TiledSource>,
     modifier_pipeline: Option<ModifierPipeline>,
+    pending_source_dirty: bool,
     scale_factor: f32,
     last_checker_uniforms: Option<CheckerboardUniforms>,
     pub mipmap_zoom_out: bool,
@@ -95,6 +96,22 @@ impl ViewPipeline {
         if !image.pixels_available() {
             return Ok(());
         }
+
+        if let Some(source) = &mut self.source
+            && source.matches(image, self.mipmap_zoom_out)
+        {
+            source.write_frame(
+                device,
+                queue,
+                image,
+                &self.blit_pipeline,
+                &self.blit_bgl,
+                &self.linear_sampler,
+            )?;
+            self.pending_source_dirty = true;
+            return Ok(());
+        }
+
         self.modifier_pipeline = None;
         self.source = None;
         let _ = device.poll(iced::wgpu::PollType::Wait {
@@ -251,6 +268,9 @@ impl ViewPipeline {
                 return;
             }
         };
+
+        let dirty = dirty || self.pending_source_dirty;
+        self.pending_source_dirty = false;
 
         if !modifiers.iter().any(|m| m.has_visible_effect()) {
             self.modifier_pipeline = None;
@@ -471,6 +491,7 @@ impl Pipeline for ViewPipeline {
             _placeholder_uniform: placeholder_uniform,
             source: None,
             modifier_pipeline: None,
+            pending_source_dirty: false,
             scale_factor: 1.0,
             last_checker_uniforms: None,
             format,

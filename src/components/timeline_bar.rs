@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use iced::alignment::Vertical;
 use iced::widget::tooltip::Position;
-use iced::widget::{container, row, text};
+use iced::widget::{container, row, slider, text};
 use iced::{Element, Font, Length};
 
 use crate::app::Message;
@@ -15,6 +15,8 @@ pub fn view<'a>(
     position: f32,
     playing: bool,
     timestamp: Option<(Duration, Duration)>,
+    volume: Option<f32>,
+    muted: bool,
 ) -> Element<'a, Message> {
     let (play_pause_icon, play_pause_tooltip): (&'static [u8], &str) = if playing {
         (include_bytes!("../../assets/icons/pause.svg"), "Pause")
@@ -87,14 +89,36 @@ pub fn view<'a>(
             }
         });
 
-    container(
-        row![controls, timeline, label_widget]
-            .height(Length::Fixed(BAR_HEIGHT))
-            .width(Length::Fill)
-            .align_y(Vertical::Center)
-            .spacing(PAD),
-    )
-    .padding([0.0, PAD])
-    .style(bar_style)
-    .into()
+    let mut bar = row![controls, timeline, label_widget]
+        .height(Length::Fixed(BAR_HEIGHT))
+        .width(Length::Fill)
+        .align_y(Vertical::Center)
+        .spacing(PAD);
+
+    if let Some(level) = volume {
+        let (icon, tooltip): (&'static [u8], &str) = if muted || level <= 0.0 {
+            (
+                include_bytes!("../../assets/icons/volume-mute.svg"),
+                "Unmute",
+            )
+        } else {
+            (include_bytes!("../../assets/icons/volume.svg"), "Mute")
+        };
+        let shown = if muted { 0.0 } else { level };
+        let volume_control = row![
+            with_tooltip(
+                svg_button(icon, Message::ToggleMute),
+                tooltip,
+                Position::Top,
+            ),
+            slider(0.0..=2.0, shown, Message::SetVolume)
+                .step(0.01)
+                .width(Length::Fixed(90.0)),
+        ]
+        .align_y(Vertical::Center)
+        .spacing(PAD);
+        bar = bar.push(volume_control);
+    }
+
+    container(bar).padding([0.0, PAD]).style(bar_style).into()
 }
