@@ -98,10 +98,14 @@
                             <RegistryValue Id='regCapPpm'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.ppm'   Type='string' Value='bloom.AssocFile'/>
                             <RegistryValue Id='regCapTga'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.tga'   Type='string' Value='bloom.AssocFile'/>
                             <!-- Modern -->
+<?if $(var.Heif) = "true" ?>
                             <RegistryValue Id='regCapAvif'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.avif'  Type='string' Value='bloom.AssocFile'/>
+<?endif?>
                             <RegistryValue Id='regCapJxl'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.jxl'   Type='string' Value='bloom.AssocFile'/>
+<?if $(var.Heif) = "true" ?>
                             <RegistryValue Id='regCapHeic'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.heic'  Type='string' Value='bloom.AssocFile'/>
                             <RegistryValue Id='regCapHeif'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.heif'  Type='string' Value='bloom.AssocFile'/>
+<?endif?>
                             <RegistryValue Id='regCapQoi'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.qoi'   Type='string' Value='bloom.AssocFile'/>
                             <RegistryValue Id='regCapJp2'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.jp2'   Type='string' Value='bloom.AssocFile'/>
                             <RegistryValue Id='regCapJ2k'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.j2k'   Type='string' Value='bloom.AssocFile'/>
@@ -159,6 +163,7 @@
                             <RegistryValue Id='regCapSrw'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.srw'   Type='string' Value='bloom.AssocFile'/>
                             <RegistryValue Id='regCapX3f'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.x3f'   Type='string' Value='bloom.AssocFile'/>
                             <!-- Video -->
+<?if $(var.Video) = "true" ?>
                             <RegistryValue Id='regCapMp4'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.mp4'   Type='string' Value='bloom.AssocFile'/>
                             <RegistryValue Id='regCapM4v'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.m4v'   Type='string' Value='bloom.AssocFile'/>
                             <RegistryValue Id='regCapMov'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.mov'   Type='string' Value='bloom.AssocFile'/>
@@ -171,6 +176,7 @@
                             <RegistryValue Id='regCapM2ts'   Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.m2ts'  Type='string' Value='bloom.AssocFile'/>
                             <RegistryValue Id='regCapWmv'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.wmv'   Type='string' Value='bloom.AssocFile'/>
                             <RegistryValue Id='regCapFlv'    Root='HKLM' Key='Software\bloom\Capabilities\FileAssociations' Name='.flv'   Type='string' Value='bloom.AssocFile'/>
+<?endif?>
                         </Component>
 
                         <!-- Common formats: jpg, jpeg, png, gif, bmp, webp, tif, tiff, ico, apng, pbm, pgm, ppm, tga -->
@@ -207,14 +213,18 @@
 
                         <!-- Modern formats: avif, jxl, heic, heif, qoi, jp2, j2k, j2c, jpx -->
                         <Component Id='AssocModern' Guid='*'>
-                            <RegistryValue Id='regExtAvif'     Root='HKLM' Key='Software\Classes\.avif'                                          Type='string' Value='bloom.AssocFile' KeyPath='yes'/>
+<?if $(var.Heif) = "true" ?>
+                            <RegistryValue Id='regExtAvif'     Root='HKLM' Key='Software\Classes\.avif'                                          Type='string' Value='bloom.AssocFile'/>
                             <RegistryValue Id='regExtAvifOwp'  Root='HKLM' Key='Software\Classes\.avif\OpenWithProgids'  Name='bloom.AssocFile'   Type='string' Value=''/>
-                            <RegistryValue Id='regExtJxl'      Root='HKLM' Key='Software\Classes\.jxl'                                           Type='string' Value='bloom.AssocFile'/>
+<?endif?>
+                            <RegistryValue Id='regExtJxl'      Root='HKLM' Key='Software\Classes\.jxl'                                           Type='string' Value='bloom.AssocFile' KeyPath='yes'/>
                             <RegistryValue Id='regExtJxlOwp'   Root='HKLM' Key='Software\Classes\.jxl\OpenWithProgids'   Name='bloom.AssocFile'   Type='string' Value=''/>
+<?if $(var.Heif) = "true" ?>
                             <RegistryValue Id='regExtHeic'     Root='HKLM' Key='Software\Classes\.heic'                                          Type='string' Value='bloom.AssocFile'/>
                             <RegistryValue Id='regExtHeicOwp'  Root='HKLM' Key='Software\Classes\.heic\OpenWithProgids'  Name='bloom.AssocFile'   Type='string' Value=''/>
                             <RegistryValue Id='regExtHeif'     Root='HKLM' Key='Software\Classes\.heif'                                          Type='string' Value='bloom.AssocFile'/>
                             <RegistryValue Id='regExtHeifOwp'  Root='HKLM' Key='Software\Classes\.heif\OpenWithProgids'  Name='bloom.AssocFile'   Type='string' Value=''/>
+<?endif?>
                             <RegistryValue Id='regExtQoi'      Root='HKLM' Key='Software\Classes\.qoi'                                           Type='string' Value='bloom.AssocFile'/>
                             <RegistryValue Id='regExtQoiOwp'   Root='HKLM' Key='Software\Classes\.qoi\OpenWithProgids'   Name='bloom.AssocFile'   Type='string' Value=''/>
                             <RegistryValue Id='regExtJp2'      Root='HKLM' Key='Software\Classes\.jp2'                                           Type='string' Value='bloom.AssocFile'/>
@@ -333,6 +343,7 @@
                             <RegistryValue Id='regExtX3fOwp'   Root='HKLM' Key='Software\Classes\.x3f\OpenWithProgids'   Name='bloom.AssocFile'   Type='string' Value=''/>
                         </Component>
 
+<?if $(var.Video) = "true" ?>
                         <!-- Video formats: mp4, m4v, mov, mkv, webm, avi, mpg, mpeg, ts, m2ts, wmv, flv -->
                         <Component Id='AssocVideo' Guid='*'>
                             <RegistryValue Id='regExtMp4'      Root='HKLM' Key='Software\Classes\.mp4'                                           Type='string' Value='bloom.AssocFile' KeyPath='yes'/>
@@ -360,6 +371,7 @@
                             <RegistryValue Id='regExtFlv'      Root='HKLM' Key='Software\Classes\.flv'                                           Type='string' Value='bloom.AssocFile'/>
                             <RegistryValue Id='regExtFlvOwp'   Root='HKLM' Key='Software\Classes\.flv\OpenWithProgids'   Name='bloom.AssocFile'   Type='string' Value=''/>
                         </Component>
+<?endif?>
 
                     </Directory>
                 </Directory>
@@ -443,6 +455,7 @@
                     Absent='allow'>
                     <ComponentRef Id='AssocRaw'/>
                 </Feature>
+<?if $(var.Video) = "true" ?>
                 <Feature
                     Id='AssocVideoFeature'
                     Title='Video formats (mp4, mov, mkv, webm, avi, ...)'
@@ -452,6 +465,7 @@
                     Absent='allow'>
                     <ComponentRef Id='AssocVideo'/>
                 </Feature>
+<?endif?>
             </Feature>
 
             <Feature

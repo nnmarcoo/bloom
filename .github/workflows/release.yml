@@ -140,6 +140,8 @@ jobs:
       - name: Package (macOS)
         if: matrix.os == 'macos'
         shell: bash
+        env:
+          FEATURES: ${{ matrix.features }}
         run: |
           APP="bloom.app"
           BINARY="$APP/Contents/MacOS/bloom"
@@ -150,6 +152,14 @@ jobs:
             VERSION="${GITHUB_REF_NAME#v}"
           else
             VERSION="0.0.0"
+          fi
+
+          if [[ "$FEATURES" == *heif* ]]; then
+            HEIF_CONTENT='<string>public.heic</string><string>public.heif</string><string>public.avif</string>'
+            HEIF_EXT='<string>heic</string><string>heif</string><string>avif</string>'
+          else
+            HEIF_CONTENT=""
+            HEIF_EXT=""
           fi
 
           mkdir -p "$APP/Contents/MacOS" "$FRAMEWORKS"
@@ -199,15 +209,13 @@ jobs:
                 <key>LSHandlerRank</key><string>Default</string>
                 <key>LSItemContentTypes</key>
                 <array>
-                  <string>public.heic</string>
-                  <string>public.heif</string>
-                  <string>public.avif</string>
+                  $HEIF_CONTENT
                 </array>
                 <key>CFBundleTypeExtensions</key>
                 <array>
-                  <string>heic</string><string>heif</string>
-                  <string>avif</string><string>jxl</string>
-                  <string>qoi</string><string>hdr</string><string>exr</string>
+                  $HEIF_EXT
+                  <string>jxl</string><string>qoi</string>
+                  <string>hdr</string><string>exr</string>
                 </array>
               </dict>
             </array>
@@ -251,17 +259,19 @@ jobs:
         env:
           FEATURES: ${{ matrix.features }}
         run: |
+          $heif  = if ($env:FEATURES -like "*heif*")  { "true" } else { "false" }
+          $video = if ($env:FEATURES -like "*video*") { "true" } else { "false" }
           $zipItems = @("target\release\bloom.exe")
-          if ($env:FEATURES -like "*video*") {
+          $wixArgs = @("--no-build", "--nocapture", "-C", "-dHeif=$heif", "-C", "-dVideo=$video")
+          if ($video -eq "true") {
             $dllDir = "$env:RUNNER_TEMP\ffmpeg_dlls"
             New-Item -ItemType Directory -Force -Path $dllDir | Out-Null
             Copy-Item "$env:FFMPEG_DIR\bin\*.dll" -Destination $dllDir
             & "$env:WIX\bin\heat.exe" dir "$dllDir" -nologo -cg FfmpegDlls -dr Bin -var var.FfmpegDllDir -ag -srd -sreg -scom -out wix\ffmpeg.wxs
-            cargo wix --no-build --nocapture -C "-dVideo=true" -C "-dFfmpegDllDir=$dllDir" --output $env:MSI
+            $wixArgs += @("-C", "-dFfmpegDllDir=$dllDir")
             $zipItems += (Get-ChildItem "$dllDir\*.dll").FullName
-          } else {
-            cargo wix --no-build --nocapture -C "-dVideo=false" --output $env:MSI
           }
+          cargo wix @wixArgs --output $env:MSI
           Compress-Archive -Path $zipItems -DestinationPath $env:ARTIFACT
 
       - uses: actions/upload-artifact@v4
