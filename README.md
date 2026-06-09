@@ -105,19 +105,19 @@ sudo pacman -S libheif         # Arch
 cargo build --release --features heif
 ```
 
-For video playback, install FFmpeg (the `ffmpeg-next` bindings link against it) and build with the feature flag:
+For video playback, the `ffmpeg-next` bindings link against FFmpeg. A helper script installs it:
 
 ```sh
-# macOS
-brew install ffmpeg
+# macOS / Linux
+./scripts/setup-video.sh
 
-# Linux
-sudo apt install libavformat-dev libavfilter-dev libavdevice-dev libclang-dev # Ubuntu/Debian
-sudo dnf install ffmpeg-devel clang                                           # Fedora
-sudo pacman -S ffmpeg clang                                                   # Arch
+# Windows (PowerShell) — downloads a prebuilt FFmpeg into vendor/ and sets FFMPEG_DIR
+./scripts/setup-video.ps1
 
 cargo build --release --features video
 ```
+
+On Linux the script installs the FFmpeg dev libraries via your system package manager (`libavformat-dev`, `libavfilter-dev`, `libavdevice-dev`, `libclang-dev` on Ubuntu/Debian; `ffmpeg-devel clang` on Fedora; `ffmpeg clang` on Arch). On Windows it fetches a prebuilt shared FFmpeg into `vendor/ffmpeg`, sets `FFMPEG_DIR`, adds the DLLs to your `PATH`, and installs LLVM via winget (needed for `ffmpeg-sys-next`'s bindgen step) — open a new terminal afterward so the environment changes take effect.
 
 Requires a GPU with WebGPU support. On Windows, DX12 is used by default.
 
