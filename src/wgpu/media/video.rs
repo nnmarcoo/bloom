@@ -602,6 +602,10 @@ fn run_decode(
             }
             if let Some(params) = &audio {
                 params.clock.request_clear();
+                let deadline = Instant::now() + Duration::from_millis(50);
+                while params.clock.clear_pending() && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
             }
             eos.store(false, Ordering::Relaxed);
             seek_target = if precise { target } else { Duration::ZERO };

@@ -40,11 +40,15 @@ impl AudioClock {
         self.base_us
             .store(target.as_micros() as u64, Ordering::Relaxed);
         self.samples_played.store(0, Ordering::Relaxed);
-        self.clear.store(true, Ordering::Relaxed);
+        self.clear.store(true, Ordering::Release);
     }
 
     pub fn request_clear(&self) {
-        self.clear.store(true, Ordering::Relaxed);
+        self.clear.store(true, Ordering::Release);
+    }
+
+    pub fn clear_pending(&self) -> bool {
+        self.clear.load(Ordering::Acquire)
     }
 
     pub fn is_playing(&self) -> bool {
@@ -110,6 +114,7 @@ impl AudioOutput {
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     if cb_clock.clear.swap(false, Ordering::AcqRel) {
                         consumer.clear();
+                        cb_clock.samples_played.store(0, Ordering::Relaxed);
                     }
                     if !cb_clock.playing.load(Ordering::Relaxed) {
                         data.iter_mut().for_each(|s| *s = 0.0);

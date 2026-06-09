@@ -337,6 +337,7 @@ impl App {
                             }
                         } else {
                             self.paused = true;
+                            video.pause();
                         }
                     }
                     return Task::none();
