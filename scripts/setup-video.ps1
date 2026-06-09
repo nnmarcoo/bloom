@@ -6,9 +6,11 @@ $VendorDir  = Join-Path $RepoRoot "vendor"
 $FfmpegDir  = Join-Path $VendorDir "ffmpeg"
 $BinDir     = Join-Path $FfmpegDir "bin"
 
-$FfmpegUrl  = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip"
+$LlvmDir    = Join-Path $VendorDir "llvm"
 
-# --- FFmpeg: headers + import libs (build time) and DLLs (runtime) ---
+$FfmpegUrl  = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip"
+$LibclangWheelUrl = "https://files.pythonhosted.org/packages/py2.py3/l/libclang/libclang-18.1.1-py2.py3-none-win_amd64.whl"
+
 if (Test-Path (Join-Path $FfmpegDir "include\libavformat\avformat.h")) {
     Write-Host "FFmpeg already present at vendor/ffmpeg - skipping download."
 } else {
@@ -21,7 +23,6 @@ if (Test-Path (Join-Path $FfmpegDir "include\libavformat\avformat.h")) {
     if (Test-Path $Tmp) { Remove-Item -Recurse -Force $Tmp }
     Expand-Archive -Path $Zip -DestinationPath $Tmp
 
-    # The archive contains a single ffmpeg-n8.1-*/ directory with bin/ include/ lib/
     $Extracted = (Get-ChildItem -Directory $Tmp -Filter "ffmpeg-n8.1*").FullName
     New-Item -ItemType Directory -Force -Path $FfmpegDir | Out-Null
     Copy-Item -Recurse -Force (Join-Path $Extracted "include") $FfmpegDir
@@ -32,51 +33,48 @@ if (Test-Path (Join-Path $FfmpegDir "include\libavformat\avformat.h")) {
     Remove-Item -Recurse -Force $Tmp
 }
 
-# FFMPEG_DIR lets ffmpeg-sys-next find the headers and import libs at build time.
 [System.Environment]::SetEnvironmentVariable("FFMPEG_DIR", $FfmpegDir, "User")
 $env:FFMPEG_DIR = $FfmpegDir
 
-# The shared build needs its DLLs on PATH at runtime.
 $UserPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
 if ($UserPath -notlike "*$BinDir*") {
     [System.Environment]::SetEnvironmentVariable("Path", "$UserPath;$BinDir", "User")
 }
 $env:Path = "$env:Path;$BinDir"
 
-# --- libclang: ffmpeg-sys-next runs bindgen, which needs LLVM's libclang.dll ---
-function Find-LibclangBin {
-    foreach ($candidate in @(
-        $env:LIBCLANG_PATH,
-        "C:\Program Files\LLVM\bin",
-        "C:\Program Files (x86)\LLVM\bin"
-    )) {
-        if ($candidate -and (Test-Path (Join-Path $candidate "libclang.dll"))) {
-            return $candidate
-        }
-    }
-    return $null
-}
-
-$LlvmBin = Find-LibclangBin
-if (-not $LlvmBin) {
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Write-Host "Installing LLVM (for libclang) via winget..."
-        winget install -e --id LLVM.LLVM --accept-package-agreements --accept-source-agreements
-        $LlvmBin = Find-LibclangBin
-    }
-}
-
-if ($LlvmBin) {
-    [System.Environment]::SetEnvironmentVariable("LIBCLANG_PATH", $LlvmBin, "User")
-    $env:LIBCLANG_PATH = $LlvmBin
-    Write-Host "LIBCLANG_PATH set to: $LlvmBin"
+if (Test-Path (Join-Path $LlvmDir "libclang.dll")) {
+    Write-Host "libclang already present at vendor/llvm - skipping download."
 } else {
-    Write-Host ""
-    Write-Host "WARNING: libclang.dll not found and could not be installed automatically."
-    Write-Host "Install LLVM from https://github.com/llvm/llvm-project/releases (pick LLVM-*-win64.exe),"
-    Write-Host "then set LIBCLANG_PATH to its bin folder (e.g. C:\Program Files\LLVM\bin)."
+    $Wheel = Join-Path $env:TEMP "bloom-libclang.whl"
+    Write-Host "Downloading prebuilt libclang.dll..."
+    Invoke-WebRequest -Uri $LibclangWheelUrl -OutFile $Wheel
+
+    $Tmp = Join-Path $env:TEMP "bloom-libclang-extract"
+    if (Test-Path $Tmp) { Remove-Item -Recurse -Force $Tmp }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($Wheel, $Tmp)
+    $Dll = (Get-ChildItem -Recurse -Path $Tmp -Filter "libclang.dll" | Select-Object -First 1).FullName
+    if (-not $Dll) { throw "libclang.dll not found inside downloaded wheel ($LibclangWheelUrl)" }
+
+    New-Item -ItemType Directory -Force -Path $LlvmDir | Out-Null
+    Copy-Item -Force $Dll $LlvmDir
+
+    Remove-Item -Force $Wheel
+    Remove-Item -Recurse -Force $Tmp
 }
+
+[System.Environment]::SetEnvironmentVariable("LIBCLANG_PATH", $LlvmDir, "User")
+$env:LIBCLANG_PATH = $LlvmDir
+Write-Host "LIBCLANG_PATH set to: $LlvmDir"
 
 Write-Host ""
 Write-Host "Done. FFMPEG_DIR set to: $FfmpegDir"
-Write-Host "Open a NEW terminal (so env changes load), then: cargo build --features video"
+Write-Host ""
+Write-Host "This shell is already configured - you can build right now:"
+Write-Host "    cargo build --features video"
+Write-Host ""
+Write-Host "NOTE: the persistent (user-level) env vars are written to the registry, but"
+Write-Host "already-running processes do NOT pick them up. A new terminal INSIDE an editor"
+Write-Host "(VSCode, etc.) inherits the editor's stale environment, so it will still fail."
+Write-Host "To use a fresh terminal instead of this one, fully restart the editor first"
+Write-Host "(or restart explorer.exe), then open a terminal."
