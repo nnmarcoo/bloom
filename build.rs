@@ -26,7 +26,9 @@ fn copy_ffmpeg_dlls() {
     let target_dir = match out_dir.ancestors().nth(3) {
         Some(d) => d.to_path_buf(),
         None => {
-            println!("cargo:warning=could not resolve target dir from OUT_DIR; skipping FFmpeg DLL copy");
+            println!(
+                "cargo:warning=could not resolve target dir from OUT_DIR; skipping FFmpeg DLL copy"
+            );
             return;
         }
     };
