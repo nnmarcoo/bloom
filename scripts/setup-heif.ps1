@@ -10,7 +10,10 @@ $InstalledLib = Join-Path $VcpkgDir "installed\$Triplet\lib\heif.lib"
 
 if (Test-Path $InstalledLib) {
     Write-Host "libheif already installed under vendor/vcpkg - skipping."
-    Write-Host "Builds find vendor/vcpkg via .cargo/config.toml - no env var needed:"
+    [System.Environment]::SetEnvironmentVariable("VCPKG_ROOT", $VcpkgDir, "User")
+    $env:VCPKG_ROOT = $VcpkgDir
+    Write-Host "VCPKG_ROOT set to: $VcpkgDir"
+    Write-Host "This shell is configured - you can build right now:"
     Write-Host "    cargo build --features heif"
     exit 0
 }
@@ -58,10 +61,11 @@ $env:VCPKG_ROOT = $VcpkgDir
 Write-Host ""
 Write-Host "Done. VCPKG_ROOT set to: $VcpkgDir"
 Write-Host ""
-Write-Host "Builds find vendor/vcpkg via .cargo/config.toml, so no env var is needed -"
-Write-Host "you can build right now in this shell:"
+Write-Host "This shell is already configured - you can build right now:"
 Write-Host "    cargo build --features heif"
 Write-Host ""
-Write-Host "(The user-level VCPKG_ROOT above is just a convenience. Note: a new terminal"
-Write-Host "INSIDE an editor like VSCode inherits the editor's stale environment, so rely"
-Write-Host "on .cargo/config.toml rather than that var.)"
+Write-Host "NOTE: the persistent (user-level) VCPKG_ROOT above is written to the registry,"
+Write-Host "but already-running processes do NOT pick it up. A new terminal INSIDE an editor"
+Write-Host "(VSCode, etc.) inherits the editor's stale environment, so it will still fail."
+Write-Host "To use a fresh terminal instead of this one, fully restart the editor first"
+Write-Host "(or restart explorer.exe), then open a terminal."

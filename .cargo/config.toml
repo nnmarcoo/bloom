@@ -1,4 +1,0 @@
-[env]
-FFMPEG_DIR    = { value = "vendor/ffmpeg", relative = true }
-LIBCLANG_PATH = { value = "vendor/llvm",   relative = true }
-VCPKG_ROOT    = { value = "vendor/vcpkg",  relative = true }
