@@ -431,11 +431,11 @@ impl App {
                 }
             }
             Message::CopyImageDone(result) => {
-                let n = match result {
-                    Ok(()) => Notification::info("Copied image"),
-                    Err(e) => Notification::error(format!("Copy failed: {e}")),
-                };
-                self.notifications.push(NotificationEntry::new(n));
+                if let Err(e) = result {
+                    self.notifications.push(NotificationEntry::new(
+                        Notification::error(format!("Copy failed: {e}")),
+                    ));
+                }
             }
             Message::CopyPath => {
                 if let Some(path) = self.gallery.current() {
