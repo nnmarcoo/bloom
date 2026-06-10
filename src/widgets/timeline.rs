@@ -240,10 +240,8 @@ where
 
         let thumb_w = 4.0_f32;
         let thumb_cx = (bounds.x + bounds.width * progress)
-            .clamp(
-                bounds.x + thumb_w / 2.0,
-                bounds.x + bounds.width - thumb_w / 2.0,
-            )
+            .min(bounds.x + bounds.width - thumb_w / 2.0)
+            .max(bounds.x + thumb_w / 2.0)
             .round();
         renderer.fill_quad(
             Quad {

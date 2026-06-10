@@ -479,7 +479,8 @@ where
                     );
 
                     let marker_x = (bounds.x + bounds.width * self.fraction())
-                        .clamp(bounds.x + 2.0, bounds.x + bounds.width - 2.0);
+                        .min(bounds.x + bounds.width - 2.0)
+                        .max(bounds.x + 2.0);
                     renderer.fill_quad(
                         Quad {
                             bounds: Rectangle {
