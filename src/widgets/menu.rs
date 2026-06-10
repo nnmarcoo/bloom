@@ -63,16 +63,13 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for MenuItem<'a, 
         shell: &mut Shell<Message>,
         _viewport: &Rectangle,
     ) {
-        let state = tree.state.downcast_mut::<MenuItemState>();
-
         if !self.enabled {
-            if state.is_hovered {
-                state.is_hovered = false;
-                shell.request_redraw();
-            }
+            // Leaves is_hovered stale if a hovered item becomes disabled; harmless
+            // since draw guards on self.enabled. Clear it here if a phantom highlight appears.
             return;
         }
 
+        let state = tree.state.downcast_mut::<MenuItemState>();
         let is_over = cursor.is_over(layout.bounds());
 
         match event {
