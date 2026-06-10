@@ -158,6 +158,7 @@ pub enum Message {
     PanEnded,
     CopyColor,
     CopyPath,
+    OpenFileLocation,
     ToggleBottomBar,
     RotateCw,
     RotateCcw,
@@ -426,6 +427,11 @@ impl App {
             Message::CopyPath => {
                 if let Some(path) = self.gallery.current() {
                     clipboard::write_text(&path.to_string_lossy());
+                }
+            }
+            Message::OpenFileLocation => {
+                if let Some(path) = self.gallery.current() {
+                    open_file_location(path);
                 }
             }
             Message::Exit => {
@@ -1135,4 +1141,25 @@ fn checker_uniforms_from_theme(theme: &Theme) -> CheckerboardUniforms {
         tile_size: 12.0,
         _pad: [0.0; 3],
     }
+}
+
+fn open_file_location(path: &PathBuf) {
+    use std::process::Command;
+
+    #[cfg(target_os = "windows")]
+    let _ = Command::new("explorer")
+        .arg(format!("/select,{}", path.display()))
+        .spawn();
+
+    #[cfg(target_os = "macos")]
+    let _ = Command::new("open").arg("-R").arg(path).spawn();
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let _ = {
+        if let Some(parent) = path.parent() {
+            Command::new("xdg-open").arg(parent).spawn()
+        } else {
+            Command::new("xdg-open").arg(path).spawn()
+        }
+    };
 }
