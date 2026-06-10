@@ -157,6 +157,7 @@ pub enum Message {
     PanStarted,
     PanEnded,
     CopyColor,
+    CopyImage,
     CopyPath,
     OpenFileLocation,
     ToggleBottomBar,
@@ -422,6 +423,18 @@ impl App {
             Message::CopyColor => {
                 if let Some([r, g, b, _]) = self.picked_color {
                     clipboard::write_text(&format!("#{r:02X}{g:02X}{b:02X}"));
+                }
+            }
+            Message::CopyImage => {
+                if let Some(data) = self.program.export_data() {
+                    let n = match crate::export::render_still_rgba(&data) {
+                        Ok((w, h, rgba)) => match clipboard::write_image(w, h, rgba) {
+                            Ok(()) => Notification::info("Copied image"),
+                            Err(e) => Notification::error(format!("Copy failed: {e}")),
+                        },
+                        Err(e) => Notification::error(format!("Copy failed: {e}")),
+                    };
+                    self.notifications.push(NotificationEntry::new(n));
                 }
             }
             Message::CopyPath => {

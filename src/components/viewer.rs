@@ -115,9 +115,15 @@ pub fn view<'a>(
     let viewer_with_menu: Element<'a, Message> = ContextMenu::new(viewer, move || {
         styled_menu(
             column![
-                menu_item_enabled("Copy Color", Message::CopyColor, has_media),
-                menu_item_enabled("Copy File Path", Message::CopyPath, has_media),
                 menu_item_enabled("Open File Location", Message::OpenFileLocation, has_media),
+                menu_separator(),
+                menu_item_enabled("Copy Color", Message::CopyColor, has_media),
+                menu_item_enabled("Copy Image", Message::CopyImage, has_media),
+                menu_item_enabled("Copy File Path", Message::CopyPath, has_media),
+                menu_separator(),
+                menu_item_enabled("Rotate Left", Message::RotateCcw, has_media),
+                menu_item_enabled("Rotate Right", Message::RotateCw, has_media),
+                menu_item_enabled("Export Image", Message::ExportImage, has_media),
                 menu_separator(),
                 menu_item(bottom_bar_label, Message::ToggleBottomBar),
             ],

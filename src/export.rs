@@ -39,7 +39,7 @@ struct ExportCtx<'a> {
     modifiers: &'a [Modifier],
 }
 
-pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Result<String, String> {
+fn still_ctx(data: &ExportData) -> Result<ExportCtx<'_>, String> {
     let img_w = data.width;
     let img_h = data.height;
 
@@ -66,7 +66,7 @@ pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Resul
         .ok_or_else(|| "No frame available to export.".to_string())?;
     ensure_available(&still.pixels, img_w, img_h)?;
 
-    let ctx = ExportCtx {
+    Ok(ExportCtx {
         pixels: &still.pixels,
         img_w,
         img_h,
@@ -78,7 +78,18 @@ pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Resul
         out_h,
         rotation: data.rotation,
         modifiers: &data.modifiers,
-    };
+    })
+}
+
+pub fn render_still_rgba(data: &ExportData) -> Result<(u32, u32, Vec<u8>), String> {
+    let ctx = still_ctx(data)?;
+    let mut rgba = vec![0u8; ctx.out_w as usize * ctx.out_h as usize * 4];
+    render_into(&mut rgba, &ctx);
+    Ok((ctx.out_w, ctx.out_h, rgba))
+}
+
+pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Result<String, String> {
+    let ctx = still_ctx(&data)?;
 
     let ext = path
         .extension()

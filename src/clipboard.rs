@@ -41,3 +41,13 @@ pub fn write_text(text: &str) {
         let _ = ctx.set_text(text);
     }
 }
+
+pub fn write_image(width: u32, height: u32, rgba: Vec<u8>) -> Result<(), String> {
+    let mut ctx = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    ctx.set_image(arboard::ImageData {
+        width: width as usize,
+        height: height as usize,
+        bytes: rgba.into(),
+    })
+    .map_err(|e| e.to_string())
+}
