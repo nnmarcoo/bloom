@@ -65,6 +65,7 @@ pub struct ViewProgram {
     offset: Vec2,
     image_size: Vec2,
     scale: Scale,
+    fit_active: bool,
     bounds: Rectangle,
     image: Option<Arc<ImageData>>,
     animation: Option<Animation>,
@@ -91,6 +92,7 @@ impl Default for ViewProgram {
             offset: Vec2::ZERO,
             image_size: Vec2::ZERO,
             scale: Scale::default(),
+            fit_active: true,
             bounds: Rectangle::default(),
             image: None,
             animation: None,
@@ -141,6 +143,9 @@ impl ViewProgram {
 
     pub fn set_bounds(&mut self, bounds: Rectangle) {
         self.bounds = bounds;
+        if self.fit_active {
+            self.fit();
+        }
         self.clamp_offset();
     }
 
@@ -149,17 +154,22 @@ impl ViewProgram {
     }
 
     pub fn fit(&mut self) {
+        self.fit_active = true;
         if self.image_size == Vec2::ZERO {
             return;
         }
+        self.scale.custom(self.fit_scale());
+        self.offset = Vec2::ZERO;
+    }
+
+    fn fit_scale(&self) -> f32 {
         let eff = self.effective_display_size();
         let (fw, fh) = if self.rotation.is_multiple_of(2) {
             (eff.x, eff.y)
         } else {
             (eff.y, eff.x)
         };
-        self.scale.fit_dims(fw, fh, self.bounds);
-        self.offset = Vec2::ZERO;
+        (self.bounds.width / fw).min(self.bounds.height / fh)
     }
 
     pub fn set_base_rotation(&mut self, quarter_turns: u8) {
@@ -178,23 +188,27 @@ impl ViewProgram {
     }
 
     pub fn pan(&mut self, delta: Vec2) {
+        self.fit_active = false;
         self.offset += 2.0 * delta / self.scale.value();
         self.clamp_offset();
     }
 
     pub fn scale_up(&mut self, cursor: Vec2) {
+        self.fit_active = false;
         let prev = self.scale.up();
         self.scale_offset(cursor, prev);
         self.clamp_offset();
     }
 
     pub fn scale_down(&mut self, cursor: Vec2) {
+        self.fit_active = false;
         let prev = self.scale.down();
         self.scale_offset(cursor, prev);
         self.clamp_offset();
     }
 
     pub fn set_scale(&mut self, scale: f32, cursor: Vec2) {
+        self.fit_active = false;
         let prev = self.scale.value();
         self.scale.custom(scale);
         self.scale_offset(cursor, prev);
@@ -415,6 +429,14 @@ impl ViewProgram {
 
     pub fn scale(&self) -> f32 {
         self.scale.value()
+    }
+
+    pub fn fit_active(&self) -> bool {
+        self.fit_active
+    }
+
+    pub fn set_fit_active(&mut self, active: bool) {
+        self.fit_active = active;
     }
 
     pub fn rotation(&self) -> u8 {

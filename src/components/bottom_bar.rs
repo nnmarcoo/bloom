@@ -26,7 +26,7 @@ pub fn view<'a>(
     show_checkerboard: bool,
     has_image: bool,
     is_animation: bool,
-    fit_lock: bool,
+    fit_active: bool,
     export_progress: Option<f32>,
 ) -> Element<'a, Message> {
     let is_fullscreen = matches!(mode, Mode::Fullscreen);
@@ -79,13 +79,9 @@ pub fn view<'a>(
             svg_button_toggle(
                 include_bytes!("../../assets/icons/fit.svg"),
                 Message::Fit,
-                fit_lock,
+                fit_active,
             ),
-            if fit_lock {
-                "Fit to viewport (locked)"
-            } else {
-                "Fit to viewport"
-            },
+            "Fit to viewport",
             Position::Top,
         ),
         with_tooltip(
