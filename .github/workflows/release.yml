@@ -56,6 +56,7 @@ jobs:
         if: matrix.os == 'linux'
         env:
           FEATURES: ${{ matrix.features }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config
@@ -64,8 +65,16 @@ jobs:
           fi
           if [[ "$FEATURES" == *video* ]]; then
             sudo apt-get install -y clang libclang-dev libasound2-dev
-            curl -fL -o /tmp/ffmpeg.tar.xz \
-              https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-shared-8.1.tar.xz
+            ffmpeg_url=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases?per_page=20" \
+              | grep -oE '"browser_download_url": *"[^"]*linux64-gpl-shared-8\.1\.tar\.xz"' \
+              | grep -oE 'https://[^"]*' | head -n1)
+            if [ -z "$ffmpeg_url" ]; then
+              echo "::error::could not resolve an n8.1 gpl-shared FFmpeg build" >&2
+              exit 1
+            fi
+            echo "Downloading $ffmpeg_url"
+            curl -fL -o /tmp/ffmpeg.tar.xz "$ffmpeg_url"
             mkdir -p "$HOME/ffmpeg"
             tar -xf /tmp/ffmpeg.tar.xz -C "$HOME/ffmpeg" --strip-components=1
             sed -i "s|^prefix=.*|prefix=$HOME/ffmpeg|" "$HOME/ffmpeg/lib/pkgconfig/"*.pc
@@ -101,6 +110,7 @@ jobs:
         env:
           VCPKG_MAX_CONCURRENCY: 2
           FEATURES: ${{ matrix.features }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           choco install pkgconfiglite -y
           if ($env:FEATURES -like "*heif*") {
@@ -113,7 +123,13 @@ jobs:
           }
           if ($env:FEATURES -like "*video*") {
             echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
-            Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip" -OutFile "$env:RUNNER_TEMP\ffmpeg.zip"
+            $headers = @{ Authorization = "Bearer $env:GH_TOKEN" }
+            $releases = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases?per_page=20"
+            $ffmpegUrl = $releases.assets.browser_download_url |
+              Where-Object { $_ -match "win64-gpl-shared-8\.1\.zip$" } | Select-Object -First 1
+            if (-not $ffmpegUrl) { throw "could not resolve an n8.1 gpl-shared FFmpeg build" }
+            Write-Host "Downloading $ffmpegUrl"
+            Invoke-WebRequest -Uri $ffmpegUrl -OutFile "$env:RUNNER_TEMP\ffmpeg.zip"
             Expand-Archive -Path "$env:RUNNER_TEMP\ffmpeg.zip" -DestinationPath "$env:RUNNER_TEMP"
             $extracted = (Get-ChildItem -Directory "$env:RUNNER_TEMP" -Filter "ffmpeg-n8.1*").FullName
             echo "FFMPEG_DIR=$extracted" >> $env:GITHUB_ENV
