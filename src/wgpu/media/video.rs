@@ -844,13 +844,17 @@ fn run_decode(
 
             let index = stream.index();
             if index == video_index {
-                decoder.send_packet(&packet).map_err(err)?;
+                if decoder.send_packet(&packet).is_err() {
+                    continue;
+                }
                 while decoder.receive_frame(&mut decoded).is_ok() {
                     let pts = ts_to_duration(decoded.pts().or_else(|| decoded.timestamp()), tb);
                     if pts < seek_target {
                         continue;
                     }
-                    let frame = build_frame(&mut scaler, &decoded, pts, epoch)?;
+                    let Ok(frame) = build_frame(&mut scaler, &decoded, pts, epoch) else {
+                        continue;
+                    };
                     match send_frame(frame_tx, cmd_rx, &mut pending_frames, frame) {
                         Flow::Continue => {}
                         Flow::Stop => return Ok(()),
@@ -864,7 +868,9 @@ fn run_decode(
                 && let (Some(adec), Some(resamp), Some(params)) =
                     (audio_decoder.as_mut(), resampler.as_mut(), audio.as_mut())
             {
-                adec.send_packet(&packet).map_err(err)?;
+                if adec.send_packet(&packet).is_err() {
+                    continue;
+                }
                 while adec.receive_frame(&mut decoded_audio).is_ok() {
                     let apts = ts_to_duration(
                         decoded_audio.pts().or_else(|| decoded_audio.timestamp()),
@@ -874,7 +880,9 @@ fn run_decode(
                         continue;
                     }
                     let mut out = ffmpeg::frame::Audio::empty();
-                    resamp.run(&decoded_audio, &mut out).map_err(err)?;
+                    if resamp.run(&decoded_audio, &mut out).is_err() {
+                        continue;
+                    }
                     let count = out.samples() * params.channels as usize;
                     let samples: &[f32] = bytemuck::cast_slice(&out.data(0)[..count * 4]);
                     match push_audio(params, cmd_rx, samples) {
@@ -900,7 +908,9 @@ fn run_decode(
             if pts < seek_target {
                 continue;
             }
-            let frame = build_frame(&mut scaler, &decoded, pts, epoch)?;
+            let Ok(frame) = build_frame(&mut scaler, &decoded, pts, epoch) else {
+                continue;
+            };
             match send_frame(frame_tx, cmd_rx, &mut pending_frames, frame) {
                 Flow::Continue => {}
                 Flow::Stop => return Ok(()),
