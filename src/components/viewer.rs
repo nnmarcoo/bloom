@@ -119,7 +119,6 @@ pub fn view<'a>(
                 menu_item_enabled("Copy File Path", Message::CopyPath, has_media),
                 menu_item_enabled("Open File Location", Message::OpenFileLocation, has_media),
                 menu_separator(),
-                menu_item_enabled("Fit", Message::Fit, has_media),
                 menu_item(bottom_bar_label, Message::ToggleBottomBar),
             ],
             180,
