@@ -1,6 +1,7 @@
 pub mod angle_dial;
 pub mod crop_overlay;
 pub mod histogram;
+pub mod hover_row;
 pub mod loading_spinner;
 pub mod menu;
 pub mod menu_button;

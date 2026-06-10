@@ -18,6 +18,7 @@ use crate::styles::{
     pref_nav_button_style, pref_section_rule_style, set_radius,
 };
 use crate::ui::{svg_button_plain, with_tooltip};
+use crate::widgets::hover_row::HoverRow;
 use crate::widgets::scale_entry::ScaleEntry;
 use crate::widgets::theme_picker::ThemePicker;
 
@@ -196,39 +197,6 @@ pub fn update(
     }
 }
 
-fn section<'a>(
-    label: &'a str,
-    tooltip: &'a str,
-    on_reset: PreferenceMessage,
-    theme: &Theme,
-) -> Element<'a, Message> {
-    let text_color = theme.extended_palette().background.base.text;
-    column![
-        row![
-            text(label)
-                .size(11)
-                .font(Font {
-                    weight: Weight::Semibold,
-                    ..Font::DEFAULT
-                })
-                .color(text_color),
-            Space::new().width(Length::Fill),
-            with_tooltip(
-                button(text("Reset").size(11))
-                    .style(plain_icon_button_style)
-                    .on_press(Message::Preference(on_reset))
-                    .padding([2.0, 6.0]),
-                tooltip,
-                Position::Top,
-            ),
-        ]
-        .align_y(Vertical::Center),
-        rule::horizontal(1).style(pref_section_rule_style),
-    ]
-    .spacing(PAD)
-    .into()
-}
-
 fn setting<'a>(
     label: &'a str,
     description: &'a str,
@@ -241,17 +209,19 @@ fn setting<'a>(
         .base
         .text
         .scale_alpha(0.5);
-    row![
-        column![
-            text(label).size(13),
-            text(description).size(11).color(muted),
+    HoverRow::new(
+        row![
+            column![
+                text(label).size(13),
+                text(description).size(11).color(muted),
+            ]
+            .spacing(PAD / 2.0)
+            .width(Length::Fill),
+            control,
         ]
-        .spacing(PAD / 2.0)
-        .width(Length::Fill),
-        control,
-    ]
-    .align_y(Vertical::Center)
-    .spacing(PAD * 2.0)
+        .align_y(Vertical::Center)
+        .spacing(PAD * 2.0),
+    )
     .into()
 }
 
@@ -302,17 +272,69 @@ fn keybind_row<'a>(
         chip
     };
 
-    row![
-        column![
-            text(action.label_with_detail()).size(13),
-            text(action.description()).size(11).color(muted),
+    HoverRow::new(
+        row![
+            column![
+                text(action.label_with_detail()).size(13),
+                text(action.description()).size(11).color(muted),
+            ]
+            .spacing(PAD / 2.0)
+            .width(Length::Fill),
+            control,
         ]
-        .spacing(PAD / 2.0)
-        .width(Length::Fill),
-        control,
+        .align_y(Vertical::Center)
+        .spacing(PAD * 2.0),
+    )
+    .into()
+}
+
+fn subgroup<'a>(
+    label: &'a str,
+    rows: Vec<Element<'a, Message>>,
+    theme: &Theme,
+) -> Element<'a, Message> {
+    subgroup_with_reset(label, None, rows, theme)
+}
+
+fn subgroup_with_reset<'a>(
+    label: &'a str,
+    reset: Option<(&'a str, PreferenceMessage)>,
+    rows: Vec<Element<'a, Message>>,
+    theme: &Theme,
+) -> Element<'a, Message> {
+    let header_color = theme.extended_palette().background.base.text;
+    let label_text = text(label)
+        .size(14)
+        .font(Font {
+            weight: Weight::Semibold,
+            ..Font::DEFAULT
+        })
+        .color(header_color);
+
+    let header: Element<'a, Message> = match reset {
+        Some((tooltip, on_reset)) => row![
+            label_text,
+            Space::new().width(Length::Fill),
+            with_tooltip(
+                button(text("Reset").size(11))
+                    .style(plain_icon_button_style)
+                    .on_press(Message::Preference(on_reset))
+                    .padding([2.0, 6.0]),
+                tooltip,
+                Position::Top,
+            ),
+        ]
+        .align_y(Vertical::Center)
+        .into(),
+        None => label_text.into(),
+    };
+
+    column![
+        column![header, rule::horizontal(1).style(pref_section_rule_style)].spacing(PAD),
+        settings_list(rows),
     ]
-    .align_y(Vertical::Center)
     .spacing(PAD * 2.0)
+    .width(Length::Fill)
     .into()
 }
 
@@ -351,13 +373,9 @@ fn bar<'a>(content: impl Into<Element<'a, Message>>, divider_on_top: bool) -> El
 }
 
 fn settings_list<'a>(rows: Vec<Element<'a, Message>>) -> Element<'a, Message> {
-    let n = rows.len();
-    let mut col = column![].spacing(PAD * 2.0).width(Length::Fill);
-    for (i, row) in rows.into_iter().enumerate() {
+    let mut col = column![].spacing(PAD * 3.0).width(Length::Fill);
+    for row in rows {
         col = col.push(row);
-        if i + 1 < n {
-            col = col.push(divider());
-        }
     }
     col.into()
 }
@@ -417,22 +435,19 @@ fn appearance_pane<'a>(pending: &'a Config, theme: &Theme) -> Element<'a, Messag
             theme,
         ),
     ];
-    column![
-        section(
-            "Appearance",
+    subgroup_with_reset(
+        "Appearance",
+        Some((
             "Reset appearance to defaults",
             PreferenceMessage::ResetAppearance,
-            theme
-        ),
-        settings_list(rows),
-    ]
-    .spacing(PAD * 2.0)
-    .width(Length::Fill)
-    .into()
+        )),
+        rows,
+        theme,
+    )
 }
 
 fn rendering_pane<'a>(pending: &'a Config, theme: &Theme) -> Element<'a, Message> {
-    let rows = vec![
+    let playback = vec![
         setting(
             "Autoplay animations",
             "Automatically play animations when opened",
@@ -467,14 +482,18 @@ fn rendering_pane<'a>(pending: &'a Config, theme: &Theme) -> Element<'a, Message
             .into(),
             theme,
         ),
-        setting(
-            "Remember last media",
-            "Open the last viewed file when no file is passed on launch",
-            toggler(pending.remember_last)
-                .on_toggle(|v| Message::Preference(PreferenceMessage::SetRememberLast(v)))
-                .into(),
-            theme,
-        ),
+    ];
+
+    let files = vec![setting(
+        "Remember last media",
+        "Open the last viewed file when no file is passed on launch",
+        toggler(pending.remember_last)
+            .on_toggle(|v| Message::Preference(PreferenceMessage::SetRememberLast(v)))
+            .into(),
+        theme,
+    )];
+
+    let quality = vec![
         setting(
             "Zoom out filtering",
             "Trilinear mipmapping, pre-averages the image at smaller sizes to reduce aliasing (uses ~33% more VRAM, restart required)",
@@ -512,16 +531,21 @@ fn rendering_pane<'a>(pending: &'a Config, theme: &Theme) -> Element<'a, Message
             theme,
         ),
     ];
+
     column![
-        section(
-            "Rendering",
-            "Reset rendering to defaults",
-            PreferenceMessage::ResetRendering,
+        subgroup_with_reset(
+            "Playback",
+            Some((
+                "Reset these settings to defaults",
+                PreferenceMessage::ResetRendering
+            )),
+            playback,
             theme
         ),
-        settings_list(rows),
+        subgroup("Files", files, theme),
+        subgroup("Image Quality", quality, theme),
     ]
-    .spacing(PAD * 2.0)
+    .spacing(PAD * 5.0)
     .width(Length::Fill)
     .into()
 }
@@ -531,17 +555,9 @@ fn keybindings_pane<'a>(
     capturing: Option<Action>,
     theme: &Theme,
 ) -> Element<'a, Message> {
-    let header_color = theme.extended_palette().background.base.text;
+    let mut col = column![].spacing(PAD * 5.0).width(Length::Fill);
 
-    let mut col = column![section(
-        "Keybindings",
-        "Reset keybindings to defaults",
-        PreferenceMessage::ResetKeybindings,
-        theme
-    )]
-    .spacing(PAD * 3.0)
-    .width(Length::Fill);
-
+    let mut first = true;
     for &category in KeyCategory::all() {
         let rows: Vec<Element<'a, Message>> = Action::all_visible()
             .iter()
@@ -551,20 +567,12 @@ fn keybindings_pane<'a>(
         if rows.is_empty() {
             continue;
         }
-        col = col.push(
-            column![
-                text(category.label())
-                    .size(11)
-                    .font(Font {
-                        weight: Weight::Semibold,
-                        ..Font::DEFAULT
-                    })
-                    .color(header_color),
-                settings_list(rows),
-            ]
-            .spacing(PAD)
-            .width(Length::Fill),
-        );
+        let reset = first.then_some((
+            "Reset keybindings to defaults",
+            PreferenceMessage::ResetKeybindings,
+        ));
+        col = col.push(subgroup_with_reset(category.label(), reset, rows, theme));
+        first = false;
     }
     col.into()
 }
@@ -585,7 +593,7 @@ pub fn view<'a>(
                 active == PrefSection::Appearance
             ),
             nav_button(
-                "Rendering",
+                "Playback & Quality",
                 PrefSection::Rendering,
                 active == PrefSection::Rendering
             ),
