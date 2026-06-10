@@ -983,8 +983,17 @@ impl App {
             let position = v.position();
             let duration = v.duration();
             let fps = v.avg_fps();
-            let frame = (position.as_secs_f64() * fps).round() as u64;
-            let frame_count = (duration.as_secs_f64() * fps).round() as u64;
+            let dur_secs = duration.as_secs_f64();
+            let frame_count = match v.frame_count() {
+                0 => (dur_secs * fps).round() as u64,
+                n => n,
+            };
+            let frac = if dur_secs > 0.0 {
+                (position.as_secs_f64() / dur_secs).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let frame = ((frac * frame_count as f64).round() as u64 + 1).min(frame_count.max(1));
             crate::components::info_panel::VideoPanel {
                 meta: v.meta(),
                 fps,

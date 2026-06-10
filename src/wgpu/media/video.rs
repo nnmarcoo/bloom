@@ -39,6 +39,7 @@ pub struct VideoInfo {
     pub height: u32,
     pub duration: Duration,
     pub avg_fps: f64,
+    pub frame_count: u64,
     pub has_audio: bool,
     pub rotation: u8,
     pub meta: VideoMeta,
@@ -191,6 +192,10 @@ impl VideoState {
 
     pub fn avg_fps(&self) -> f64 {
         self.info.avg_fps
+    }
+
+    pub fn frame_count(&self) -> u64 {
+        self.info.frame_count
     }
 
     pub fn position(&self) -> Duration {
@@ -475,7 +480,13 @@ pub fn probe_video(path: &Path) -> Result<VideoInfo, ImageError> {
         0.0
     };
 
-    let duration = Duration::from_micros(ictx.duration().max(0) as u64);
+    let tb = stream.time_base();
+    let duration = if stream.duration() > 0 && tb.denominator() != 0 {
+        let secs = stream.duration() as f64 * tb.numerator() as f64 / tb.denominator() as f64;
+        Duration::from_secs_f64(secs)
+    } else {
+        Duration::from_micros(ictx.duration().max(0) as u64)
+    };
     let audio_stream = ictx.streams().best(ffmpeg::media::Type::Audio);
     let has_audio = audio_stream.is_some();
     let rotation = stream_rotation(&stream);
@@ -509,6 +520,7 @@ pub fn probe_video(path: &Path) -> Result<VideoInfo, ImageError> {
         height: decoder.height(),
         duration,
         avg_fps,
+        frame_count: stream.frames().max(0) as u64,
         has_audio,
         rotation,
         meta,
