@@ -18,7 +18,7 @@ use crate::{
     widgets::{
         crop_overlay::CropOverlay,
         loading_spinner::Circular,
-        menu::{menu_item, menu_separator, styled_menu},
+        menu::{menu_item, menu_item_enabled, menu_separator, styled_menu},
     },
 };
 
@@ -111,13 +111,14 @@ pub fn view<'a>(
     } else {
         "Show Bottom Bar"
     };
+    let has_media = image_size.is_some();
     let viewer_with_menu: Element<'a, Message> = ContextMenu::new(viewer, move || {
         styled_menu(
             column![
-                menu_item("Copy Color", Message::CopyColor),
-                menu_item("Copy File Path", Message::CopyPath),
+                menu_item_enabled("Copy Color", Message::CopyColor, has_media),
+                menu_item_enabled("Copy File Path", Message::CopyPath, has_media),
                 menu_separator(),
-                menu_item("Fit", Message::Fit),
+                menu_item_enabled("Fit", Message::Fit, has_media),
                 menu_item(bottom_bar_label, Message::ToggleBottomBar),
             ],
             180,

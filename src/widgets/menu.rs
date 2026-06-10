@@ -19,6 +19,7 @@ const CONTAINER_PADDING: f32 = 6.0;
 struct MenuItem<'a, Message> {
     label: &'a str,
     on_press: Message,
+    enabled: bool,
 }
 
 #[derive(Default)]
@@ -63,6 +64,15 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for MenuItem<'a, 
         _viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_mut::<MenuItemState>();
+
+        if !self.enabled {
+            if state.is_hovered {
+                state.is_hovered = false;
+                shell.request_redraw();
+            }
+            return;
+        }
+
         let is_over = cursor.is_over(layout.bounds());
 
         match event {
@@ -94,7 +104,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for MenuItem<'a, 
         let bounds = layout.bounds();
         let palette = theme.extended_palette();
 
-        if state.is_hovered {
+        if self.enabled && state.is_hovered {
             renderer.fill_quad(
                 Quad {
                     bounds,
@@ -104,6 +114,12 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for MenuItem<'a, 
                 Background::Color(menu_item_hover_color(theme)),
             );
         }
+
+        let text_color = if self.enabled {
+            palette.background.base.text
+        } else {
+            palette.background.base.text.scale_alpha(0.3)
+        };
 
         renderer.fill_text(
             text::Text {
@@ -118,7 +134,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for MenuItem<'a, 
                 wrapping: text::Wrapping::None,
             },
             Point::new(bounds.x + ITEM_PADDING_H, bounds.y + bounds.height / 2.0),
-            palette.background.base.text,
+            text_color,
             bounds,
         );
     }
@@ -131,7 +147,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for MenuItem<'a, 
         _viewport: &Rectangle,
         _renderer: &Renderer,
     ) -> mouse::Interaction {
-        if cursor.is_over(layout.bounds()) {
+        if self.enabled && cursor.is_over(layout.bounds()) {
             mouse::Interaction::Pointer
         } else {
             mouse::Interaction::default()
@@ -149,6 +165,20 @@ pub fn menu_item<'a, Message: Clone + 'a>(label: &'a str, msg: Message) -> Eleme
     MenuItem {
         label,
         on_press: msg,
+        enabled: true,
+    }
+    .into()
+}
+
+pub fn menu_item_enabled<'a, Message: Clone + 'a>(
+    label: &'a str,
+    msg: Message,
+    enabled: bool,
+) -> Element<'a, Message> {
+    MenuItem {
+        label,
+        on_press: msg,
+        enabled,
     }
     .into()
 }

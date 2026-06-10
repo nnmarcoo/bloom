@@ -11,7 +11,7 @@ use crate::styles::{
     BAR_HEIGHT, BUTTON_SIZE, PAD, bar_style, icon_button_style, panel_divider_style, svg_style,
 };
 use crate::ui::{svg_button, svg_button_toggle, with_tooltip};
-use crate::widgets::menu::{menu_item, menu_separator, styled_menu};
+use crate::widgets::menu::{menu_item, menu_item_enabled, menu_separator, styled_menu};
 use crate::widgets::menu_button::{MenuAlign, MenuButton};
 use crate::widgets::scale_entry::ScaleEntry;
 
@@ -26,6 +26,7 @@ pub fn view<'a>(
     show_checkerboard: bool,
     has_image: bool,
     is_animation: bool,
+    is_video: bool,
     fit_active: bool,
     export_progress: Option<f32>,
 ) -> Element<'a, Message> {
@@ -151,17 +152,10 @@ pub fn view<'a>(
                     column![
                         menu_item("Preferences", Message::TogglePreferences),
                         menu_separator(),
-                        menu_item("Copy file path", Message::CopyPath),
-                        menu_item(
-                            "Export",
-                            if has_image {
-                                Message::ExportImage
-                            } else {
-                                Message::Noop
-                            }
-                        ),
+                        menu_item_enabled("Copy file path", Message::CopyPath, has_image),
+                        menu_item_enabled("Export", Message::ExportImage, has_image && !is_video,),
+                        menu_item_enabled("Export frame", Message::ExportFrame, is_animation),
                     ]
-                    .extend(is_animation.then(|| menu_item("Export frame", Message::ExportFrame)))
                     .push(menu_separator())
                     .push(menu_item("About", Message::Noop))
                     .push(menu_item("Exit", Message::Exit)),

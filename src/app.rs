@@ -797,6 +797,17 @@ impl App {
         self.program.animation_info().is_some()
     }
 
+    fn is_video(&self) -> bool {
+        #[cfg(feature = "video")]
+        {
+            self.video.is_some()
+        }
+        #[cfg(not(feature = "video"))]
+        {
+            false
+        }
+    }
+
     fn transport_view(&self) -> Option<TransportView> {
         #[cfg(feature = "video")]
         if let Some(video) = &self.video {
@@ -1025,6 +1036,7 @@ impl App {
                 self.program.show_checkerboard,
                 self.gallery.current().is_some(),
                 self.playback_active(),
+                self.is_video(),
                 self.program.fit_active(),
                 self.export_progress,
             ));
