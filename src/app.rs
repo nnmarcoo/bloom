@@ -1007,7 +1007,9 @@ impl App {
             video_panel,
         ));
 
-        if let Some((total, position, timestamp)) = self.transport_view() {
+        if let Some((total, position, timestamp)) = self.transport_view()
+            && self.config.show_bottom_bar
+        {
             #[cfg(feature = "video")]
             let (volume, muted) = match &self.video {
                 Some(v) if v.has_audio() => (Some(self.volume), self.muted),
