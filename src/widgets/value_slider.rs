@@ -107,6 +107,7 @@ pub struct ValueSlider<Message> {
     fmt: Fmt,
     track: Track,
     on_change: Box<dyn Fn(f32) -> Message>,
+    on_change_end: Option<Message>,
     height: f32,
     text_size: f32,
 }
@@ -125,6 +126,7 @@ impl<Message> ValueSlider<Message> {
             fmt: Fmt::num(2),
             track: Track::Fill,
             on_change: Box::new(on_change),
+            on_change_end: None,
             height: 16.0,
             text_size: 10.0,
         }
@@ -132,6 +134,11 @@ impl<Message> ValueSlider<Message> {
 
     pub fn step(mut self, step: f32) -> Self {
         self.step = step;
+        self
+    }
+
+    pub fn on_change_end(mut self, on_change_end: Message) -> Self {
+        self.on_change_end = Some(on_change_end);
         self
     }
 
@@ -285,6 +292,7 @@ where
                 }
                 Mode::Dragging { .. } => {
                     state.mode = Mode::Idle;
+                    self.publish_end(shell);
                     shell.capture_event();
                 }
                 _ => {}
@@ -339,6 +347,7 @@ where
                 let next = self.sanitize(self.value + lines * increment);
                 if next != self.value {
                     shell.publish((self.on_change)(next));
+                    self.publish_end(shell);
                 }
                 shell.capture_event();
             }
@@ -652,11 +661,18 @@ impl<Message: Clone> ValueSlider<Message> {
         }
     }
 
+    fn publish_end(&self, shell: &mut Shell<'_, Message>) {
+        if let Some(on_change_end) = &self.on_change_end {
+            shell.publish(on_change_end.clone());
+        }
+    }
+
     fn commit(&self, state: &mut State, shell: &mut Shell<'_, Message>) {
         if let Mode::Editing { buffer, .. } = &state.mode {
             self.publish_buffer(buffer, shell);
         }
         state.mode = Mode::Idle;
+        self.publish_end(shell);
     }
 }
 

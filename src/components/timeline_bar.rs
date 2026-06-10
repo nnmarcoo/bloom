@@ -118,6 +118,7 @@ pub fn view<'a>(
                 ))
                 .step(1.0)
                 .format(Fmt::num(0).suffix("%"))
+                .on_change_end(Message::CommitVolume)
             )
             .width(Length::Fixed(90.0)),
         ]

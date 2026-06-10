@@ -172,6 +172,7 @@ pub enum Message {
     FramePrev,
     FrameSeek(usize),
     SetVolume(f32),
+    CommitVolume,
     ToggleMute,
     TimelineScrubStart,
     TimelineScrubEnd,
@@ -532,8 +533,11 @@ impl App {
                     }
                     self.config.volume = self.volume;
                     self.config.muted = self.muted;
-                    self.config.save();
                 }
+            }
+            Message::CommitVolume => {
+                #[cfg(feature = "video")]
+                self.config.save();
             }
             Message::ToggleMute => {
                 #[cfg(feature = "video")]
