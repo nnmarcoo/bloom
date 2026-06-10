@@ -2,13 +2,14 @@ use std::time::Duration;
 
 use iced::alignment::Vertical;
 use iced::widget::tooltip::Position;
-use iced::widget::{container, row, slider, text};
+use iced::widget::{container, row, text};
 use iced::{Element, Font, Length};
 
 use crate::app::Message;
 use crate::styles::{BAR_HEIGHT, PAD, bar_style};
 use crate::ui::{format_duration, svg_button, with_tooltip};
 use crate::widgets::timeline::Timeline;
+use crate::widgets::value_slider::{Fmt, ValueSlider};
 
 pub fn view<'a>(
     total_frames: usize,
@@ -111,9 +112,14 @@ pub fn view<'a>(
                 tooltip,
                 Position::Top,
             ),
-            slider(0.0..=2.0, shown, Message::SetVolume)
-                .step(0.01)
-                .width(Length::Fixed(90.0)),
+            container(
+                ValueSlider::new(shown * 100.0, 0.0..=200.0, |v| Message::SetVolume(
+                    v / 100.0
+                ))
+                .step(1.0)
+                .format(Fmt::num(0).suffix("%"))
+            )
+            .width(Length::Fixed(90.0)),
         ]
         .align_y(Vertical::Center)
         .spacing(PAD);
