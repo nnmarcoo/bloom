@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::io::Error;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -39,6 +40,21 @@ pub struct VideoInfo {
     pub duration: Duration,
     pub avg_fps: f64,
     pub has_audio: bool,
+    pub rotation: u8,
+    pub meta: VideoMeta,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct VideoMeta {
+    pub codec: Option<String>,
+    pub bitrate: Option<String>,
+    pub pixel_format: Option<String>,
+    pub bit_depth: Option<String>,
+    pub color_space: Option<String>,
+    pub audio_codec: Option<String>,
+    pub audio_sample_rate: Option<String>,
+    pub audio_channels: Option<String>,
+    pub audio_bitrate: Option<String>,
 }
 
 struct VideoFrame {
@@ -100,7 +116,7 @@ pub struct VideoState {
     audio: Option<AudioOutput>,
     clock: AvClock,
     eos: Arc<AtomicBool>,
-    frames: Vec<(Arc<ImageData>, Duration)>,
+    frames: VecDeque<(Arc<ImageData>, Duration)>,
     cursor: usize,
     position: Duration,
     expected_epoch: u64,
@@ -150,7 +166,7 @@ impl VideoState {
             audio,
             clock: AvClock::new(),
             eos,
-            frames: vec![(Arc::clone(&first.data), first.pts)],
+            frames: VecDeque::from([(Arc::clone(&first.data), first.pts)]),
             cursor: 0,
             position,
             expected_epoch: 0,
@@ -163,6 +179,18 @@ impl VideoState {
 
     pub fn duration(&self) -> Duration {
         self.info.duration
+    }
+
+    pub fn rotation(&self) -> u8 {
+        self.info.rotation
+    }
+
+    pub fn meta(&self) -> &VideoMeta {
+        &self.info.meta
+    }
+
+    pub fn avg_fps(&self) -> f64 {
+        self.info.avg_fps
     }
 
     pub fn position(&self) -> Duration {
@@ -224,9 +252,9 @@ impl VideoState {
     }
 
     fn push_frame(&mut self, f: VideoFrame) {
-        self.frames.push((f.data, f.pts));
+        self.frames.push_back((f.data, f.pts));
         if self.frames.len() > MAX_FRAMES {
-            self.frames.remove(0);
+            self.frames.pop_front();
             self.cursor = self.cursor.saturating_sub(1);
         }
     }
@@ -448,7 +476,32 @@ pub fn probe_video(path: &Path) -> Result<VideoInfo, ImageError> {
     };
 
     let duration = Duration::from_micros(ictx.duration().max(0) as u64);
-    let has_audio = ictx.streams().best(ffmpeg::media::Type::Audio).is_some();
+    let audio_stream = ictx.streams().best(ffmpeg::media::Type::Audio);
+    let has_audio = audio_stream.is_some();
+    let rotation = stream_rotation(&stream);
+
+    let video_params = stream.parameters();
+    let mut meta = VideoMeta {
+        codec: codec_label(&video_params),
+        bitrate: param_bitrate(&video_params),
+        pixel_format: decoder.format().descriptor().map(|d| d.name().to_string()),
+        bit_depth: component_depth(decoder.format()).map(|b| format!("{b}-bit")),
+        color_space: decoder.color_space().name().map(str::to_string),
+        ..VideoMeta::default()
+    };
+    if let Some(astream) = audio_stream {
+        let params = astream.parameters();
+        let codec = codec_label(&params);
+        let bitrate = param_bitrate(&params);
+        if let Ok(adec) = ffmpeg::codec::context::Context::from_parameters(params)
+            .and_then(|c| c.decoder().audio())
+        {
+            meta.audio_codec = codec;
+            meta.audio_sample_rate = Some(format!("{:.1} kHz", adec.rate() as f64 / 1000.0));
+            meta.audio_channels = Some(channel_label(adec.channels()));
+            meta.audio_bitrate = bitrate;
+        }
+    }
 
     Ok(VideoInfo {
         path: path.to_path_buf(),
@@ -457,7 +510,100 @@ pub fn probe_video(path: &Path) -> Result<VideoInfo, ImageError> {
         duration,
         avg_fps,
         has_audio,
+        rotation,
+        meta,
     })
+}
+
+fn codec_label(params: &ffmpeg::codec::Parameters) -> Option<String> {
+    let name = params.id().name();
+    if name.is_empty() {
+        return None;
+    }
+    let upper = name.to_uppercase();
+    match profile_name(params) {
+        Some(p) => Some(format!("{upper} ({p})")),
+        None => Some(upper),
+    }
+}
+
+fn param_bitrate(params: &ffmpeg::codec::Parameters) -> Option<String> {
+    let bits = unsafe { (*params.as_ptr()).bit_rate };
+    if bits <= 0 {
+        return None;
+    }
+    let mbps = bits as f64 / 1_000_000.0;
+    if mbps >= 1.0 {
+        Some(format!("{mbps:.1} Mbps"))
+    } else {
+        Some(format!("{:.0} kbps", bits as f64 / 1000.0))
+    }
+}
+
+fn component_depth(format: Pixel) -> Option<u32> {
+    let descriptor = format.descriptor()?;
+    let depth = unsafe { (*descriptor.as_ptr()).comp[0].depth };
+    (depth > 0).then_some(depth as u32)
+}
+
+fn channel_label(channels: u16) -> String {
+    match channels {
+        1 => "Mono".to_string(),
+        2 => "Stereo".to_string(),
+        6 => "5.1".to_string(),
+        8 => "7.1".to_string(),
+        n => format!("{n} ch"),
+    }
+}
+
+fn profile_name(params: &ffmpeg::codec::Parameters) -> Option<&'static str> {
+    use ffmpeg::codec::id::Id;
+    let profile = unsafe { (*params.as_ptr()).profile };
+    if profile < 0 {
+        return None;
+    }
+    Some(match (params.id(), profile) {
+        (Id::HEVC, 1) => "Main",
+        (Id::HEVC, 2) => "Main 10",
+        (Id::HEVC, 3) => "Main Still",
+        (Id::HEVC, 4) => "Range Ext",
+        (Id::H264, 66) => "Baseline",
+        (Id::H264, 77) => "Main",
+        (Id::H264, 88) => "Extended",
+        (Id::H264, 100) => "High",
+        (Id::H264, 110) => "High 10",
+        (Id::H264, 122) => "High 4:2:2",
+        (Id::H264, 244) => "High 4:4:4",
+        (Id::AV1, 0) => "Main",
+        (Id::AV1, 1) => "High",
+        (Id::AV1, 2) => "Professional",
+        (Id::VP9, 0) => "Profile 0",
+        (Id::VP9, 2) => "Profile 2",
+        _ => return None,
+    })
+}
+
+fn stream_rotation(stream: &ffmpeg::format::stream::Stream) -> u8 {
+    use ffmpeg::codec::packet::side_data::Type;
+    for sd in stream.side_data() {
+        if sd.kind() == Type::DisplayMatrix {
+            let bytes = sd.data();
+            if bytes.len() >= 36 {
+                let m = |i: usize| {
+                    i32::from_ne_bytes([
+                        bytes[i * 4],
+                        bytes[i * 4 + 1],
+                        bytes[i * 4 + 2],
+                        bytes[i * 4 + 3],
+                    ]) as f64
+                        / 65536.0
+                };
+                let quarter = (m(1).atan2(m(0)).to_degrees() / 90.0).round() as i32;
+                return quarter.rem_euclid(4) as u8;
+            }
+        }
+    }
+    0
 }
 
 enum Flow {
@@ -466,11 +612,65 @@ enum Flow {
     Seek(Duration, bool),
 }
 
+const MAX_PENDING_FRAMES: usize = 24;
+
+fn drain_pending(frame_tx: &Sender<VideoFrame>, pending: &mut VecDeque<VideoFrame>) -> Flow {
+    while let Some(frame) = pending.pop_front() {
+        match frame_tx.try_send(frame) {
+            Ok(()) => {}
+            Err(crossbeam_channel::TrySendError::Full(frame)) => {
+                pending.push_front(frame);
+                return Flow::Continue;
+            }
+            Err(crossbeam_channel::TrySendError::Disconnected(_)) => return Flow::Stop,
+        }
+    }
+    Flow::Continue
+}
+
 fn send_frame(
     frame_tx: &Sender<VideoFrame>,
     cmd_rx: &Receiver<VideoCommand>,
+    pending: &mut VecDeque<VideoFrame>,
     frame: VideoFrame,
 ) -> Flow {
+    match drain_pending(frame_tx, pending) {
+        Flow::Continue => {}
+        other => return other,
+    }
+    if !pending.is_empty() {
+        pending.push_back(frame);
+        while pending.len() >= MAX_PENDING_FRAMES {
+            match blocking_send_front(frame_tx, cmd_rx, pending) {
+                Flow::Continue => {}
+                other => return other,
+            }
+        }
+        return Flow::Continue;
+    }
+
+    match frame_tx.try_send(frame) {
+        Ok(()) => Flow::Continue,
+        Err(crossbeam_channel::TrySendError::Disconnected(_)) => Flow::Stop,
+        Err(crossbeam_channel::TrySendError::Full(frame)) => match cmd_rx.try_recv() {
+            Ok(VideoCommand::Seek { target, precise }) => Flow::Seek(target, precise),
+            Ok(VideoCommand::Stop) | Err(TryRecvError::Disconnected) => Flow::Stop,
+            Err(TryRecvError::Empty) => {
+                pending.push_back(frame);
+                Flow::Continue
+            }
+        },
+    }
+}
+
+fn blocking_send_front(
+    frame_tx: &Sender<VideoFrame>,
+    cmd_rx: &Receiver<VideoCommand>,
+    pending: &mut VecDeque<VideoFrame>,
+) -> Flow {
+    let Some(frame) = pending.pop_front() else {
+        return Flow::Continue;
+    };
     crossbeam_channel::select! {
         send(frame_tx, frame) -> res => if res.is_err() { Flow::Stop } else { Flow::Continue },
         recv(cmd_rx) -> msg => match msg {
@@ -537,11 +737,12 @@ fn run_decode(
         0.0
     };
 
-    let mut decoder = ffmpeg::codec::context::Context::from_parameters(stream.parameters())
-        .map_err(err)?
-        .decoder()
-        .video()
-        .map_err(err)?;
+    let mut decoder_ctx =
+        ffmpeg::codec::context::Context::from_parameters(stream.parameters()).map_err(err)?;
+    decoder_ctx.set_threading(ffmpeg::codec::threading::Config::kind(
+        ffmpeg::codec::threading::Type::Frame,
+    ));
+    let mut decoder = decoder_ctx.decoder().video().map_err(err)?;
 
     let mut scaler = Scaler::get(
         decoder.format(),
@@ -591,11 +792,13 @@ fn run_decode(
     let mut epoch: u64 = 0;
     let mut seek_target = Duration::ZERO;
     let mut pending_seek: Option<(Duration, bool)> = None;
+    let mut pending_frames: VecDeque<VideoFrame> = VecDeque::new();
 
     'outer: loop {
         if let Some((target, precise)) = pending_seek.take() {
             let ts = target.as_micros() as i64;
             ictx.seek(ts, ..ts).map_err(err)?;
+            pending_frames.clear();
             decoder.flush();
             if let Some(adec) = audio_decoder.as_mut() {
                 adec.flush();
@@ -623,6 +826,10 @@ fn run_decode(
                 Err(_) => {}
             }
 
+            if let Flow::Stop = drain_pending(frame_tx, &mut pending_frames) {
+                return Ok(());
+            }
+
             let index = stream.index();
             if index == video_index {
                 decoder.send_packet(&packet).map_err(err)?;
@@ -632,7 +839,7 @@ fn run_decode(
                         continue;
                     }
                     let frame = build_frame(&mut scaler, &decoded, pts, epoch)?;
-                    match send_frame(frame_tx, cmd_rx, frame) {
+                    match send_frame(frame_tx, cmd_rx, &mut pending_frames, frame) {
                         Flow::Continue => {}
                         Flow::Stop => return Ok(()),
                         Flow::Seek(target, precise) => {
@@ -682,13 +889,30 @@ fn run_decode(
                 continue;
             }
             let frame = build_frame(&mut scaler, &decoded, pts, epoch)?;
-            match send_frame(frame_tx, cmd_rx, frame) {
+            match send_frame(frame_tx, cmd_rx, &mut pending_frames, frame) {
                 Flow::Continue => {}
                 Flow::Stop => return Ok(()),
                 Flow::Seek(target, precise) => {
                     pending_seek = Some((target, precise));
                     continue 'outer;
                 }
+            }
+        }
+        loop {
+            match drain_pending(frame_tx, &mut pending_frames) {
+                Flow::Stop => return Ok(()),
+                _ if pending_frames.is_empty() => break,
+                _ => match cmd_rx.recv_timeout(Duration::from_millis(20)) {
+                    Ok(VideoCommand::Seek { target, precise }) => {
+                        pending_seek = Some((target, precise));
+                        continue 'outer;
+                    }
+                    Ok(VideoCommand::Stop)
+                    | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                        return Ok(());
+                    }
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+                },
             }
         }
         eos.store(true, Ordering::Relaxed);
@@ -734,11 +958,16 @@ fn frame_to_image(
     let pixels_in = rgba.data(0);
     let row_bytes = (width * 4) as usize;
 
-    let mut pixels = Vec::with_capacity(row_bytes * height as usize);
-    for y in 0..height as usize {
-        let start = y * stride;
-        pixels.extend_from_slice(&pixels_in[start..start + row_bytes]);
-    }
+    let pixels = if stride == row_bytes {
+        pixels_in[..row_bytes * height as usize].to_vec()
+    } else {
+        let mut pixels = Vec::with_capacity(row_bytes * height as usize);
+        for y in 0..height as usize {
+            let start = y * stride;
+            pixels.extend_from_slice(&pixels_in[start..start + row_bytes]);
+        }
+        pixels
+    };
 
     Ok(Arc::new(ImageData::new(pixels, width, height)))
 }

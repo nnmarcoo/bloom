@@ -863,11 +863,12 @@ impl App {
             MediaData::Image(data) => self.program.set_image(*data),
             MediaData::Animation(anim) => self.program.set_animation(anim),
             #[cfg(feature = "video")]
-            MediaData::Video(info) => match crate::wgpu::media::video::VideoState::new(info) {
+            MediaData::Video(info) => match crate::wgpu::media::video::VideoState::new(*info) {
                 Ok(state) => {
                     state.set_volume(if self.muted { 0.0 } else { self.volume });
                     self.program
                         .set_video_frame(std::sync::Arc::clone(&state.current), true);
+                    self.program.set_base_rotation(state.rotation());
                     self.video = Some(state);
                 }
                 Err(e) => eprintln!("video load failed: {e}"),
@@ -984,6 +985,24 @@ impl App {
         if let Some(pending) = &self.editing_config {
             return preferences::view(pending, &self.config.theme, &self.preference_state);
         }
+        #[cfg(feature = "video")]
+        let video_panel = self.video.as_ref().map(|v| {
+            let position = v.position();
+            let duration = v.duration();
+            let fps = v.avg_fps();
+            let frame = (position.as_secs_f64() * fps).round() as u64;
+            let frame_count = (duration.as_secs_f64() * fps).round() as u64;
+            crate::components::info_panel::VideoPanel {
+                meta: v.meta(),
+                fps,
+                rotation: v.rotation(),
+                position,
+                duration,
+                frame,
+                frame_count,
+            }
+        });
+
         let mut col = column![];
         col = col.push(viewer::view(
             self.program.clone(),
@@ -1002,6 +1021,8 @@ impl App {
             self.active_modifier,
             self.dragging_modifier,
             self.drag_hover_target,
+            #[cfg(feature = "video")]
+            video_panel,
         ));
 
         if let Some((total, position, timestamp)) = self.transport_view() {

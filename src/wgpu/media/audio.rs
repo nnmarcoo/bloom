@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use image::ImageError;
@@ -18,17 +18,41 @@ pub struct AudioClock {
     base_us: AtomicU64,
     clear: AtomicBool,
     volume: AtomicU32,
+    origin: Instant,
+    last_advance_us: AtomicU64,
+    last_pos_us: AtomicU64,
 }
 
 impl AudioClock {
-    fn position(&self) -> Duration {
+    fn sample_position(&self) -> Duration {
         let frames = self.samples_played.load(Ordering::Relaxed);
         let base_us = self.base_us.load(Ordering::Relaxed);
         Duration::from_micros(base_us)
             + Duration::from_secs_f64(frames as f64 / self.sample_rate as f64)
     }
 
+    fn position(&self) -> Duration {
+        let sample_pos = self.sample_position();
+        if !self.playing.load(Ordering::Relaxed) {
+            return sample_pos;
+        }
+        let last_advance = self.last_advance_us.load(Ordering::Relaxed);
+        let last_pos = self.last_pos_us.load(Ordering::Relaxed);
+        let now_us = self.origin.elapsed().as_micros() as u64;
+        let wall_pos =
+            Duration::from_micros(last_pos.saturating_add(now_us.saturating_sub(last_advance)));
+        sample_pos.max(wall_pos)
+    }
+
+    fn mark_advanced(&self) {
+        self.last_pos_us
+            .store(self.sample_position().as_micros() as u64, Ordering::Relaxed);
+        self.last_advance_us
+            .store(self.origin.elapsed().as_micros() as u64, Ordering::Relaxed);
+    }
+
     fn play(&self) {
+        self.mark_advanced();
         self.playing.store(true, Ordering::Relaxed);
     }
 
@@ -41,6 +65,7 @@ impl AudioClock {
             .store(target.as_micros() as u64, Ordering::Relaxed);
         self.samples_played.store(0, Ordering::Relaxed);
         self.clear.store(true, Ordering::Release);
+        self.mark_advanced();
     }
 
     pub fn request_clear(&self) {
@@ -58,6 +83,7 @@ impl AudioClock {
     pub fn set_base(&self, target: Duration) {
         self.base_us
             .store(target.as_micros() as u64, Ordering::Relaxed);
+        self.mark_advanced();
     }
 
     pub fn set_volume(&self, volume: f32) {
@@ -105,6 +131,9 @@ impl AudioOutput {
             base_us: AtomicU64::new(0),
             clear: AtomicBool::new(false),
             volume: AtomicU32::new(1.0f32.to_bits()),
+            origin: Instant::now(),
+            last_advance_us: AtomicU64::new(0),
+            last_pos_us: AtomicU64::new(0),
         });
         let cb_clock = Arc::clone(&clock);
 
@@ -128,9 +157,12 @@ impl AudioOutput {
                         }
                     }
                     data[popped..].iter_mut().for_each(|s| *s = 0.0);
-                    cb_clock
-                        .samples_played
-                        .fetch_add((popped / channels as usize) as u64, Ordering::Relaxed);
+                    if popped > 0 {
+                        cb_clock
+                            .samples_played
+                            .fetch_add((popped / channels as usize) as u64, Ordering::Relaxed);
+                        cb_clock.mark_advanced();
+                    }
                 },
                 |e| eprintln!("audio stream error: {e}"),
                 None,

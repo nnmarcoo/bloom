@@ -162,6 +162,11 @@ impl ViewProgram {
         self.offset = Vec2::ZERO;
     }
 
+    pub fn set_base_rotation(&mut self, quarter_turns: u8) {
+        self.rotation = quarter_turns % 4;
+        self.fit();
+    }
+
     pub fn rotate(&mut self) {
         self.rotation = (self.rotation + 1) % 4;
         self.fit();

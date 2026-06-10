@@ -24,6 +24,17 @@ use crate::widgets::histogram::Histogram;
 
 const FILENAME_MAX_CHARS: usize = 18;
 
+#[cfg(feature = "video")]
+pub struct VideoPanel<'a> {
+    pub meta: &'a crate::wgpu::media::video::VideoMeta,
+    pub fps: f64,
+    pub rotation: u8,
+    pub position: Duration,
+    pub duration: Duration,
+    pub frame: u64,
+    pub frame_count: u64,
+}
+
 struct Crosshair {
     pixel_size: f32,
 }
@@ -121,6 +132,18 @@ fn row_item<'a>(lbl: &'a str, val: impl ToString, muted: Color) -> Element<'a, M
     .into()
 }
 
+#[cfg(feature = "video")]
+fn push_opt<'a>(
+    rows: &mut Vec<Element<'a, Message>>,
+    label: &'a str,
+    value: &'a Option<String>,
+    muted: Color,
+) {
+    if let Some(v) = value {
+        rows.push(row_item(label, v, muted));
+    }
+}
+
 fn color_row<'a>(rgba: [u8; 4], muted: Color) -> Element<'a, Message> {
     let [r, g, b, a] = rgba;
     let color = Color {
@@ -210,6 +233,7 @@ pub fn view<'a>(
     theme: &Theme,
     info_collapsed: &HashSet<String>,
     pixel_preview_size: u32,
+    #[cfg(feature = "video")] video: Option<VideoPanel<'a>>,
 ) -> Element<'a, Message> {
     let palette = theme.extended_palette();
     let muted = palette.background.base.text.scale_alpha(0.5);
@@ -279,7 +303,11 @@ pub fn view<'a>(
         format!("{:.0}%", program.scale() * 100.0),
         muted,
     ));
-    if let Some(bd) = program.bit_depth() {
+    #[cfg(feature = "video")]
+    let is_video = video.is_some();
+    #[cfg(not(feature = "video"))]
+    let is_video = false;
+    if let Some(bd) = program.bit_depth().filter(|_| !is_video) {
         image_rows.push(row_item(
             "Bit depth",
             match bd {
@@ -305,7 +333,64 @@ pub fn view<'a>(
     if let Some(bytes) = program.vram_usage_bytes() {
         image_rows.push(row_item("VRAM", format_size(bytes as u64), muted));
     }
+    #[cfg(feature = "video")]
+    if let Some(v) = &video {
+        image_rows.push(row_item(
+            "Position",
+            format!(
+                "{} / {}",
+                format_duration(v.position),
+                format_duration(v.duration)
+            ),
+            muted,
+        ));
+        if v.frame_count > 0 {
+            image_rows.push(row_item(
+                "Frame",
+                format!("{} / {}", v.frame.min(v.frame_count), v.frame_count),
+                muted,
+            ));
+        }
+    }
     push_section(&mut rows, "IMAGE", image_rows);
+
+    #[cfg(feature = "video")]
+    if let Some(v) = &video {
+        let m = v.meta;
+        let mut video_rows: Vec<Element<'a, Message>> = Vec::new();
+        push_opt(&mut video_rows, "Codec", &m.codec, muted);
+        if v.fps > 0.0 {
+            video_rows.push(row_item("Frame rate", format!("{:.2} fps", v.fps), muted));
+        }
+        video_rows.push(row_item("Duration", format_duration(v.duration), muted));
+        for (label, value) in [
+            ("Bitrate", &m.bitrate),
+            ("Pixel fmt", &m.pixel_format),
+            ("Bit depth", &m.bit_depth),
+            ("Color", &m.color_space),
+        ] {
+            push_opt(&mut video_rows, label, value, muted);
+        }
+        if v.rotation != 0 {
+            video_rows.push(row_item(
+                "Rotation",
+                format!("{}°", v.rotation as u32 * 90),
+                muted,
+            ));
+        }
+        push_section(&mut rows, "VIDEO", video_rows);
+
+        let mut audio_rows: Vec<Element<'a, Message>> = Vec::new();
+        for (label, value) in [
+            ("Codec", &m.audio_codec),
+            ("Sample rate", &m.audio_sample_rate),
+            ("Channels", &m.audio_channels),
+            ("Bitrate", &m.audio_bitrate),
+        ] {
+            push_opt(&mut audio_rows, label, value, muted);
+        }
+        push_section(&mut rows, "AUDIO", audio_rows);
+    }
 
     let mut anim_rows: Vec<Element<'a, Message>> = Vec::new();
     if let Some((frame, total)) = program.animation_info() {

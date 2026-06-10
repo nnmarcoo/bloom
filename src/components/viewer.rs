@@ -40,6 +40,7 @@ pub fn view<'a>(
     active_modifier: Option<usize>,
     dragging_modifier: Option<usize>,
     drag_hover_target: Option<usize>,
+    #[cfg(feature = "video")] video_panel: Option<info_panel::VideoPanel<'a>>,
 ) -> Element<'a, Message> {
     let base: Element<'a, Message> = shader(program.clone())
         .height(Length::Fill)
@@ -137,6 +138,8 @@ pub fn view<'a>(
             theme,
             info_collapsed,
             pixel_preview_size,
+            #[cfg(feature = "video")]
+            video_panel,
         ));
     }
     content = content.push(viewer_with_menu);
