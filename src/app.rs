@@ -432,9 +432,10 @@ impl App {
             }
             Message::CopyImageDone(result) => {
                 if let Err(e) = result {
-                    self.notifications.push(NotificationEntry::new(
-                        Notification::error(format!("Copy failed: {e}")),
-                    ));
+                    self.notifications
+                        .push(NotificationEntry::new(Notification::error(format!(
+                            "Copy failed: {e}"
+                        ))));
                 }
             }
             Message::CopyPath => {
