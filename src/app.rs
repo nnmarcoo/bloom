@@ -93,6 +93,8 @@ impl App {
         program.smooth_zoom_in = config.smooth_zoom_in;
         program.loop_animations = config.loop_animations;
         styles::set_radius(config.rounded);
+        #[cfg(feature = "video")]
+        let (volume, muted) = (config.volume, config.muted);
         Self {
             program,
             gallery: Gallery::default(),
@@ -114,9 +116,9 @@ impl App {
             #[cfg(feature = "video")]
             scrub_sent: None,
             #[cfg(feature = "video")]
-            volume: 1.0,
+            volume,
             #[cfg(feature = "video")]
-            muted: false,
+            muted,
             notifications: Vec::new(),
             export_progress: None,
             selected_tool: Tool::Select,
@@ -523,11 +525,14 @@ impl App {
             Message::SetVolume(_v) => {
                 #[cfg(feature = "video")]
                 {
-                    self.volume = _v.clamp(0.0, 2.0);
+                    self.volume = _v.clamp(0.0, crate::config::VOLUME_MAX);
                     self.muted = self.volume <= 0.0;
                     if let Some(video) = &self.video {
                         video.set_volume(self.volume);
                     }
+                    self.config.volume = self.volume;
+                    self.config.muted = self.muted;
+                    self.config.save();
                 }
             }
             Message::ToggleMute => {
@@ -538,6 +543,8 @@ impl App {
                     if let Some(video) = &self.video {
                         video.set_volume(effective);
                     }
+                    self.config.muted = self.muted;
+                    self.config.save();
                 }
             }
             Message::TimelineScrubStart => {
@@ -1007,8 +1014,8 @@ impl App {
             video_panel,
         ));
 
-        if let Some((total, position, timestamp)) = self.transport_view()
-            && self.config.show_bottom_bar
+        if self.config.show_bottom_bar
+            && let Some((total, position, timestamp)) = self.transport_view()
         {
             #[cfg(feature = "video")]
             let (volume, muted) = match &self.video {

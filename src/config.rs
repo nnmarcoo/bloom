@@ -14,6 +14,9 @@ pub const UI_SCALE_DEFAULT: f32 = 1.0;
 pub const PIXEL_PREVIEW_SIZE_DEFAULT: u32 = 15;
 pub const PIXEL_PREVIEW_SIZE_OPTIONS: &[u32] = &[3, 5, 7, 9, 11, 13, 15];
 
+pub const VOLUME_MAX: f32 = 2.0;
+pub const VOLUME_DEFAULT: f32 = 1.0;
+
 pub const ALL_THEMES: &[Theme] = &[
     Theme::Light,
     Theme::Dark,
@@ -61,6 +64,8 @@ pub struct Config {
     pub info_collapsed: HashSet<String>,
     pub ui_scale: f32,
     pub pixel_preview_size: u32,
+    pub volume: f32,
+    pub muted: bool,
 }
 
 impl Default for Config {
@@ -86,6 +91,8 @@ impl Default for Config {
             info_collapsed: HashSet::new(),
             ui_scale: UI_SCALE_DEFAULT,
             pixel_preview_size: PIXEL_PREVIEW_SIZE_DEFAULT,
+            volume: VOLUME_DEFAULT,
+            muted: false,
         }
     }
 }
@@ -129,6 +136,10 @@ struct ConfigFile {
     ui_scale: f32,
     #[serde(default = "default_preview_size")]
     pixel_preview_size: u32,
+    #[serde(default = "default_volume")]
+    volume: f32,
+    #[serde(default)]
+    muted: bool,
 }
 
 fn default_true() -> bool {
@@ -141,6 +152,10 @@ fn default_scale() -> f32 {
 
 fn default_preview_size() -> u32 {
     PIXEL_PREVIEW_SIZE_DEFAULT
+}
+
+fn default_volume() -> f32 {
+    VOLUME_DEFAULT
 }
 
 impl From<&Config> for ConfigFile {
@@ -168,6 +183,8 @@ impl From<&Config> for ConfigFile {
             info_collapsed,
             ui_scale: c.ui_scale,
             pixel_preview_size: c.pixel_preview_size,
+            volume: c.volume,
+            muted: c.muted,
         }
     }
 }
@@ -201,6 +218,8 @@ impl From<ConfigFile> for Config {
             info_collapsed: f.info_collapsed.into_iter().collect(),
             ui_scale,
             pixel_preview_size,
+            volume: f.volume.clamp(0.0, VOLUME_MAX),
+            muted: f.muted,
         }
     }
 }
