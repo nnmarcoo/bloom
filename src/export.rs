@@ -63,7 +63,7 @@ fn still_ctx(data: &ExportData) -> Result<ExportCtx<'_>, String> {
     let still = data
         .frames
         .get(data.still_index)
-        .ok_or_else(|| "No frame available to export.".to_string())?;
+        .ok_or_else(|| "No frame available.".to_string())?;
     ensure_available(&still.pixels, img_w, img_h)?;
 
     Ok(ExportCtx {

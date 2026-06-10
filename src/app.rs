@@ -14,7 +14,6 @@ use iced::{
 };
 
 use crate::{
-    clipboard,
     components::{
         bottom_bar,
         notifications::{Notification, NotificationEntry},
@@ -158,6 +157,7 @@ pub enum Message {
     PanEnded,
     CopyColor,
     CopyImage,
+    CopyImageDone(Result<(), String>),
     CopyPath,
     OpenFileLocation,
     ToggleBottomBar,
@@ -422,29 +422,29 @@ impl App {
             Message::PanEnded => self.program.set_panning(false),
             Message::CopyColor => {
                 if let Some([r, g, b, _]) = self.picked_color {
-                    clipboard::write_text(&format!("#{r:02X}{g:02X}{b:02X}"));
+                    return tasks::copy_text(format!("#{r:02X}{g:02X}{b:02X}"));
                 }
             }
             Message::CopyImage => {
                 if let Some(data) = self.program.export_data() {
-                    let n = match crate::export::render_still_rgba(&data) {
-                        Ok((w, h, rgba)) => match clipboard::write_image(w, h, rgba) {
-                            Ok(()) => Notification::info("Copied image"),
-                            Err(e) => Notification::error(format!("Copy failed: {e}")),
-                        },
-                        Err(e) => Notification::error(format!("Copy failed: {e}")),
-                    };
-                    self.notifications.push(NotificationEntry::new(n));
+                    return tasks::copy_image(data);
                 }
+            }
+            Message::CopyImageDone(result) => {
+                let n = match result {
+                    Ok(()) => Notification::info("Copied image"),
+                    Err(e) => Notification::error(format!("Copy failed: {e}")),
+                };
+                self.notifications.push(NotificationEntry::new(n));
             }
             Message::CopyPath => {
                 if let Some(path) = self.gallery.current() {
-                    clipboard::write_text(&path.to_string_lossy());
+                    return tasks::copy_text(path.to_string_lossy().into_owned());
                 }
             }
             Message::OpenFileLocation => {
                 if let Some(path) = self.gallery.current() {
-                    open_file_location(path);
+                    return tasks::open_file_location(path.clone());
                 }
             }
             Message::Exit => {
@@ -1154,25 +1154,4 @@ fn checker_uniforms_from_theme(theme: &Theme) -> CheckerboardUniforms {
         tile_size: 12.0,
         _pad: [0.0; 3],
     }
-}
-
-fn open_file_location(path: &PathBuf) {
-    use std::process::Command;
-
-    #[cfg(target_os = "windows")]
-    let _ = Command::new("explorer")
-        .arg(format!("/select,{}", path.display()))
-        .spawn();
-
-    #[cfg(target_os = "macos")]
-    let _ = Command::new("open").arg("-R").arg(path).spawn();
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let _ = {
-        if let Some(parent) = path.parent() {
-            Command::new("xdg-open").arg(parent).spawn()
-        } else {
-            Command::new("xdg-open").arg(path).spawn()
-        }
-    };
 }

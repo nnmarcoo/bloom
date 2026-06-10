@@ -5,7 +5,7 @@ use iced::window::{self, Level, Mode};
 use image::ImageError;
 
 use crate::app::Message;
-use crate::export::{ExportData, do_export};
+use crate::export::{ExportData, do_export, render_still_rgba};
 use crate::{
     clipboard::{self, ClipboardImage},
     gallery::SUPPORTED,
@@ -114,6 +114,48 @@ pub fn export_image(data: ExportData, suggested_name: String) -> iced::Task<Mess
     });
 
     iced::Task::stream(rx)
+}
+
+pub fn copy_image(data: ExportData) -> iced::Task<Message> {
+    iced::Task::future(async move {
+        let result = tokio::task::spawn_blocking(move || {
+            let (w, h, rgba) = render_still_rgba(&data)?;
+            clipboard::write_image(w, h, rgba)
+        })
+        .await
+        .unwrap_or_else(|_| Err("render thread panicked".to_string()));
+        Message::CopyImageDone(result)
+    })
+}
+
+pub fn copy_text(text: String) -> iced::Task<Message> {
+    iced::Task::future(async move {
+        clipboard::write_text(&text);
+        Message::Noop
+    })
+}
+
+pub fn open_file_location(path: PathBuf) -> iced::Task<Message> {
+    use std::process::Command;
+
+    #[cfg(target_os = "windows")]
+    let _ = Command::new("explorer")
+        .arg(format!("/select,{}", path.display()))
+        .spawn();
+
+    #[cfg(target_os = "macos")]
+    let _ = Command::new("open").arg("-R").arg(&path).spawn();
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let _ = {
+        if let Some(parent) = path.parent() {
+            Command::new("xdg-open").arg(parent).spawn()
+        } else {
+            Command::new("xdg-open").arg(&path).spawn()
+        }
+    };
+
+    iced::Task::none()
 }
 
 pub fn set_window_mode(mode: Mode) -> iced::Task<Message> {
