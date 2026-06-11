@@ -152,7 +152,6 @@ pub fn view<'a>(
                     column![
                         menu_item("Preferences", Message::TogglePreferences),
                         menu_separator(),
-                        menu_item_enabled("Copy file path", Message::CopyPath, has_image),
                         menu_item_enabled("Export", Message::ExportImage, has_image && !is_video,),
                         menu_item_enabled("Export frame", Message::ExportFrame, is_animation),
                     ]
