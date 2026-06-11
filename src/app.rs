@@ -74,12 +74,6 @@ pub enum Tool {
 
 type TransportView = (usize, f32, Option<(Duration, Duration)>);
 
-impl Default for App {
-    fn default() -> Self {
-        Self::from_config(Config::load())
-    }
-}
-
 impl App {
     fn from_config(config: Config) -> Self {
         let mut program = ViewProgram::default();
