@@ -1097,17 +1097,17 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let events = event::listen().map(Message::Event);
-        let picker = event::listen_with(|event, _status, _window| match event {
-            Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+        let events = event::listen_with(|event, status, _window| match (&event, status) {
+            (Event::Mouse(iced::mouse::Event::CursorMoved { position }), _) => {
                 Some(Message::CursorWindow(Vec2::new(position.x, position.y)))
             }
-            Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right)) => {
+            (Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right)), _) => {
                 Some(Message::PickColor)
             }
+            (_, event::Status::Ignored) => Some(Message::Event(event)),
             _ => None,
         });
-        let mut subs = vec![events, picker];
+        let mut subs = vec![events];
 
         #[cfg(feature = "video")]
         let tick = match &self.video {
