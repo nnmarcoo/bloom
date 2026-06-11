@@ -1,10 +1,32 @@
 [package]
-name = "bloom"
+name = "bloomview"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
 authors = ["Marco Todorov"]
 description = "A hardware accelerated image viewer"
 homepage = "https://github.com/nnmarcoo/bloom"
+repository = "https://github.com/nnmarcoo/bloom"
+license = "GPL-3.0-only"
+readme = "README.md"
+keywords = ["image", "viewer", "gpu", "media", "gui"]
+categories = ["multimedia::images", "multimedia::video", "gui"]
+exclude = [
+    "assets/demo/**",
+    "assets/logo/banner.png",
+    "assets/logo/installer_banner.bmp",
+    "assets/logo/installer_dialog.bmp",
+    "assets/logo/gen_images.py",
+    "assets/logo/bloom.af",
+    "assets/logo/bloom.svg",
+    "wix/**",
+    "scripts/**",
+    ".github/**",
+]
+
+[[bin]]
+name = "bloom"
+path = "src/main.rs"
 
 [package.metadata.wix]
 eula = false

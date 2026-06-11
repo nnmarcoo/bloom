@@ -578,7 +578,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bloom"
+name = "bloomview"
 version = "0.1.0"
 dependencies = [
  "arboard",
