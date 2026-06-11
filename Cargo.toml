@@ -2,7 +2,7 @@
 name = "bloomview"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.87"
 authors = ["Marco Todorov"]
 description = "A hardware accelerated image viewer"
 homepage = "https://github.com/nnmarcoo/bloom"
