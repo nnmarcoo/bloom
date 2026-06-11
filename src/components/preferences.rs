@@ -197,10 +197,9 @@ pub fn update(
     }
 }
 
-fn setting<'a>(
-    label: &'a str,
-    description: &'a str,
-    control: Element<'a, Message>,
+fn label_block<'a>(
+    title: impl text::IntoFragment<'a>,
+    description: impl text::IntoFragment<'a>,
     theme: &Theme,
 ) -> Element<'a, Message> {
     let muted = theme
@@ -209,18 +208,28 @@ fn setting<'a>(
         .base
         .text
         .scale_alpha(0.5);
-    HoverRow::new(
-        row![
-            column![
-                text(label).size(13),
-                text(description).size(11).color(muted),
-            ]
-            .spacing(PAD / 2.0)
-            .width(Length::Fill),
-            control,
+    container(
+        column![
+            text(title).size(13),
+            text(description).size(11).color(muted),
         ]
-        .align_y(Vertical::Center)
-        .spacing(PAD * 2.0),
+        .spacing(PAD / 2.0),
+    )
+    .clip(true)
+    .width(Length::Fill)
+    .into()
+}
+
+fn setting<'a>(
+    label: &'a str,
+    description: &'a str,
+    control: Element<'a, Message>,
+    theme: &Theme,
+) -> Element<'a, Message> {
+    HoverRow::new(
+        row![label_block(label, description, theme), control]
+            .align_y(Vertical::Center)
+            .spacing(PAD * 2.0),
     )
     .into()
 }
@@ -232,12 +241,6 @@ fn keybind_row<'a>(
     theme: &Theme,
 ) -> Element<'a, Message> {
     let is_capturing = capturing == Some(action);
-    let muted = theme
-        .extended_palette()
-        .background
-        .base
-        .text
-        .scale_alpha(0.5);
 
     let chip: Element<'a, Message> = if is_capturing {
         button(text("Press a key…").size(11))
@@ -274,12 +277,7 @@ fn keybind_row<'a>(
 
     HoverRow::new(
         row![
-            column![
-                text(action.label_with_detail()).size(13),
-                text(action.description()).size(11).color(muted),
-            ]
-            .spacing(PAD / 2.0)
-            .width(Length::Fill),
+            label_block(action.label_with_detail(), action.description(), theme),
             control,
         ]
         .align_y(Vertical::Center)
