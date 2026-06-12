@@ -14,7 +14,7 @@ use crate::{
     gallery::Gallery,
     modifiers::Modifier,
     styles::{PAD, spinner_bg_style},
-    wgpu::view_program::ViewProgram,
+    wgpu::view_program::{Histogram, ViewProgram},
     widgets::{
         crop_overlay::CropOverlay,
         loading_spinner::Circular,
@@ -22,43 +22,47 @@ use crate::{
     },
 };
 
-#[allow(clippy::too_many_arguments)]
-pub fn view<'a>(
-    program: ViewProgram,
-    loading: Option<&'a str>,
-    show_info: bool,
-    show_edit: bool,
-    show_bottom_bar: bool,
-    path: Option<&'a Path>,
-    gallery: &'a Gallery,
-    theme: &'a Theme,
-    info_collapsed: &'a HashSet<String>,
-    notifs: &'a [NotificationEntry],
-    pixel_preview_size: u32,
-    selected_tool: &'a Tool,
-    modifiers: &'a [Modifier],
-    active_modifier: Option<usize>,
-    dragging_modifier: Option<usize>,
-    drag_hover_target: Option<usize>,
-    #[cfg(feature = "video")] video_panel: Option<info_panel::VideoPanel<'a>>,
-) -> Element<'a, Message> {
-    let base: Element<'a, Message> = shader(program.clone())
+pub struct ViewerCtx<'a> {
+    pub program: ViewProgram,
+    pub loading: Option<&'a str>,
+    pub show_info: bool,
+    pub show_edit: bool,
+    pub show_bottom_bar: bool,
+    pub path: Option<&'a Path>,
+    pub gallery: &'a Gallery,
+    pub theme: &'a Theme,
+    pub info_collapsed: &'a HashSet<String>,
+    pub notifs: &'a [NotificationEntry],
+    pub pixel_preview_size: u32,
+    pub selected_tool: &'a Tool,
+    pub modifiers: &'a [Modifier],
+    pub active_modifier: Option<usize>,
+    pub dragging_modifier: Option<usize>,
+    pub drag_hover_target: Option<usize>,
+    pub histogram: Option<&'a Histogram>,
+    #[cfg(feature = "video")]
+    pub video_panel: Option<info_panel::VideoPanel<'a>>,
+}
+
+pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
+    let base: Element<'_, Message> = shader(ctx.program.clone())
         .height(Length::Fill)
         .width(Length::Fill)
         .into();
 
-    let notif_overlay = notifications::view(notifs);
+    let notif_overlay = notifications::view(ctx.notifs);
 
-    let image_size = program.image_size();
+    let image_size = ctx.program.image_size();
     let (img_w, img_h) = image_size
         .map(|(w, h)| (w as f32, h as f32))
         .unwrap_or((1.0, 1.0));
 
-    let mut layers: Vec<Element<'a, Message>> = vec![base];
+    let mut layers: Vec<Element<'_, Message>> = vec![base];
 
-    if selected_tool == &Tool::Crop
-        && loading.is_none()
-        && let Some((crop_idx, crop_m)) = modifiers
+    if ctx.selected_tool == &Tool::Crop
+        && ctx.loading.is_none()
+        && let Some((crop_idx, crop_m)) = ctx
+            .modifiers
             .iter()
             .enumerate()
             .find(|(_, m)| m.enabled && m.kind.as_crop().is_some())
@@ -66,7 +70,7 @@ pub fn view<'a>(
     {
         layers.push(
             CropOverlay::new(
-                program.clone(),
+                ctx.program.clone(),
                 crop_idx,
                 crop.x,
                 crop.y,
@@ -79,7 +83,7 @@ pub fn view<'a>(
         );
     }
 
-    if let Some(filename) = loading {
+    if let Some(filename) = ctx.loading {
         let spinner_overlay = container(
             container(
                 column![
@@ -101,18 +105,18 @@ pub fn view<'a>(
 
     layers.push(notif_overlay);
 
-    let viewer: Element<'a, Message> = stack(layers)
+    let viewer: Element<'_, Message> = stack(layers)
         .height(Length::Fill)
         .width(Length::Fill)
         .into();
 
-    let bottom_bar_label = if show_bottom_bar {
+    let bottom_bar_label = if ctx.show_bottom_bar {
         "Hide Bottom Bar"
     } else {
         "Show Bottom Bar"
     };
     let has_media = image_size.is_some();
-    let viewer_with_menu: Element<'a, Message> = ContextMenu::new(viewer, move || {
+    let viewer_with_menu: Element<'_, Message> = ContextMenu::new(viewer, move || {
         styled_menu(
             column![
                 menu_item_enabled("Open File Location", Message::OpenFileLocation, has_media),
@@ -132,33 +136,34 @@ pub fn view<'a>(
     })
     .into();
 
-    if !show_info && !show_edit {
+    if !ctx.show_info && !ctx.show_edit {
         return viewer_with_menu;
     }
 
     let mut content = iced::widget::Row::new().height(Length::Fill);
-    if show_info && program.image_size().is_some() {
+    if ctx.show_info && image_size.is_some() {
         content = content.push(info_panel::view(
-            path,
-            gallery,
-            &program,
-            theme,
-            info_collapsed,
-            pixel_preview_size,
+            ctx.path,
+            ctx.gallery,
+            &ctx.program,
+            ctx.theme,
+            ctx.info_collapsed,
+            ctx.pixel_preview_size,
+            ctx.histogram,
             #[cfg(feature = "video")]
-            video_panel,
+            ctx.video_panel,
         ));
     }
     content = content.push(viewer_with_menu);
-    if show_edit {
+    if ctx.show_edit {
         content = content.push(edit_panel::view(
-            selected_tool,
-            modifiers,
-            active_modifier,
-            dragging_modifier,
-            drag_hover_target,
+            ctx.selected_tool,
+            ctx.modifiers,
+            ctx.active_modifier,
+            ctx.dragging_modifier,
+            ctx.drag_hover_target,
             image_size,
-            program.rotation(),
+            ctx.program.rotation(),
         ));
     }
     content.into()

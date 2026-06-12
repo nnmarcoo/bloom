@@ -5,6 +5,7 @@ pub use edit::{EditMsg, EditState, Tool};
 pub use transport::{TransportMsg, TransportState};
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use glam::Vec2;
@@ -29,8 +30,9 @@ use crate::{
     keybinds::Action,
     styles, tasks,
     wgpu::{
-        media::image_data::MediaData, passes::checkerboard::CheckerboardUniforms,
-        view_program::ViewProgram,
+        media::image_data::{ImageId, MediaData},
+        passes::checkerboard::CheckerboardUniforms,
+        view_program::{Histogram, ViewProgram, hash_modifiers},
     },
 };
 
@@ -50,6 +52,8 @@ pub struct App {
     notifications: Vec<NotificationEntry>,
     export_progress: Option<f32>,
     edit: EditState,
+    histogram: Option<HistogramResult>,
+    histogram_inflight: Option<(ImageId, u64)>,
 }
 
 impl App {
@@ -81,8 +85,17 @@ impl App {
             notifications: Vec::new(),
             export_progress: None,
             edit: EditState::default(),
+            histogram: None,
+            histogram_inflight: None,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct HistogramResult {
+    pub image_id: ImageId,
+    pub modifier_hash: u64,
+    pub data: Histogram,
 }
 
 #[derive(Debug, Clone)]
@@ -134,6 +147,7 @@ pub enum Message {
     ExportFrame,
     ExportProgress(f32),
     ExportDone(Result<String, String>),
+    HistogramReady(Box<HistogramResult>),
     Noop,
 }
 
@@ -232,19 +246,22 @@ impl App {
                         self.config.last_media = self.gallery.current().cloned();
                         self.config.save();
                     }
+                    return self.maybe_request_histogram();
                 }
             }
             Message::ClipboardLoaded(media) => {
                 self.loading = None;
                 self.apply_media(media);
+                return self.maybe_request_histogram();
             }
             Message::Transport(msg) => {
-                return transport::update(
+                let task = transport::update(
                     &mut self.transport,
                     &mut self.program,
                     &mut self.config,
                     msg,
                 );
+                return Task::batch([task, self.maybe_request_histogram()]);
             }
             Message::MediaFailed(generation, err) => {
                 if generation == self.load_generation {
@@ -266,6 +283,7 @@ impl App {
             Message::ToggleInfoColumn => {
                 self.config.show_info = !self.config.show_info;
                 self.config.save();
+                return self.maybe_request_histogram();
             }
             Message::ToggleBottomBar => {
                 self.config.show_bottom_bar = !self.config.show_bottom_bar;
@@ -276,6 +294,7 @@ impl App {
                     self.config.info_collapsed.insert(label.to_string());
                 }
                 self.config.save();
+                return self.maybe_request_histogram();
             }
             Message::TogglePreferences => {
                 self.editing_config = Some(self.config.clone());
@@ -407,7 +426,8 @@ impl App {
                 self.notifications.retain(|entry| !entry.is_gone(now));
             }
             Message::Edit(msg) => {
-                return edit::update(&mut self.edit, &mut self.program, msg);
+                let task = edit::update(&mut self.edit, &mut self.program, msg);
+                return Task::batch([task, self.maybe_request_histogram()]);
             }
             Message::ExportImage => {
                 if let Some(data) = self.program.export_data() {
@@ -433,10 +453,50 @@ impl App {
                 };
                 self.notifications.push(NotificationEntry::new(n));
             }
+            Message::HistogramReady(result) => {
+                if self.histogram_inflight == Some((result.image_id, result.modifier_hash)) {
+                    self.histogram_inflight = None;
+                    self.histogram = Some(*result);
+                }
+                return self.maybe_request_histogram();
+            }
             Message::Noop => {}
             Message::Event(event) => return self.handle_event(event),
         }
         Task::none()
+    }
+
+    fn maybe_request_histogram(&mut self) -> Task<Message> {
+        if !self.config.show_info || self.config.info_collapsed.contains("HISTOGRAM") {
+            return Task::none();
+        }
+        let Some(image) = self.program.current_image() else {
+            return Task::none();
+        };
+        if self.histogram_inflight.is_some() {
+            return Task::none();
+        }
+        let key = (image.id, hash_modifiers(&self.program.modifiers));
+        if self
+            .histogram
+            .as_ref()
+            .is_some_and(|h| (h.image_id, h.modifier_hash) == key)
+        {
+            return Task::none();
+        }
+        let pixels = image.pixels_snapshot();
+        if pixels.len() < image.size_bytes() {
+            return Task::none();
+        }
+        self.histogram_inflight = Some(key);
+        tasks::compute_histogram(
+            pixels,
+            image.width,
+            image.height,
+            Arc::clone(&self.program.modifiers),
+            key.0,
+            key.1,
+        )
     }
 
     fn suggested_export_name(&self, ext: &str) -> String {
@@ -448,6 +508,8 @@ impl App {
     }
 
     fn apply_media(&mut self, media: MediaData) {
+        self.histogram = None;
+        self.histogram_inflight = None;
         self.transport.clear_video();
         match media {
             MediaData::Image(data) => self.program.set_image(*data),
@@ -536,27 +598,30 @@ impl App {
         #[cfg(feature = "video")]
         let video_panel = self.transport.video_panel();
 
+        let histogram = self.histogram.as_ref().map(|h| &h.data);
+
         let mut col = column![];
-        col = col.push(viewer::view(
-            self.program.clone(),
-            self.loading.as_deref(),
-            self.config.show_info,
-            self.config.show_edit,
-            self.config.show_bottom_bar,
-            self.gallery.current().map(|p| p.as_path()),
-            &self.gallery,
-            &self.config.theme,
-            &self.config.info_collapsed,
-            &self.notifications,
-            self.config.pixel_preview_size,
-            &self.edit.selected_tool,
-            &self.program.modifiers,
-            self.edit.active,
-            self.edit.dragging,
-            self.edit.drag_hover,
+        col = col.push(viewer::view(viewer::ViewerCtx {
+            program: self.program.clone(),
+            loading: self.loading.as_deref(),
+            show_info: self.config.show_info,
+            show_edit: self.config.show_edit,
+            show_bottom_bar: self.config.show_bottom_bar,
+            path: self.gallery.current().map(|p| p.as_path()),
+            gallery: &self.gallery,
+            theme: &self.config.theme,
+            info_collapsed: &self.config.info_collapsed,
+            notifs: &self.notifications,
+            pixel_preview_size: self.config.pixel_preview_size,
+            selected_tool: &self.edit.selected_tool,
+            modifiers: &self.program.modifiers,
+            active_modifier: self.edit.active,
+            dragging_modifier: self.edit.dragging,
+            drag_hover_target: self.edit.drag_hover,
+            histogram,
             #[cfg(feature = "video")]
             video_panel,
-        ));
+        }));
 
         if self.config.show_bottom_bar
             && let Some((total, position, timestamp)) = self.transport.transport_view(&self.program)

@@ -19,7 +19,7 @@ use crate::styles::{
     color_swatch_style, info_section_header_style, panel_divider_style, svg_color_style,
 };
 use crate::ui::{format_duration, with_tooltip_delay};
-use crate::wgpu::view_program::ViewProgram;
+use crate::wgpu::view_program::{Histogram as HistogramData, ViewProgram};
 use crate::widgets::histogram::Histogram;
 
 const FILENAME_MAX_CHARS: usize = 18;
@@ -226,6 +226,7 @@ fn aspect_ratio_str(w: u32, h: u32) -> String {
     format!("{}:{}", w / d, h / d)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn view<'a>(
     path: Option<&'a Path>,
     gallery: &Gallery,
@@ -233,6 +234,7 @@ pub fn view<'a>(
     theme: &Theme,
     info_collapsed: &HashSet<String>,
     pixel_preview_size: u32,
+    histogram: Option<&'a HistogramData>,
     #[cfg(feature = "video")] video: Option<VideoPanel<'a>>,
 ) -> Element<'a, Message> {
     let palette = theme.extended_palette();
@@ -471,9 +473,7 @@ pub fn view<'a>(
     push_section(&mut rows, "CURSOR", cursor_has_content, cursor_rows);
 
     let mut histogram_rows: Vec<Element<'a, Message>> = Vec::new();
-    if !info_collapsed.contains("HISTOGRAM")
-        && let Some(histogram) = program.histogram()
-    {
+    if let Some(histogram) = histogram {
         histogram_rows.push(
             Histogram::new(histogram.0, histogram.1, histogram.2)
                 .height(INFO_HISTOGRAM_HEIGHT)

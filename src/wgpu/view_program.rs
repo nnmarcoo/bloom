@@ -1,6 +1,6 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use glam::{Mat4, Vec2, vec2, vec3, vec4};
@@ -17,7 +17,7 @@ use crate::{
     wgpu::{
         media::animation::Animation,
         media::exif_data::ExifData,
-        media::image_data::{ImageData, ImageId},
+        media::image_data::ImageData,
         passes::{checkerboard::CheckerboardUniforms, pixel_grid::PixelGridUniforms},
         scale::Scale,
         view_pipeline::Uniforms,
@@ -25,17 +25,9 @@ use crate::{
     },
 };
 
-type Histogram = ([u32; 256], [u32; 256], [u32; 256]);
-
-struct HistogramCacheEntry {
-    image_id: ImageId,
-    modifier_hash: u64,
-    data: Histogram,
-    computed_at: Instant,
-}
+pub(crate) type Histogram = ([u32; 256], [u32; 256], [u32; 256]);
 
 const HISTOGRAM_TARGET_SAMPLES: usize = 250_000;
-const HISTOGRAM_THROTTLE: Duration = Duration::from_millis(50);
 
 const SCALE_COOLDOWN: Duration = Duration::from_millis(30);
 
@@ -83,7 +75,6 @@ pub struct ViewProgram {
     pub crop_tool_active: bool,
     dirty: Arc<std::sync::atomic::AtomicBool>,
     pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
-    histogram_cache: Arc<Mutex<Option<HistogramCacheEntry>>>,
 }
 
 impl Default for ViewProgram {
@@ -115,7 +106,6 @@ impl Default for ViewProgram {
             crop_tool_active: false,
             dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pre_clear_gpu: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            histogram_cache: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -305,45 +295,8 @@ impl ViewProgram {
         }
     }
 
-    pub fn histogram(&self) -> Option<Histogram> {
-        let image = self.image.as_ref()?;
-        let modifier_hash = hash_modifiers(&self.modifiers);
-
-        {
-            let cache = self
-                .histogram_cache
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            if let Some(entry) = cache.as_ref() {
-                if entry.image_id == image.id && entry.modifier_hash == modifier_hash {
-                    return Some(entry.data);
-                }
-                if entry.computed_at.elapsed() < HISTOGRAM_THROTTLE {
-                    return Some(entry.data);
-                }
-            }
-        }
-
-        let pixels = image.pixels_snapshot();
-        if pixels.len() < image.size_bytes() {
-            return None;
-        }
-
-        let data =
-            compute_subsampled_histogram(&pixels, image.width, image.height, &self.modifiers);
-        let computed_at = Instant::now();
-
-        let mut cache = self
-            .histogram_cache
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        *cache = Some(HistogramCacheEntry {
-            image_id: image.id,
-            modifier_hash,
-            data,
-            computed_at,
-        });
-        Some(data)
+    pub fn current_image(&self) -> Option<Arc<ImageData>> {
+        self.image.clone()
     }
 
     pub fn exif(&self) -> Option<&ExifData> {
@@ -816,7 +769,7 @@ impl Program<Message> for ViewProgram {
     }
 }
 
-fn compute_subsampled_histogram(
+pub(crate) fn compute_subsampled_histogram(
     pixels: &[u8],
     width: u32,
     height: u32,
@@ -886,7 +839,7 @@ fn smooth_bins(bins: &mut [u32; 256]) {
     *bins = out;
 }
 
-fn hash_modifiers(modifiers: &[Modifier]) -> u64 {
+pub(crate) fn hash_modifiers(modifiers: &[Modifier]) -> u64 {
     let mut hasher = DefaultHasher::new();
     modifiers.len().hash(&mut hasher);
     for m in modifiers {

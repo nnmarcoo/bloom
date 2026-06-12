@@ -1,15 +1,18 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use futures::SinkExt;
 use iced::window::{self, Level, Mode};
 use image::ImageError;
 
-use crate::app::Message;
+use crate::app::{HistogramResult, Message};
 use crate::export::{ExportData, do_export, render_still_rgba};
 use crate::{
     clipboard::{self, ClipboardImage},
     gallery::SUPPORTED,
-    wgpu::media::image_data::{ImageData, MediaData},
+    modifiers::Modifier,
+    wgpu::media::image_data::{ImageData, ImageId, MediaData},
+    wgpu::view_program::compute_subsampled_histogram,
 };
 
 pub fn load_media(path: PathBuf, generation: u64) -> iced::Task<Message> {
@@ -125,6 +128,28 @@ pub fn copy_image(data: ExportData) -> iced::Task<Message> {
         .await
         .unwrap_or_else(|_| Err("render thread panicked".to_string()));
         Message::CopyImageDone(result)
+    })
+}
+
+pub fn compute_histogram(
+    pixels: Arc<Vec<u8>>,
+    width: u32,
+    height: u32,
+    modifiers: Arc<Vec<Modifier>>,
+    image_id: ImageId,
+    modifier_hash: u64,
+) -> iced::Task<Message> {
+    iced::Task::future(async move {
+        let data = tokio::task::spawn_blocking(move || {
+            compute_subsampled_histogram(&pixels, width, height, &modifiers)
+        })
+        .await
+        .unwrap_or(([0; 256], [0; 256], [0; 256]));
+        Message::HistogramReady(Box::new(HistogramResult {
+            image_id,
+            modifier_hash,
+            data,
+        }))
     })
 }
 
