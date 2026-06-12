@@ -610,6 +610,7 @@ dependencies = [
  "rayon",
  "resvg",
  "rfd",
+ "rgb",
  "ringbuf",
  "serde",
  "tiny-skia",

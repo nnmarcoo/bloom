@@ -25,6 +25,7 @@ use jxl_oxide::JxlImage;
 use ktx2::{Reader as Ktx2Reader, SupercompressionScheme};
 use psd::Psd;
 use resvg;
+use rgb::ComponentBytes;
 use tiny_skia::Pixmap;
 use usvg::Options as SvgOptions;
 use xcf_rs::data::xcf::Xcf;
@@ -138,10 +139,7 @@ impl ImageData {
                 .map_err(|e| ImageError::IoError(Error::other(e)))?;
             let img = screen.pixels_rgba();
             let (pixels_rgba, width, height) = img.to_contiguous_buf();
-            let pixels = pixels_rgba
-                .iter()
-                .flat_map(|p| [p.r, p.g, p.b, p.a])
-                .collect();
+            let pixels = pixels_rgba.as_bytes().to_vec();
             frames.push(Frame {
                 data: Arc::new(ImageData::new(pixels, width as u32, height as u32)),
                 delay,
