@@ -2,14 +2,14 @@ use iced::widget::tooltip::Position;
 use iced::widget::{Space, container, row};
 use iced::{Element, Length};
 
-use crate::app::{Message, Tool};
+use crate::app::{EditMsg, Message, Tool};
 use crate::components::modifier_stack;
 use crate::modifiers::Modifier;
 use crate::styles::{EDIT_PANEL_WIDTH, PAD, bar_style, panel_divider_style};
 use crate::ui::{svg_button_active, svg_button_disabled, svg_button_plain, with_tooltip};
 
 fn tool_button<'a>(icon: &'static [u8], tool: Tool, selected_tool: &Tool) -> Element<'a, Message> {
-    let msg = Message::SelectTool(tool.clone());
+    let msg = EditMsg::SelectTool(tool.clone()).into();
     if &tool == selected_tool {
         svg_button_active(icon, msg)
     } else {

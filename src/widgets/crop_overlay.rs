@@ -7,7 +7,7 @@ use iced::advanced::{Clipboard, Layout, Shell, Widget};
 use iced::mouse;
 use iced::{Background, Border, Color, Element, Event, Length, Rectangle, Renderer, Size, Theme};
 
-use crate::app::Message;
+use crate::app::{EditMsg, Message};
 use crate::wgpu::view_program::ViewProgram;
 
 const OVERLAY_ALPHA: f32 = 0.55;
@@ -346,7 +346,7 @@ impl Widget<Message, Theme, Renderer> for CropOverlay {
                         iw,
                         ih,
                     );
-                    shell.publish(Message::SetCropRect(self.modifier_idx, nx, ny, nw, nh));
+                    shell.publish(EditMsg::SetCropRect(self.modifier_idx, nx, ny, nw, nh).into());
                     shell.capture_event();
                     shell.request_redraw();
                 }
