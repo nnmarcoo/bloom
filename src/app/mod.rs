@@ -488,8 +488,7 @@ impl App {
         modifiers: keyboard::Modifiers,
     ) -> Task<Message> {
         if self.editing_config.is_some() {
-            return match preferences::capture_key(&self.preference_state, physical_key, modifiers)
-            {
+            return match preferences::capture_key(&self.preference_state, physical_key, modifiers) {
                 Some(msg) => Task::done(Message::Preference(msg)),
                 None => Task::none(),
             };

@@ -243,8 +243,9 @@ pub fn view<'a>(
     let mut first_section = true;
     let mut push_section = |rows: &mut Vec<Element<'a, Message>>,
                             label: &'static str,
+                            has_content: bool,
                             section: Vec<Element<'a, Message>>| {
-        if !section.is_empty() {
+        if has_content || !section.is_empty() {
             if !first_section {
                 rows.push(Space::new().height(INFO_SECTION_GAP).into());
             }
@@ -291,7 +292,7 @@ pub fn view<'a>(
             muted,
         ));
     }
-    push_section(&mut rows, "FILE", file_rows);
+    push_section(&mut rows, "FILE", false, file_rows);
 
     let mut image_rows: Vec<Element<'a, Message>> = Vec::new();
     if let Some((w, h)) = program.image_size() {
@@ -352,7 +353,7 @@ pub fn view<'a>(
             ));
         }
     }
-    push_section(&mut rows, "IMAGE", image_rows);
+    push_section(&mut rows, "IMAGE", false, image_rows);
 
     #[cfg(feature = "video")]
     if let Some(v) = &video {
@@ -378,7 +379,7 @@ pub fn view<'a>(
                 muted,
             ));
         }
-        push_section(&mut rows, "VIDEO", video_rows);
+        push_section(&mut rows, "VIDEO", false, video_rows);
 
         let mut audio_rows: Vec<Element<'a, Message>> = Vec::new();
         for (label, value) in [
@@ -389,7 +390,7 @@ pub fn view<'a>(
         ] {
             push_opt(&mut audio_rows, label, value, muted);
         }
-        push_section(&mut rows, "AUDIO", audio_rows);
+        push_section(&mut rows, "AUDIO", false, audio_rows);
     }
 
     let mut anim_rows: Vec<Element<'a, Message>> = Vec::new();
@@ -410,7 +411,7 @@ pub fn view<'a>(
             muted,
         ));
     }
-    push_section(&mut rows, "ANIMATION", anim_rows);
+    push_section(&mut rows, "ANIMATION", false, anim_rows);
 
     let mut camera_rows: Vec<Element<'a, Message>> = Vec::new();
     if let Some(exif) = program.exif() {
@@ -429,11 +430,14 @@ pub fn view<'a>(
             }
         }
     }
-    push_section(&mut rows, "EXIF", camera_rows);
+    push_section(&mut rows, "EXIF", false, camera_rows);
 
+    let cursor_collapsed = info_collapsed.contains("CURSOR");
     let mut cursor_rows: Vec<Element<'a, Message>> = Vec::new();
+    let mut cursor_has_content = false;
     if let Some((px, py, uv, rgba)) = program.cursor_info() {
-        if let Some(pixels) = program.cursor_pixels(pixel_preview_size) {
+        cursor_has_content = true;
+        if !cursor_collapsed && let Some(pixels) = program.cursor_pixels(pixel_preview_size) {
             let display_size = INFO_PANEL_WIDTH - PAD * 4.0;
             let pixel_size = display_size / pixel_preview_size as f32;
             let handle = image::Handle::from_rgba(pixel_preview_size, pixel_preview_size, pixels);
@@ -464,17 +468,24 @@ pub fn view<'a>(
         cursor_rows.push(row_item("Pixel", format!("({}, {})", px, py), muted));
         cursor_rows.push(row_item("UV", format!("({:.3}, {:.3})", uv.x, uv.y), muted));
     }
-    push_section(&mut rows, "CURSOR", cursor_rows);
+    push_section(&mut rows, "CURSOR", cursor_has_content, cursor_rows);
 
     let mut histogram_rows: Vec<Element<'a, Message>> = Vec::new();
-    if let Some(histogram) = program.histogram() {
+    if !info_collapsed.contains("HISTOGRAM")
+        && let Some(histogram) = program.histogram()
+    {
         histogram_rows.push(
             Histogram::new(histogram.0, histogram.1, histogram.2)
                 .height(INFO_HISTOGRAM_HEIGHT)
                 .into(),
         );
     }
-    push_section(&mut rows, "HISTOGRAM", histogram_rows);
+    push_section(
+        &mut rows,
+        "HISTOGRAM",
+        program.image_size().is_some(),
+        histogram_rows,
+    );
 
     let pad = PAD * 2.0;
     let content = column(rows).padding(Padding {

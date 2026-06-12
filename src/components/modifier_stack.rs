@@ -227,10 +227,7 @@ fn add_row<'a>() -> Element<'a, Message> {
                 sub_menu(
                     "Noise",
                     styled_menu(
-                        column![menu_item(
-                            "Grain",
-                            EditMsg::Add(ModifierType::Grain).into()
-                        ),],
+                        column![menu_item("Grain", EditMsg::Add(ModifierType::Grain).into()),],
                         160
                     )
                 )

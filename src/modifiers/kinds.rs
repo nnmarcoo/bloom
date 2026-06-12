@@ -1093,10 +1093,8 @@ impl ModifierImpl for Posterize {
             2.0..=32.0,
             1.0,
             Fmt::num(0),
-            move |v| EditMsg::Update(
-                index,
-                ModifierParam::PosterizeLevels(v.round() as u32)
-            ).into(),
+            move |v| EditMsg::Update(index, ModifierParam::PosterizeLevels(v.round() as u32))
+                .into(),
         )])
     }
 }
@@ -1387,7 +1385,8 @@ impl ModifierImpl for Crop {
                 } else {
                     ModifierParam::CropWidth(v)
                 },
-            ).into()
+            )
+            .into()
         };
         let h_msg = move |v| {
             EditMsg::Update(
@@ -1397,7 +1396,8 @@ impl ModifierImpl for Crop {
                 } else {
                     ModifierParam::CropHeight(v)
                 },
-            ).into()
+            )
+            .into()
         };
         finish(column![
             value_row(

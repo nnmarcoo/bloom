@@ -2,14 +2,14 @@ use std::sync::OnceLock;
 
 use iced::alignment::{Horizontal, Vertical};
 use iced::font::Weight;
+use iced::keyboard::{
+    self,
+    key::{self, Physical},
+};
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::tooltip::Position;
 use iced::widget::{
     Space, button, column, container, pick_list, row, rule, scrollable, text, toggler,
-};
-use iced::keyboard::{
-    self,
-    key::{self, Physical},
 };
 use iced::{Element, Font, Length, Theme};
 

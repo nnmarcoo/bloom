@@ -67,9 +67,11 @@ pub fn view<'a>(
     .align_y(Vertical::Center)
     .spacing(PAD);
 
-    let timeline = Timeline::new(playing, position, total_frames, |i| TransportMsg::FrameSeek(i).into())
-        .on_drag_start(TransportMsg::ScrubStart.into())
-        .on_drag_end(TransportMsg::ScrubEnd.into());
+    let timeline = Timeline::new(playing, position, total_frames, |i| {
+        TransportMsg::FrameSeek(i).into()
+    })
+    .on_drag_start(TransportMsg::ScrubStart.into())
+    .on_drag_end(TransportMsg::ScrubEnd.into());
 
     let label = timestamp
         .map(|(ts, dur)| format!("{} – {}", format_duration(ts), format_duration(dur)))
@@ -113,7 +115,10 @@ pub fn view<'a>(
                 Position::Top,
             ),
             container(
-                ValueSlider::new(shown * 100.0, 0.0..=200.0, |v| TransportMsg::SetVolume(v / 100.0).into())
+                ValueSlider::new(shown * 100.0, 0.0..=200.0, |v| TransportMsg::SetVolume(
+                    v / 100.0
+                )
+                .into())
                 .step(1.0)
                 .format(Fmt::num(0).suffix("%"))
                 .on_change_end(TransportMsg::CommitVolume.into())
