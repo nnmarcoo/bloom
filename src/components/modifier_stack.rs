@@ -5,7 +5,7 @@ use iced::widget::svg::Handle;
 use iced::widget::{Space, button, column, container, mouse_area, row, scrollable, svg, text};
 use iced::{Element, Length, Padding, mouse};
 
-use crate::app::Message;
+use crate::app::{EditMsg, Message};
 use crate::modifiers::{Modifier, ModifierType};
 use crate::styles::{
     PAD, modifier_active_card_style, modifier_add_button_style, modifier_card_style,
@@ -42,7 +42,7 @@ pub fn view<'a>(
     stack_col = stack_col.push(gap(show_trailing));
     stack_col = stack_col.push(
         mouse_area(Space::new().height(20).width(Length::Fill))
-            .on_enter(Message::ModifierDragHover(n)),
+            .on_enter(EditMsg::DragHover(n).into()),
     );
 
     mouse_area(
@@ -56,7 +56,7 @@ pub fn view<'a>(
         ]
         .height(Length::Fill),
     )
-    .on_press(Message::ClearActiveModifier)
+    .on_press(EditMsg::ClearActive.into())
     .into()
 }
 
@@ -115,7 +115,7 @@ fn card<'a>(
         .width(Length::Fixed(18.0))
         .height(Length::Fixed(18.0)),
     )
-    .on_press(Message::StartModifierDrag(index))
+    .on_press(EditMsg::DragStart(index).into())
     .interaction(if dragging {
         mouse::Interaction::Grabbing
     } else {
@@ -124,7 +124,7 @@ fn card<'a>(
 
     let header = row![
         grip,
-        icon_btn(arrow_icon, Message::ToggleModifierExpanded(index)),
+        icon_btn(arrow_icon, EditMsg::ToggleExpanded(index).into()),
         container(
             text(modifier.kind.name())
                 .size(10)
@@ -132,10 +132,10 @@ fn card<'a>(
         )
         .width(Length::Fill)
         .clip(true),
-        icon_btn(circle_icon, Message::ToggleModifierEnabled(index)),
+        icon_btn(circle_icon, EditMsg::ToggleEnabled(index).into()),
         icon_btn(
             include_bytes!("../../assets/icons/close.svg"),
-            Message::RemoveModifier(index),
+            EditMsg::Remove(index).into(),
         ),
     ]
     .align_y(Vertical::Center)
@@ -158,8 +158,8 @@ fn card<'a>(
             .padding([6.0, PAD])
             .width(Length::Fill),
     )
-    .on_release(Message::SetActiveModifier(index))
-    .on_enter(Message::ModifierDragHover(index));
+    .on_release(EditMsg::SetActive(index).into())
+    .on_enter(EditMsg::DragHover(index).into());
 
     if dragging {
         card_area.interaction(mouse::Interaction::Grabbing).into()
@@ -177,20 +177,20 @@ fn add_row<'a>() -> Element<'a, Message> {
                     "Adjustments",
                     styled_menu(
                         column![
-                            menu_item("Levels", Message::AddModifier(ModifierType::Levels)),
+                            menu_item("Levels", EditMsg::Add(ModifierType::Levels).into()),
                             menu_item(
                                 "Brightness / Contrast",
-                                Message::AddModifier(ModifierType::BrightnessContrast)
+                                EditMsg::Add(ModifierType::BrightnessContrast).into()
                             ),
                             menu_item(
                                 "Hue / Saturation",
-                                Message::AddModifier(ModifierType::HueSaturation)
+                                EditMsg::Add(ModifierType::HueSaturation).into()
                             ),
-                            menu_item("Exposure", Message::AddModifier(ModifierType::Exposure)),
-                            menu_item("Vibrance", Message::AddModifier(ModifierType::Vibrance)),
+                            menu_item("Exposure", EditMsg::Add(ModifierType::Exposure).into()),
+                            menu_item("Vibrance", EditMsg::Add(ModifierType::Vibrance).into()),
                             menu_item(
                                 "Color Balance",
-                                Message::AddModifier(ModifierType::ColorBalance)
+                                EditMsg::Add(ModifierType::ColorBalance).into()
                             ),
                         ],
                         210
@@ -202,7 +202,7 @@ fn add_row<'a>() -> Element<'a, Message> {
                     styled_menu(
                         column![menu_item(
                             "Halftone",
-                            Message::AddModifier(ModifierType::Halftone)
+                            EditMsg::Add(ModifierType::Halftone).into()
                         ),],
                         160
                     )
@@ -212,13 +212,13 @@ fn add_row<'a>() -> Element<'a, Message> {
                     "Stylize",
                     styled_menu(
                         column![
-                            menu_item("Vignette", Message::AddModifier(ModifierType::Vignette)),
+                            menu_item("Vignette", EditMsg::Add(ModifierType::Vignette).into()),
                             menu_item(
                                 "Chromatic Aberration",
-                                Message::AddModifier(ModifierType::ChromaticAberration)
+                                EditMsg::Add(ModifierType::ChromaticAberration).into()
                             ),
-                            menu_item("Posterize", Message::AddModifier(ModifierType::Posterize)),
-                            menu_item("Threshold", Message::AddModifier(ModifierType::Threshold)),
+                            menu_item("Posterize", EditMsg::Add(ModifierType::Posterize).into()),
+                            menu_item("Threshold", EditMsg::Add(ModifierType::Threshold).into()),
                         ],
                         200
                     )
@@ -229,7 +229,7 @@ fn add_row<'a>() -> Element<'a, Message> {
                     styled_menu(
                         column![menu_item(
                             "Grain",
-                            Message::AddModifier(ModifierType::Grain)
+                            EditMsg::Add(ModifierType::Grain).into()
                         ),],
                         160
                     )
@@ -238,7 +238,7 @@ fn add_row<'a>() -> Element<'a, Message> {
                 sub_menu(
                     "Transform",
                     styled_menu(
-                        column![menu_item("Crop", Message::AddModifier(ModifierType::Crop)),],
+                        column![menu_item("Crop", EditMsg::Add(ModifierType::Crop).into()),],
                         160
                     )
                 )

@@ -5,7 +5,7 @@ use iced::widget::tooltip::Position;
 use iced::widget::{container, row, text};
 use iced::{Element, Font, Length};
 
-use crate::app::Message;
+use crate::app::{Message, TransportMsg};
 use crate::styles::{BAR_HEIGHT, PAD, bar_style};
 use crate::ui::{format_duration, svg_button, with_tooltip};
 use crate::widgets::timeline::Timeline;
@@ -29,7 +29,7 @@ pub fn view<'a>(
         with_tooltip(
             svg_button(
                 include_bytes!("../../assets/icons/first.svg"),
-                Message::FrameFirst
+                TransportMsg::FrameFirst.into()
             ),
             "First frame",
             Position::Top,
@@ -37,20 +37,20 @@ pub fn view<'a>(
         with_tooltip(
             svg_button(
                 include_bytes!("../../assets/icons/left.svg"),
-                Message::FramePrev
+                TransportMsg::FramePrev.into()
             ),
             "Previous frame",
             Position::Top,
         ),
         with_tooltip(
-            svg_button(play_pause_icon, Message::TogglePlayback),
+            svg_button(play_pause_icon, TransportMsg::TogglePlayback.into()),
             play_pause_tooltip,
             Position::Top,
         ),
         with_tooltip(
             svg_button(
                 include_bytes!("../../assets/icons/right.svg"),
-                Message::FrameNext
+                TransportMsg::FrameNext.into()
             ),
             "Next frame",
             Position::Top,
@@ -58,7 +58,7 @@ pub fn view<'a>(
         with_tooltip(
             svg_button(
                 include_bytes!("../../assets/icons/last.svg"),
-                Message::FrameLast
+                TransportMsg::FrameLast.into()
             ),
             "Last frame",
             Position::Top,
@@ -67,9 +67,9 @@ pub fn view<'a>(
     .align_y(Vertical::Center)
     .spacing(PAD);
 
-    let timeline = Timeline::new(playing, position, total_frames, Message::FrameSeek)
-        .on_drag_start(Message::TimelineScrubStart)
-        .on_drag_end(Message::TimelineScrubEnd);
+    let timeline = Timeline::new(playing, position, total_frames, |i| TransportMsg::FrameSeek(i).into())
+        .on_drag_start(TransportMsg::ScrubStart.into())
+        .on_drag_end(TransportMsg::ScrubEnd.into());
 
     let label = timestamp
         .map(|(ts, dur)| format!("{} – {}", format_duration(ts), format_duration(dur)))
@@ -108,17 +108,15 @@ pub fn view<'a>(
         let shown = if muted { 0.0 } else { level };
         let volume_control = row![
             with_tooltip(
-                svg_button(icon, Message::ToggleMute),
+                svg_button(icon, TransportMsg::ToggleMute.into()),
                 tooltip,
                 Position::Top,
             ),
             container(
-                ValueSlider::new(shown * 100.0, 0.0..=200.0, |v| Message::SetVolume(
-                    v / 100.0
-                ))
+                ValueSlider::new(shown * 100.0, 0.0..=200.0, |v| TransportMsg::SetVolume(v / 100.0).into())
                 .step(1.0)
                 .format(Fmt::num(0).suffix("%"))
-                .on_change_end(Message::CommitVolume)
+                .on_change_end(TransportMsg::CommitVolume.into())
             )
             .width(Length::Fixed(90.0)),
         ]

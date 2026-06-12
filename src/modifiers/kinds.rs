@@ -7,7 +7,7 @@ use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{Column, column, row, text, text_input};
 use iced::{Element, Length};
 
-use crate::app::Message;
+use crate::app::{EditMsg, Message};
 use crate::modifiers::cpu::{hash21, hsl_to_rgb, rgb_to_hsl};
 use crate::modifiers::gpu::{ModEntry, TileInfo, make_entry};
 use crate::modifiers::{ModifierImpl, ModifierParam, ids};
@@ -170,7 +170,7 @@ impl ModifierImpl for Levels {
                 0.0..=2.0,
                 0.01,
                 Fmt::num(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::LevelsShadows(v)),
+                move |v| EditMsg::Update(index, ModifierParam::LevelsShadows(v)).into(),
             ),
             value_row(
                 "Midtones",
@@ -178,7 +178,7 @@ impl ModifierImpl for Levels {
                 0.0..=2.0,
                 0.01,
                 Fmt::num(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::LevelsMidtones(v)),
+                move |v| EditMsg::Update(index, ModifierParam::LevelsMidtones(v)).into(),
             ),
             value_row(
                 "Highlights",
@@ -186,7 +186,7 @@ impl ModifierImpl for Levels {
                 0.0..=2.0,
                 0.01,
                 Fmt::num(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::LevelsHighlights(v)),
+                move |v| EditMsg::Update(index, ModifierParam::LevelsHighlights(v)).into(),
             ),
         ])
     }
@@ -248,7 +248,7 @@ impl ModifierImpl for BrightnessContrast {
                 -1.0..=1.0,
                 0.01,
                 Fmt::signed(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::Brightness(v)),
+                move |v| EditMsg::Update(index, ModifierParam::Brightness(v)).into(),
             ),
             value_row(
                 "Contrast",
@@ -256,7 +256,7 @@ impl ModifierImpl for BrightnessContrast {
                 -1.0..=1.0,
                 0.01,
                 Fmt::signed(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::Contrast(v)),
+                move |v| EditMsg::Update(index, ModifierParam::Contrast(v)).into(),
             ),
         ])
     }
@@ -332,7 +332,7 @@ impl ModifierImpl for HueSaturation {
                 0.5,
                 Fmt::signed(0).suffix("\u{00b0}"),
                 Track::hue(),
-                move |v| Message::UpdateModifier(index, ModifierParam::Hue(v)),
+                move |v| EditMsg::Update(index, ModifierParam::Hue(v)).into(),
             ),
             value_row(
                 "Saturation",
@@ -340,7 +340,7 @@ impl ModifierImpl for HueSaturation {
                 -1.0..=1.0,
                 0.01,
                 Fmt::signed(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::Saturation(v)),
+                move |v| EditMsg::Update(index, ModifierParam::Saturation(v)).into(),
             ),
             value_row(
                 "Lightness",
@@ -348,7 +348,7 @@ impl ModifierImpl for HueSaturation {
                 -1.0..=1.0,
                 0.01,
                 Fmt::signed(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::Lightness(v)),
+                move |v| EditMsg::Update(index, ModifierParam::Lightness(v)).into(),
             ),
         ])
     }
@@ -403,7 +403,7 @@ impl ModifierImpl for Exposure {
             -5.0..=5.0,
             0.01,
             Fmt::signed(2),
-            move |v| Message::UpdateModifier(index, ModifierParam::Exposure(v)),
+            move |v| EditMsg::Update(index, ModifierParam::Exposure(v)).into(),
         )])
     }
 }
@@ -471,7 +471,7 @@ impl ModifierImpl for Vibrance {
                 -1.0..=1.0,
                 0.01,
                 Fmt::signed(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::Vibrance(v)),
+                move |v| EditMsg::Update(index, ModifierParam::Vibrance(v)).into(),
             ),
             value_row(
                 "Saturation",
@@ -479,7 +479,7 @@ impl ModifierImpl for Vibrance {
                 -1.0..=1.0,
                 0.01,
                 Fmt::signed(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::VibranceSaturation(v)),
+                move |v| EditMsg::Update(index, ModifierParam::VibranceSaturation(v)).into(),
             ),
         ])
     }
@@ -545,7 +545,7 @@ impl ModifierImpl for ColorBalance {
                 0.01,
                 Fmt::signed(2),
                 Track::cyan_red(),
-                move |v| Message::UpdateModifier(index, ModifierParam::ColorBalanceCyanRed(v)),
+                move |v| EditMsg::Update(index, ModifierParam::ColorBalanceCyanRed(v)).into(),
             ),
             gradient_row(
                 "Mag / Green",
@@ -554,7 +554,7 @@ impl ModifierImpl for ColorBalance {
                 0.01,
                 Fmt::signed(2),
                 Track::magenta_green(),
-                move |v| Message::UpdateModifier(index, ModifierParam::ColorBalanceMagentaGreen(v)),
+                move |v| EditMsg::Update(index, ModifierParam::ColorBalanceMagentaGreen(v)).into(),
             ),
             gradient_row(
                 "Yel / Blue",
@@ -563,7 +563,7 @@ impl ModifierImpl for ColorBalance {
                 0.01,
                 Fmt::signed(2),
                 Track::yellow_blue(),
-                move |v| Message::UpdateModifier(index, ModifierParam::ColorBalanceYellowBlue(v)),
+                move |v| EditMsg::Update(index, ModifierParam::ColorBalanceYellowBlue(v)).into(),
             ),
         ])
     }
@@ -612,7 +612,7 @@ impl ModifierImpl for GaussianBlur {
             0.0..=100.0,
             0.5,
             Fmt::num(1),
-            move |v| Message::UpdateModifier(index, ModifierParam::GaussianBlurRadius(v)),
+            move |v| EditMsg::Update(index, ModifierParam::GaussianBlurRadius(v)).into(),
         )])
     }
 }
@@ -663,7 +663,7 @@ impl ModifierImpl for MotionBlur {
     ) -> Element<'_, Message> {
         finish(column![
             angle_row("Angle", self.angle, 0.0..=360.0, move |v| {
-                Message::UpdateModifier(index, ModifierParam::MotionBlurAngle(v))
+                EditMsg::Update(index, ModifierParam::MotionBlurAngle(v)).into()
             }),
             value_row(
                 "Distance",
@@ -671,7 +671,7 @@ impl ModifierImpl for MotionBlur {
                 0.0..=200.0,
                 0.5,
                 Fmt::num(0),
-                move |v| Message::UpdateModifier(index, ModifierParam::MotionBlurDistance(v)),
+                move |v| EditMsg::Update(index, ModifierParam::MotionBlurDistance(v)).into(),
             ),
         ])
     }
@@ -720,7 +720,7 @@ impl ModifierImpl for RadialBlur {
             0.0..=100.0,
             0.5,
             Fmt::num(0),
-            move |v| Message::UpdateModifier(index, ModifierParam::RadialBlurAmount(v)),
+            move |v| EditMsg::Update(index, ModifierParam::RadialBlurAmount(v)).into(),
         )])
     }
 }
@@ -802,7 +802,7 @@ impl ModifierImpl for Halftone {
     ) -> Element<'_, Message> {
         finish(column![
             value_row("Size", self.size, 2.0..=50.0, 0.1, Fmt::num(0), move |v| {
-                Message::UpdateModifier(index, ModifierParam::HalftoneSize(v))
+                EditMsg::Update(index, ModifierParam::HalftoneSize(v)).into()
             },),
             value_row(
                 "Angle",
@@ -810,7 +810,7 @@ impl ModifierImpl for Halftone {
                 0.0..=90.0,
                 0.5,
                 Fmt::num(0).suffix("\u{00b0}"),
-                move |v| Message::UpdateModifier(index, ModifierParam::HalftoneAngle(v)),
+                move |v| EditMsg::Update(index, ModifierParam::HalftoneAngle(v)).into(),
             ),
         ])
     }
@@ -867,10 +867,10 @@ impl ModifierImpl for PixelSort {
                 0.0..=1.0,
                 0.01,
                 Fmt::num(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::PixelSortThreshold(v)),
+                move |v| EditMsg::Update(index, ModifierParam::PixelSortThreshold(v)).into(),
             ),
             angle_row("Angle", self.angle, 0.0..=360.0, move |v| {
-                Message::UpdateModifier(index, ModifierParam::PixelSortAngle(v))
+                EditMsg::Update(index, ModifierParam::PixelSortAngle(v)).into()
             }),
         ])
     }
@@ -960,10 +960,10 @@ impl ModifierImpl for Vignette {
                 0.0..=1.0,
                 0.01,
                 Fmt::num(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::VignetteStrength(v)),
+                move |v| EditMsg::Update(index, ModifierParam::VignetteStrength(v)).into(),
             ),
             value_row("Size", self.size, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
-                Message::UpdateModifier(index, ModifierParam::VignetteSize(v))
+                EditMsg::Update(index, ModifierParam::VignetteSize(v)).into()
             },),
             value_row(
                 "Softness",
@@ -971,7 +971,7 @@ impl ModifierImpl for Vignette {
                 0.0..=1.0,
                 0.01,
                 Fmt::num(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::VignetteSoftness(v)),
+                move |v| EditMsg::Update(index, ModifierParam::VignetteSoftness(v)).into(),
             ),
         ])
     }
@@ -1037,7 +1037,7 @@ impl ModifierImpl for ChromaticAberration {
             0.0..=50.0,
             0.1,
             Fmt::num(1),
-            move |v| Message::UpdateModifier(index, ModifierParam::ChromaticAberrationAmount(v)),
+            move |v| EditMsg::Update(index, ModifierParam::ChromaticAberrationAmount(v)).into(),
         )])
     }
 }
@@ -1093,10 +1093,10 @@ impl ModifierImpl for Posterize {
             2.0..=32.0,
             1.0,
             Fmt::num(0),
-            move |v| Message::UpdateModifier(
+            move |v| EditMsg::Update(
                 index,
                 ModifierParam::PosterizeLevels(v.round() as u32)
-            ),
+            ).into(),
         )])
     }
 }
@@ -1153,7 +1153,7 @@ impl ModifierImpl for Threshold {
             0.0..=1.0,
             0.01,
             Fmt::num(2),
-            move |v| Message::UpdateModifier(index, ModifierParam::ThresholdCutoff(v)),
+            move |v| EditMsg::Update(index, ModifierParam::ThresholdCutoff(v)).into(),
         )])
     }
 }
@@ -1269,7 +1269,7 @@ impl ModifierImpl for Grain {
                 0.0..=1.0,
                 0.01,
                 Fmt::num(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::GrainAmount(v)),
+                move |v| EditMsg::Update(index, ModifierParam::GrainAmount(v)).into(),
             ),
             value_row(
                 "Size",
@@ -1277,7 +1277,7 @@ impl ModifierImpl for Grain {
                 0.5..=32.0,
                 0.5,
                 Fmt::num(1).suffix("px"),
-                move |v| Message::UpdateModifier(index, ModifierParam::GrainSize(v)),
+                move |v| EditMsg::Update(index, ModifierParam::GrainSize(v)).into(),
             ),
             value_row(
                 "Response",
@@ -1285,7 +1285,7 @@ impl ModifierImpl for Grain {
                 0.0..=1.0,
                 0.01,
                 Fmt::num(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::GrainResponse(v)),
+                move |v| EditMsg::Update(index, ModifierParam::GrainResponse(v)).into(),
             ),
             value_row(
                 "Color",
@@ -1293,10 +1293,10 @@ impl ModifierImpl for Grain {
                 0.0..=1.0,
                 0.01,
                 Fmt::num(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::GrainColor(v)),
+                move |v| EditMsg::Update(index, ModifierParam::GrainColor(v)).into(),
             ),
             value_row("Seed", self.seed, 0.0..=99.0, 1.0, Fmt::num(0), move |v| {
-                Message::UpdateModifier(index, ModifierParam::GrainSeed(v))
+                EditMsg::Update(index, ModifierParam::GrainSeed(v)).into()
             },),
         ])
     }
@@ -1380,24 +1380,24 @@ impl ModifierImpl for Crop {
         let (vis_w, vis_h) = if swapped { (ch, cw) } else { (cw, ch) };
         let (vis_w_max, vis_h_max) = if swapped { (ih, iw) } else { (iw, ih) };
         let w_msg = move |v| {
-            Message::UpdateModifier(
+            EditMsg::Update(
                 index,
                 if swapped {
                     ModifierParam::CropHeight(v)
                 } else {
                     ModifierParam::CropWidth(v)
                 },
-            )
+            ).into()
         };
         let h_msg = move |v| {
-            Message::UpdateModifier(
+            EditMsg::Update(
                 index,
                 if swapped {
                     ModifierParam::CropWidth(v)
                 } else {
                     ModifierParam::CropHeight(v)
                 },
-            )
+            ).into()
         };
         finish(column![
             value_row(
@@ -1406,7 +1406,7 @@ impl ModifierImpl for Crop {
                 0.0..=(iw - 1.0).max(0.0),
                 1.0,
                 Fmt::num(0),
-                move |v| Message::UpdateModifier(index, ModifierParam::CropX(v)),
+                move |v| EditMsg::Update(index, ModifierParam::CropX(v)).into(),
             ),
             value_row(
                 "Y",
@@ -1414,7 +1414,7 @@ impl ModifierImpl for Crop {
                 0.0..=(ih - 1.0).max(0.0),
                 1.0,
                 Fmt::num(0),
-                move |v| Message::UpdateModifier(index, ModifierParam::CropY(v)),
+                move |v| EditMsg::Update(index, ModifierParam::CropY(v)).into(),
             ),
             value_row(
                 "Width",
@@ -1510,17 +1510,17 @@ impl ModifierImpl for Text {
     ) -> Element<'_, Message> {
         finish(column![
             text_input("Type something...", &self.content)
-                .on_input(move |v| Message::UpdateModifier(index, ModifierParam::TextContent(v)))
+                .on_input(move |v| EditMsg::Update(index, ModifierParam::TextContent(v)).into())
                 .size(11)
                 .padding([4, 6]),
             value_row("X", self.x, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
-                Message::UpdateModifier(index, ModifierParam::TextX(v))
+                EditMsg::Update(index, ModifierParam::TextX(v)).into()
             }),
             value_row("Y", self.y, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
-                Message::UpdateModifier(index, ModifierParam::TextY(v))
+                EditMsg::Update(index, ModifierParam::TextY(v)).into()
             }),
             value_row("Size", self.size, 4.0..=200.0, 0.5, Fmt::num(0), move |v| {
-                Message::UpdateModifier(index, ModifierParam::TextSize(v))
+                EditMsg::Update(index, ModifierParam::TextSize(v)).into()
             },),
             value_row(
                 "Rotation",
@@ -1528,7 +1528,7 @@ impl ModifierImpl for Text {
                 -180.0..=180.0,
                 0.5,
                 Fmt::num(0).suffix("\u{00b0}"),
-                move |v| Message::UpdateModifier(index, ModifierParam::TextRotation(v)),
+                move |v| EditMsg::Update(index, ModifierParam::TextRotation(v)).into(),
             ),
             value_row(
                 "Opacity",
@@ -1536,16 +1536,16 @@ impl ModifierImpl for Text {
                 0.0..=1.0,
                 0.01,
                 Fmt::num(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::TextOpacity(v)),
+                move |v| EditMsg::Update(index, ModifierParam::TextOpacity(v)).into(),
             ),
             value_row("R", self.r, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
-                Message::UpdateModifier(index, ModifierParam::TextR(v))
+                EditMsg::Update(index, ModifierParam::TextR(v)).into()
             }),
             value_row("G", self.g, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
-                Message::UpdateModifier(index, ModifierParam::TextG(v))
+                EditMsg::Update(index, ModifierParam::TextG(v)).into()
             }),
             value_row("B", self.b, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
-                Message::UpdateModifier(index, ModifierParam::TextB(v))
+                EditMsg::Update(index, ModifierParam::TextB(v)).into()
             }),
         ])
     }
@@ -1606,10 +1606,10 @@ impl ModifierImpl for Drawing {
                 0.0..=1.0,
                 0.01,
                 Fmt::num(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::DrawingOpacity(v)),
+                move |v| EditMsg::Update(index, ModifierParam::DrawingOpacity(v)).into(),
             ),
             value_row("Size", self.size, 1.0..=100.0, 0.5, Fmt::num(0), move |v| {
-                Message::UpdateModifier(index, ModifierParam::DrawingSize(v))
+                EditMsg::Update(index, ModifierParam::DrawingSize(v)).into()
             },),
             value_row(
                 "Hardness",
@@ -1617,7 +1617,7 @@ impl ModifierImpl for Drawing {
                 0.0..=1.0,
                 0.01,
                 Fmt::num(2),
-                move |v| Message::UpdateModifier(index, ModifierParam::DrawingHardness(v)),
+                move |v| EditMsg::Update(index, ModifierParam::DrawingHardness(v)).into(),
             ),
         ])
     }

@@ -7,6 +7,10 @@ use iced::widget::tooltip::Position;
 use iced::widget::{
     Space, button, column, container, pick_list, row, rule, scrollable, text, toggler,
 };
+use iced::keyboard::{
+    self,
+    key::{self, Physical},
+};
 use iced::{Element, Font, Length, Theme};
 
 use crate::app::Message;
@@ -73,6 +77,43 @@ pub enum PreferenceOutcome {
     Open,
     Save,
     Cancel,
+}
+
+pub fn capture_key(
+    state: &PreferenceState,
+    physical_key: Physical,
+    modifiers: keyboard::Modifiers,
+) -> Option<PreferenceMessage> {
+    let action = state.capturing?;
+    let Physical::Code(code) = physical_key else {
+        return None;
+    };
+    let is_modifier = matches!(
+        code,
+        key::Code::ControlLeft
+            | key::Code::ControlRight
+            | key::Code::ShiftLeft
+            | key::Code::ShiftRight
+            | key::Code::AltLeft
+            | key::Code::AltRight
+            | key::Code::SuperLeft
+            | key::Code::SuperRight
+    );
+    if is_modifier {
+        return None;
+    }
+    if code == key::Code::Escape {
+        return Some(PreferenceMessage::CancelCapture);
+    }
+    Some(PreferenceMessage::SetKeybinding(
+        action,
+        KeyBinding {
+            ctrl: modifiers.control(),
+            shift: modifiers.shift(),
+            alt: modifiers.alt(),
+            code,
+        },
+    ))
 }
 
 pub fn update(
