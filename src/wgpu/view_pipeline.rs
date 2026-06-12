@@ -137,7 +137,7 @@ impl ViewPipeline {
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
-        _device: &Device,
+        device: &Device,
         queue: &Queue,
         scale: f32,
         scale_factor: f32,
@@ -154,6 +154,16 @@ impl ViewPipeline {
             None => return,
         };
         source.physical_scale = physical_scale;
+
+        if source.mips_dirty && physical_scale < 1.0 - 1e-6 {
+            source.regen_mipmaps(
+                device,
+                queue,
+                &self.blit_pipeline,
+                &self.blit_bgl,
+                &self.linear_sampler,
+            );
+        }
 
         if source.tiles.len() == 1 {
             let tile = &mut source.tiles[0];

@@ -1,7 +1,7 @@
 use glam::{Mat4, Vec2};
 use iced::wgpu::{
-    BindGroup, BindGroupLayout, Buffer, Device, Extent3d, Queue, RenderPipeline, Sampler,
-    TexelCopyBufferLayout, Texture, TextureFormat, TextureUsages, TextureView,
+    BindGroup, BindGroupLayout, Buffer, CommandEncoder, Device, Extent3d, Queue, RenderPipeline,
+    Sampler, TexelCopyBufferLayout, Texture, TextureFormat, TextureUsages, TextureView,
 };
 
 use crate::wgpu::{
@@ -36,6 +36,7 @@ pub struct TiledSource {
     pub full_height: u32,
     pub physical_scale: f32,
     pub has_mipmaps: bool,
+    pub mips_dirty: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -90,7 +91,17 @@ fn write_tile_texture(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+fn mip_encoder<'a>(
+    encoder: &'a mut Option<CommandEncoder>,
+    device: &Device,
+) -> &'a mut CommandEncoder {
+    encoder.get_or_insert_with(|| {
+        device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
+            label: Some("tiled-source-mip-encoder"),
+        })
+    })
+}
+
 fn regen_tile_mipmaps(
     device: &Device,
     queue: &Queue,
@@ -99,10 +110,9 @@ fn regen_tile_mipmaps(
     blit_pipeline: &RenderPipeline,
     blit_bgl: &BindGroupLayout,
     linear_sampler: &Sampler,
-    label: &str,
 ) {
     let mut encoder = device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
-        label: Some(&format!("{label}:mip-encoder")),
+        label: Some("tiled-source-mip-encoder"),
     });
     gpu::generate_hw_mipmaps(
         &mut encoder,
@@ -114,7 +124,7 @@ fn regen_tile_mipmaps(
         blit_bgl,
         linear_sampler,
     );
-    queue.submit(std::iter::once(encoder.finish()));
+    queue.submit([encoder.finish()]);
 }
 
 impl TiledSource {
@@ -191,7 +201,7 @@ impl TiledSource {
                     &mut tile_pixels,
                 );
 
-                if mipmap_zoom_out {
+                if mipmap_zoom_out && mip_count > 1 {
                     regen_tile_mipmaps(
                         device,
                         queue,
@@ -200,7 +210,6 @@ impl TiledSource {
                         blit_pipeline,
                         blit_bgl,
                         linear_sampler,
-                        &label,
                     );
                 }
 
@@ -262,6 +271,7 @@ impl TiledSource {
             full_height: image.height,
             physical_scale: 1.0,
             has_mipmaps: mipmap_zoom_out,
+            mips_dirty: false,
         })
     }
 
@@ -292,7 +302,7 @@ impl TiledSource {
         let needs_mips = self.has_mipmaps && self.physical_scale < 1.0 - 1e-6;
         let mut scratch = Vec::new();
 
-        for (i, tile) in self.tiles.iter().enumerate() {
+        for tile in &self.tiles {
             write_tile_texture(
                 queue,
                 &tile._source_texture,
@@ -314,12 +324,44 @@ impl TiledSource {
                     blit_pipeline,
                     blit_bgl,
                     linear_sampler,
-                    &format!("tile{i}"),
                 );
             }
         }
 
+        self.mips_dirty = self.has_mipmaps && !needs_mips;
         self.image_id = image.id;
         Ok(())
+    }
+
+    pub fn regen_mipmaps(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        blit_pipeline: &RenderPipeline,
+        blit_bgl: &BindGroupLayout,
+        linear_sampler: &Sampler,
+    ) {
+        let mut encoder: Option<CommandEncoder> = None;
+
+        for tile in &self.tiles {
+            if tile.mip_count > 1 {
+                gpu::generate_hw_mipmaps(
+                    mip_encoder(&mut encoder, device),
+                    device,
+                    &tile._source_texture,
+                    tile.mip_count,
+                    TextureFormat::Rgba8Unorm,
+                    blit_pipeline,
+                    blit_bgl,
+                    linear_sampler,
+                );
+            }
+        }
+
+        if let Some(encoder) = encoder {
+            queue.submit([encoder.finish()]);
+        }
+
+        self.mips_dirty = false;
     }
 }

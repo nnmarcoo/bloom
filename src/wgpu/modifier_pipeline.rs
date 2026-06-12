@@ -16,7 +16,6 @@ use crate::{
 struct CombinedPass {
     pipeline: RenderPipeline,
     bgl: BindGroupLayout,
-    uniform_buffer: iced::wgpu::Buffer,
 }
 
 impl CombinedPass {
@@ -35,35 +34,10 @@ impl CombinedPass {
             BlendState::REPLACE,
             &bgl,
         );
-        let uniform_buffer =
-            gpu::uniform_buffer::<ModUniforms>(device, Some("combined-modifiers-uniform"));
-        Self {
-            pipeline,
-            bgl,
-            uniform_buffer,
-        }
+        Self { pipeline, bgl }
     }
 
-    fn write_uniforms(&self, queue: &Queue, uniforms: &ModUniforms) {
-        gpu::write_uniform(queue, &self.uniform_buffer, uniforms);
-    }
-
-    fn run(
-        &self,
-        device: &Device,
-        encoder: &mut CommandEncoder,
-        src: &TextureView,
-        dst: &TextureView,
-        sampler: &Sampler,
-    ) {
-        let bg = gpu::standard_bind_group(
-            device,
-            &self.bgl,
-            &self.uniform_buffer,
-            src,
-            sampler,
-            Some("combined-modifiers-bg"),
-        );
+    fn run(&self, encoder: &mut CommandEncoder, bind_group: &BindGroup, dst: &TextureView) {
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("combined-modifiers-pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
@@ -80,7 +54,7 @@ impl CombinedPass {
             occlusion_query_set: None,
         });
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &bg, &[]);
+        pass.set_bind_group(0, bind_group, &[]);
         pass.draw(0..4, 0..1);
     }
 }
@@ -143,6 +117,7 @@ pub struct ModifierPipeline {
     scratch_a: Option<ScratchTarget>,
     scratch_b: Option<ScratchTarget>,
 
+    uniform_pool: Vec<iced::wgpu::Buffer>,
     combined: CombinedPass,
     display_bgl: BindGroupLayout,
     trilinear_sampler: Sampler,
@@ -196,6 +171,7 @@ impl ModifierPipeline {
             tile_display_bgs_nearest: Vec::new(),
             scratch_a: None,
             scratch_b: None,
+            uniform_pool: Vec::new(),
             combined: CombinedPass::new(device, format),
             display_bgl,
             trilinear_sampler,
@@ -250,6 +226,8 @@ impl ModifierPipeline {
         let downscale = physical_scale < 1.0;
 
         let mut segments: Option<Vec<Vec<&Modifier>>> = None;
+        let mut encoder: Option<CommandEncoder> = None;
+        let mut pool_used = 0usize;
 
         for ti in 0..n_tiles {
             let tile = &source.tiles[ti];
@@ -334,14 +312,30 @@ impl ModifierPipeline {
                     };
 
                     let uniforms = build_segment_uniforms(seg, &tile_info);
-                    combined.write_uniforms(queue, &uniforms);
+                    if pool_used == self.uniform_pool.len() {
+                        self.uniform_pool.push(gpu::uniform_buffer::<ModUniforms>(
+                            device,
+                            Some("combined-modifiers-uniform"),
+                        ));
+                    }
+                    let buffer = &self.uniform_pool[pool_used];
+                    pool_used += 1;
+                    gpu::write_uniform(queue, buffer, &uniforms);
+                    let bg = gpu::standard_bind_group(
+                        device,
+                        &combined.bgl,
+                        buffer,
+                        prev,
+                        sampler,
+                        Some("combined-modifiers-bg"),
+                    );
 
-                    let mut encoder =
+                    let enc = encoder.get_or_insert_with(|| {
                         device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
-                            label: Some(&format!("modifier-tile{ti}-pass{k}-encoder")),
-                        });
-                    combined.run(device, &mut encoder, prev, out, sampler);
-                    queue.submit([encoder.finish()]);
+                            label: Some("modifier-pipeline-encoder"),
+                        })
+                    });
+                    combined.run(enc, &bg, out);
 
                     prev = out;
                 }
@@ -380,6 +374,10 @@ impl ModifierPipeline {
                 &self.nearest_sampler,
                 &format!("modifier-tile{ti}-display-nearest"),
             ));
+        }
+
+        if let Some(encoder) = encoder {
+            queue.submit([encoder.finish()]);
         }
     }
 }
