@@ -42,6 +42,7 @@ pub struct App {
     mode: Mode,
     loading: Option<String>,
     load_generation: u64,
+    pending_media: Option<PathBuf>,
     focus_scale: bool,
     config: Config,
     editing_config: Option<Config>,
@@ -75,6 +76,7 @@ impl App {
             mode: Mode::Windowed,
             loading: None,
             load_generation: 0,
+            pending_media: None,
             focus_scale: false,
             config,
             editing_config: None,
@@ -232,14 +234,23 @@ impl App {
             Message::SelectMedia => return tasks::select_media(),
             Message::MediaSelected(path) => {
                 if let Some(p) = self.gallery.set(path) {
+                    let inflight = self.loading.is_some();
                     self.loading = Some(Gallery::filename(p));
-                    self.load_generation = self.load_generation.wrapping_add(1);
                     self.program.release_image_pixels();
+                    if inflight {
+                        self.pending_media = Some(p.clone());
+                        return Task::none();
+                    }
+                    self.load_generation = self.load_generation.wrapping_add(1);
                     return tasks::load_media(p.clone(), self.load_generation);
                 }
             }
             Message::MediaLoaded(generation, media) => {
                 if generation == self.load_generation {
+                    if let Some(p) = self.pending_media.take() {
+                        self.load_generation = self.load_generation.wrapping_add(1);
+                        return tasks::load_media(p, self.load_generation);
+                    }
                     self.loading = None;
                     self.apply_media(media);
                     if self.config.remember_last {
@@ -264,10 +275,15 @@ impl App {
                 return Task::batch([task, self.maybe_request_histogram()]);
             }
             Message::MediaFailed(generation, err) => {
+                let notify = Task::done(Message::Notify(Notification::error(err)));
                 if generation == self.load_generation {
+                    if let Some(p) = self.pending_media.take() {
+                        self.load_generation = self.load_generation.wrapping_add(1);
+                        return Task::batch([notify, tasks::load_media(p, self.load_generation)]);
+                    }
                     self.loading = None;
                 }
-                return Task::done(Message::Notify(Notification::error(err)));
+                return notify;
             }
             Message::ToggleEditPanel => {
                 self.config.show_edit = !self.config.show_edit;

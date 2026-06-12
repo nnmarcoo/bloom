@@ -21,11 +21,7 @@ pub fn load_media(path: PathBuf, generation: u64) -> iced::Task<Message> {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(ImageData::load_media(&path));
-        });
-        match rx.await {
+        match tokio::task::spawn_blocking(move || ImageData::load_media(&path)).await {
             Ok(Ok(media)) => Message::MediaLoaded(generation, media),
             Ok(Err(e)) => Message::MediaFailed(generation, friendly_error(&e, &filename)),
             Err(_) => Message::MediaFailed(generation, "load thread panicked".to_string()),
@@ -35,11 +31,7 @@ pub fn load_media(path: PathBuf, generation: u64) -> iced::Task<Message> {
 
 pub fn load_from_clipboard() -> iced::Task<Message> {
     iced::Task::future(async move {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(clipboard::read());
-        });
-        match rx.await {
+        match tokio::task::spawn_blocking(clipboard::read).await {
             Ok(Some(ClipboardImage::Pixels(data))) => {
                 Message::ClipboardLoaded(MediaData::Image(data))
             }
