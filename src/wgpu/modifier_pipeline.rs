@@ -223,7 +223,12 @@ impl ModifierPipeline {
         }
 
         let physical_scale = source.physical_scale;
-        let downscale = physical_scale < 1.0;
+        let proc_scale = if physical_scale > 0.0 {
+            physical_scale.log2().ceil().exp2().min(1.0)
+        } else {
+            1.0
+        };
+        let downscale = proc_scale < 1.0;
 
         let mut segments: Option<Vec<Vec<&Modifier>>> = None;
         let mut encoder: Option<CommandEncoder> = None;
@@ -240,12 +245,12 @@ impl ModifierPipeline {
             }
 
             let eff_w = if downscale {
-                ((tile.width as f32 * physical_scale).ceil() as u32).max(1)
+                ((tile.width as f32 * proc_scale).ceil() as u32).max(1)
             } else {
                 tile.width
             };
             let eff_h = if downscale {
-                ((tile.height as f32 * physical_scale).ceil() as u32).max(1)
+                ((tile.height as f32 * proc_scale).ceil() as u32).max(1)
             } else {
                 tile.height
             };
