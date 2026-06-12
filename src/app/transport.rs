@@ -339,10 +339,7 @@ pub fn update(
                 _config.muted = state.muted;
             }
         }
-        TransportMsg::CommitVolume => {
-            #[cfg(feature = "video")]
-            _config.save();
-        }
+        TransportMsg::CommitVolume => {}
         TransportMsg::ToggleMute => {
             #[cfg(feature = "video")]
             {
@@ -352,7 +349,6 @@ pub fn update(
                     video.set_volume(effective);
                 }
                 _config.muted = state.muted;
-                _config.save();
             }
         }
         TransportMsg::ScrubStart => {

@@ -45,6 +45,7 @@ pub struct App {
     pending_media: Option<PathBuf>,
     focus_scale: bool,
     config: Config,
+    config_dirty: bool,
     editing_config: Option<Config>,
     preference_state: preferences::PreferenceState,
     cursor_window: Vec2,
@@ -79,6 +80,7 @@ impl App {
             pending_media: None,
             focus_scale: false,
             config,
+            config_dirty: false,
             editing_config: None,
             preference_state: preferences::PreferenceState::default(),
             cursor_window: Vec2::ZERO,
@@ -150,6 +152,7 @@ pub enum Message {
     ExportProgress(f32),
     ExportDone(Result<String, String>),
     HistogramReady(Box<HistogramResult>),
+    SaveConfig,
     Noop,
 }
 
@@ -255,7 +258,7 @@ impl App {
                     self.apply_media(media);
                     if self.config.remember_last {
                         self.config.last_media = self.gallery.current().cloned();
-                        self.config.save();
+                        self.config_dirty = true;
                     }
                     return self.maybe_request_histogram();
                 }
@@ -266,6 +269,9 @@ impl App {
                 return self.maybe_request_histogram();
             }
             Message::Transport(msg) => {
+                if matches!(msg, TransportMsg::CommitVolume | TransportMsg::ToggleMute) {
+                    self.config_dirty = true;
+                }
                 let task = transport::update(
                     &mut self.transport,
                     &mut self.program,
@@ -287,7 +293,7 @@ impl App {
             }
             Message::ToggleEditPanel => {
                 self.config.show_edit = !self.config.show_edit;
-                self.config.save();
+                self.config_dirty = true;
             }
             Message::ToggleFullscreen => {
                 self.mode = match self.mode {
@@ -298,18 +304,18 @@ impl App {
             }
             Message::ToggleInfoColumn => {
                 self.config.show_info = !self.config.show_info;
-                self.config.save();
+                self.config_dirty = true;
                 return self.maybe_request_histogram();
             }
             Message::ToggleBottomBar => {
                 self.config.show_bottom_bar = !self.config.show_bottom_bar;
-                self.config.save();
+                self.config_dirty = true;
             }
             Message::ToggleInfoSection(label) => {
                 if !self.config.info_collapsed.remove(label) {
                     self.config.info_collapsed.insert(label.to_string());
                 }
-                self.config.save();
+                self.config_dirty = true;
                 return self.maybe_request_histogram();
             }
             Message::TogglePreferences => {
@@ -330,6 +336,7 @@ impl App {
                         let mipmap_changed = self.config.mipmap_zoom_out != pending.mipmap_zoom_out;
                         self.config = pending;
                         self.config.save();
+                        self.config_dirty = false;
                         self.program.mipmap_zoom_out = self.config.mipmap_zoom_out;
                         self.program.smooth_zoom_in = self.config.smooth_zoom_in;
                         self.program
@@ -408,6 +415,7 @@ impl App {
             }
             Message::Exit => {
                 self.config.save();
+                self.config_dirty = false;
                 return tasks::close_window();
             }
             Message::UiScaleUp => {
@@ -425,7 +433,7 @@ impl App {
                 if self.program.show_checkerboard {
                     self.program.checker_uniforms = checker_uniforms_from_theme(&self.config.theme);
                 }
-                self.config.save();
+                self.config_dirty = true;
             }
             Message::Notify(n) => {
                 self.notifications.push(NotificationEntry::new(n));
@@ -475,6 +483,10 @@ impl App {
                     self.histogram = Some(*result);
                 }
                 return self.maybe_request_histogram();
+            }
+            Message::SaveConfig => {
+                self.config.save();
+                self.config_dirty = false;
             }
             Message::Noop => {}
             Message::Event(event) => return self.handle_event(event),
@@ -546,6 +558,7 @@ impl App {
             }
             Event::Window(window::Event::CloseRequested) => {
                 self.config.save();
+                self.config_dirty = false;
                 tasks::close_window()
             }
             Event::Window(window::Event::FileDropped(path)) => {
@@ -704,6 +717,10 @@ impl App {
         if let Some(delay) = self.transport.tick_interval(&self.program) {
             let delay = delay.max(Duration::from_millis(1));
             subs.push(every(delay).map(|t| TransportMsg::Tick(t).into()));
+        }
+
+        if self.config_dirty {
+            subs.push(every(Duration::from_secs(1)).map(|_| Message::SaveConfig));
         }
 
         if !self.notifications.is_empty() {
