@@ -41,29 +41,6 @@ pub trait ModifierImpl {
     ) -> Element<'_, Message>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ModifierType {
-    Levels,
-    BrightnessContrast,
-    HueSaturation,
-    Exposure,
-    Vibrance,
-    ColorBalance,
-    GaussianBlur,
-    MotionBlur,
-    RadialBlur,
-    Halftone,
-    PixelSort,
-    Vignette,
-    ChromaticAberration,
-    Posterize,
-    Threshold,
-    Grain,
-    Crop,
-    Text,
-    Drawing,
-}
-
 #[derive(Debug, Clone)]
 pub struct Modifier {
     pub kind: ModifierKind,
@@ -89,31 +66,18 @@ impl Modifier {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum ModifierKind {
-    Levels(Levels),
-    BrightnessContrast(BrightnessContrast),
-    HueSaturation(HueSaturation),
-    Exposure(Exposure),
-    Vibrance(Vibrance),
-    ColorBalance(ColorBalance),
-    GaussianBlur(GaussianBlur),
-    MotionBlur(MotionBlur),
-    RadialBlur(RadialBlur),
-    Halftone(Halftone),
-    PixelSort(PixelSort),
-    Vignette(Vignette),
-    ChromaticAberration(ChromaticAberration),
-    Posterize(Posterize),
-    Threshold(Threshold),
-    Grain(Grain),
-    Crop(Crop),
-    Text(Text),
-    Drawing(Drawing),
-}
-
-macro_rules! impl_modifier_dispatch {
+macro_rules! define_modifiers {
     ($($variant:ident),* $(,)?) => {
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub enum ModifierType {
+            $($variant,)*
+        }
+
+        #[derive(Debug, Clone)]
+        pub enum ModifierKind {
+            $($variant($variant),)*
+        }
+
         impl ModifierKind {
             fn as_impl(&self) -> &dyn ModifierImpl {
                 match self {
@@ -127,10 +91,18 @@ macro_rules! impl_modifier_dispatch {
                 }
             }
         }
+
+        impl From<ModifierType> for ModifierKind {
+            fn from(t: ModifierType) -> Self {
+                match t {
+                    $(ModifierType::$variant => ModifierKind::$variant($variant::default()),)*
+                }
+            }
+        }
     };
 }
 
-impl_modifier_dispatch!(
+define_modifiers!(
     Levels,
     BrightnessContrast,
     HueSaturation,
@@ -201,36 +173,6 @@ impl ModifierKind {
         match self {
             ModifierKind::Crop(c) => Some(c),
             _ => None,
-        }
-    }
-}
-
-impl From<ModifierType> for ModifierKind {
-    fn from(t: ModifierType) -> Self {
-        match t {
-            ModifierType::Levels => ModifierKind::Levels(Levels::default()),
-            ModifierType::BrightnessContrast => {
-                ModifierKind::BrightnessContrast(BrightnessContrast::default())
-            }
-            ModifierType::HueSaturation => ModifierKind::HueSaturation(HueSaturation::default()),
-            ModifierType::Exposure => ModifierKind::Exposure(Exposure::default()),
-            ModifierType::Vibrance => ModifierKind::Vibrance(Vibrance::default()),
-            ModifierType::ColorBalance => ModifierKind::ColorBalance(ColorBalance::default()),
-            ModifierType::GaussianBlur => ModifierKind::GaussianBlur(GaussianBlur::default()),
-            ModifierType::MotionBlur => ModifierKind::MotionBlur(MotionBlur::default()),
-            ModifierType::RadialBlur => ModifierKind::RadialBlur(RadialBlur::default()),
-            ModifierType::Halftone => ModifierKind::Halftone(Halftone::default()),
-            ModifierType::PixelSort => ModifierKind::PixelSort(PixelSort::default()),
-            ModifierType::Vignette => ModifierKind::Vignette(Vignette::default()),
-            ModifierType::ChromaticAberration => {
-                ModifierKind::ChromaticAberration(ChromaticAberration::default())
-            }
-            ModifierType::Posterize => ModifierKind::Posterize(Posterize::default()),
-            ModifierType::Threshold => ModifierKind::Threshold(Threshold::default()),
-            ModifierType::Grain => ModifierKind::Grain(Grain::default()),
-            ModifierType::Crop => ModifierKind::Crop(Crop::default()),
-            ModifierType::Text => ModifierKind::Text(Text::default()),
-            ModifierType::Drawing => ModifierKind::Drawing(Drawing::default()),
         }
     }
 }
