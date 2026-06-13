@@ -147,6 +147,7 @@ fn button_style(theme: &Theme, status: button::Status) -> button::Style {
 #[derive(Default)]
 struct ThemeListState {
     scroll_offset: f32,
+    drag_grab: Option<f32>,
 }
 
 struct ThemeList<Message> {
@@ -195,6 +196,7 @@ impl<Message: Clone + 'static> Widget<Message, Theme, Renderer> for ThemeList<Me
     fn state(&self) -> tree::State {
         tree::State::new(ThemeListState {
             scroll_offset: self.initial_scroll,
+            drag_grab: None,
         })
     }
 
@@ -232,6 +234,33 @@ impl<Message: Clone + 'static> Widget<Message, Theme, Renderer> for ThemeList<Me
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                if let (Some(metrics), Some(pos)) = (
+                    scroll_metrics(bounds, state.scroll_offset),
+                    cursor.position(),
+                ) {
+                    if cursor.is_over(scrollbar_hit(metrics.thumb)) {
+                        state.drag_grab = Some(pos.y - metrics.thumb.y);
+                        shell.capture_event();
+                        shell.request_redraw();
+                        return;
+                    }
+
+                    let track = Rectangle {
+                        x: metrics.thumb.x,
+                        y: metrics.track_y,
+                        width: SCROLLBAR_WIDTH,
+                        height: visible_h,
+                    };
+                    if cursor.is_over(scrollbar_hit(track)) {
+                        state.drag_grab = Some(metrics.thumb.height / 2.0);
+                        state.scroll_offset =
+                            offset_from_thumb_y(pos.y - metrics.thumb.height / 2.0, &metrics);
+                        shell.capture_event();
+                        shell.request_redraw();
+                        return;
+                    }
+                }
+
                 let clip_area = Self::scroll_area(bounds);
                 for (i, t) in ALL_THEMES.iter().enumerate() {
                     let item_bounds = Self::item_bounds(origin, i, state.scroll_offset);
@@ -241,6 +270,26 @@ impl<Message: Clone + 'static> Widget<Message, Theme, Renderer> for ThemeList<Me
                         return;
                     }
                 }
+            }
+
+            Event::Mouse(mouse::Event::CursorMoved { .. }) if state.drag_grab.is_some() => {
+                if let (Some(grab), Some(pos), Some(metrics)) = (
+                    state.drag_grab,
+                    cursor.position(),
+                    scroll_metrics(bounds, state.scroll_offset),
+                ) {
+                    state.scroll_offset = offset_from_thumb_y(pos.y - grab, &metrics);
+                    shell.capture_event();
+                    shell.request_redraw();
+                }
+            }
+
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if state.drag_grab.is_some() =>
+            {
+                state.drag_grab = None;
+                shell.capture_event();
+                shell.request_redraw();
             }
 
             Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
@@ -292,7 +341,10 @@ impl<Message: Clone + 'static> Widget<Message, Theme, Renderer> for ThemeList<Me
             Background::Color(palette.background.weak.color),
         );
 
-        draw_scrollbar(renderer, bounds, scroll_offset, theme);
+        let scrollbar_active = state.drag_grab.is_some()
+            || scroll_metrics(bounds, scroll_offset)
+                .is_some_and(|m| cursor.is_over(scrollbar_hit(m.thumb)));
+        draw_scrollbar(renderer, bounds, scroll_offset, scrollbar_active, theme);
 
         let origin = Point::new(bounds.x, bounds.y);
         let clip_area = Self::scroll_area(bounds);
@@ -437,25 +489,78 @@ fn draw_label(renderer: &mut Renderer, theme_to_draw: &Theme, bounds: Rectangle,
     );
 }
 
-fn draw_scrollbar(renderer: &mut Renderer, bounds: Rectangle, scroll_offset: f32, theme: &Theme) {
-    use advanced::Renderer as _;
+struct ScrollMetrics {
+    thumb: Rectangle,
+    track_y: f32,
+    travel: f32,
+    max_offset: f32,
+}
 
+fn scroll_metrics(bounds: Rectangle, scroll_offset: f32) -> Option<ScrollMetrics> {
     let list_h = full_list_height();
     let visible_h = bounds.height - PADDING * 2.0;
 
     if list_h <= visible_h {
-        return;
+        return None;
     }
 
-    let palette = theme.extended_palette();
     let track_x = bounds.x + bounds.width - PADDING - SCROLLBAR_WIDTH;
     let track_y = bounds.y + PADDING;
+    let thumb_h = (visible_h / list_h * visible_h).max(16.0);
+    let max_offset = list_h - visible_h;
+    let travel = visible_h - thumb_h;
+    let thumb_y = track_y + (scroll_offset / max_offset) * travel;
+
+    Some(ScrollMetrics {
+        thumb: Rectangle {
+            x: track_x,
+            y: thumb_y,
+            width: SCROLLBAR_WIDTH,
+            height: thumb_h,
+        },
+        track_y,
+        travel,
+        max_offset,
+    })
+}
+
+fn offset_from_thumb_y(thumb_y: f32, m: &ScrollMetrics) -> f32 {
+    if m.travel <= 0.0 {
+        return 0.0;
+    }
+    ((thumb_y - m.track_y) / m.travel * m.max_offset).clamp(0.0, m.max_offset)
+}
+
+fn scrollbar_hit(thumb: Rectangle) -> Rectangle {
+    Rectangle {
+        x: thumb.x - SCROLLBAR_MARGIN,
+        y: thumb.y,
+        width: thumb.width + SCROLLBAR_MARGIN * 2.0,
+        height: thumb.height,
+    }
+}
+
+fn draw_scrollbar(
+    renderer: &mut Renderer,
+    bounds: Rectangle,
+    scroll_offset: f32,
+    active: bool,
+    theme: &Theme,
+) {
+    use advanced::Renderer as _;
+
+    let Some(metrics) = scroll_metrics(bounds, scroll_offset) else {
+        return;
+    };
+
+    let palette = theme.extended_palette();
+    let visible_h = bounds.height - PADDING * 2.0;
 
     renderer.fill_quad(
         Quad {
             bounds: Rectangle {
-                x: track_x,
-                y: track_y,
+                x: metrics.thumb.x,
+                y: metrics.track_y,
                 width: SCROLLBAR_WIDTH,
                 height: visible_h,
             },
@@ -468,24 +573,19 @@ fn draw_scrollbar(renderer: &mut Renderer, bounds: Rectangle, scroll_offset: f32
         Background::Color(palette.background.strong.color),
     );
 
-    let thumb_h = (visible_h / list_h * visible_h).max(16.0);
-    let max_offset = list_h - visible_h;
-    let thumb_y = track_y + (scroll_offset / max_offset) * (visible_h - thumb_h);
-
     renderer.fill_quad(
         Quad {
-            bounds: Rectangle {
-                x: track_x,
-                y: thumb_y,
-                width: SCROLLBAR_WIDTH,
-                height: thumb_h,
-            },
+            bounds: metrics.thumb,
             border: Border {
                 radius: (SCROLLBAR_WIDTH / 2.0).into(),
                 ..Border::default()
             },
             ..Quad::default()
         },
-        Background::Color(palette.background.base.text.scale_alpha(0.4)),
+        Background::Color(if active {
+            palette.primary.strong.color
+        } else {
+            palette.background.base.text.scale_alpha(0.4)
+        }),
     );
 }
