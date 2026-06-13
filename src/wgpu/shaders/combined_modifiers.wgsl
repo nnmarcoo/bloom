@@ -194,7 +194,7 @@ fn apply_entry(e: ModEntry, tile_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
             let dist = length(rot_uv - cell);
             let luma = dot(clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.2126, 0.7152, 0.0722));
             let radius = sqrt(luma) * 0.5;
-            let aa = fwidth(dist) * 0.5;
+            let aa = 1.0 / max(p6, 1.0);
             let dot_val = 1.0 - smoothstep(radius - aa, radius + aa, dist);
             c = vec4<f32>(dot_val, dot_val, dot_val, c.a);
         }

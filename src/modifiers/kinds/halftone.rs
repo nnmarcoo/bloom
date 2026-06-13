@@ -50,6 +50,7 @@ impl ModifierImpl for Halftone {
                 tile.tile_y as f32 / tile.full_h as f32,
                 tile.tile_w as f32 / tile.full_w as f32,
                 tile.tile_h as f32 / tile.full_h as f32,
+                self.size,
             ],
         ))
     }
