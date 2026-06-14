@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>bloom</title>
+<meta name="description" content="bloom is a hardware-accelerated media viewer built with Rust. GPU rendering, 60+ formats, video, animation, and non-destructive modifiers. Windows, macOS, Linux.">
+<link rel="icon" type="image/png" href="img/bloom32.png">
+<link rel="stylesheet" href="style.css">
+<meta property="og:title" content="bloom: hardware-accelerated media viewer">
+<meta property="og:description" content="GPU-rendered media viewer built with Rust.">
+<meta property="og:image" content="img/view.png">
+<meta property="og:type" content="website">
+</head>
+<body>
+
+<div class="glow">
+  <div class="blob one"></div>
+  <div class="blob two"></div>
+</div>
+
+<nav class="nav">
+  <a class="brand" href="index.html"><img src="img/bloom32.png" alt="">bloom</a>
+  <span class="links">
+    <a href="docs.html">Docs</a>
+    <a href="https://github.com/nnmarcoo/bloom">GitHub</a>
+  </span>
+</nav>
+
+<div class="fold">
+  <header class="hero">
+    <img class="banner" src="img/banner.png" alt="bloom">
+    <p class="tag">A hardware-accelerated media viewer built with Rust.</p>
+    <div class="cta">
+      <span class="download">
+        <a class="btn btn-primary dl-main" href="https://github.com/nnmarcoo/bloom/releases">Download</a>
+        <button class="dl-caret" aria-label="Other platforms" hidden>&#9662;</button>
+        <div class="dl-menu" hidden></div>
+      </span>
+      <a class="btn btn-ghost" href="docs.html">Docs</a>
+    </div>
+  </header>
+
+  <main class="carousel">
+    <div class="stage">
+      <figure class="slide active">
+        <span class="chev prev" aria-hidden="true">&#8249;</span>
+        <img src="img/view.png" alt="bloom viewing an image at full resolution">
+        <span class="chev next" aria-hidden="true">&#8250;</span>
+      </figure>
+      <figure class="slide">
+        <span class="chev prev" aria-hidden="true">&#8249;</span>
+        <img src="img/view_gif.png" alt="bloom playing an animation with timeline scrubbing">
+        <span class="chev next" aria-hidden="true">&#8250;</span>
+      </figure>
+      <figure class="slide">
+        <span class="chev prev" aria-hidden="true">&#8249;</span>
+        <img src="img/preferences.png" alt="bloom preferences with themes and keybindings">
+        <span class="chev next" aria-hidden="true">&#8250;</span>
+      </figure>
+      <button class="zone prev" aria-label="Previous"></button>
+      <button class="zone next" aria-label="Next"></button>
+    </div>
+    <div class="dots"></div>
+  </main>
+</div>
+
+<script>
+  /* carousel */
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const dotsWrap = document.querySelector('.dots');
+  const carousel = document.querySelector('.carousel');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let i = 0, timer, paused = false;
+
+  const dots = slides.map((_, n) => {
+    const d = document.createElement('button');
+    d.className = 'dot' + (n === 0 ? ' active' : '');
+    d.setAttribute('aria-label', 'Go to slide ' + (n + 1));
+    d.addEventListener('click', () => go(n, true));
+    dotsWrap.appendChild(d);
+    return d;
+  });
+
+  const ANIM = ['enter-next', 'enter-prev', 'exit-next', 'exit-prev'];
+
+  function go(n, reset, dir) {
+    const next = (n + slides.length) % slides.length;
+    if (next !== i) {
+      if (dir === undefined) dir = n > i ? 1 : -1;
+      const cur = slides[i], inc = slides[next];
+      dots[i].classList.remove('active');
+      dots[next].classList.add('active');
+      cur.classList.remove('active', ...ANIM);
+      inc.classList.remove(...ANIM);
+      inc.classList.add('active');
+      if (!reduce) {
+        cur.classList.add(dir === 1 ? 'exit-next' : 'exit-prev');
+        inc.classList.add(dir === 1 ? 'enter-next' : 'enter-prev');
+      }
+      i = next;
+    }
+    if (reset) restart();
+  }
+
+  function restart() {
+    clearInterval(timer);
+    if (reduce || paused) return;
+    timer = setInterval(() => go(i + 1), 5000);
+  }
+
+  document.querySelector('.zone.prev').addEventListener('click', () => go(i - 1, true));
+  document.querySelector('.zone.next').addEventListener('click', () => go(i + 1, true));
+
+  ['mouseenter', 'focusin'].forEach(e =>
+    carousel.addEventListener(e, () => { paused = true; clearInterval(timer); }));
+  ['mouseleave', 'focusout'].forEach(e =>
+    carousel.addEventListener(e, () => { paused = false; restart(); }));
+
+  document.addEventListener('keydown', e => {
+    if (e.target.closest('.dl-menu')) return;
+    if (e.key === 'ArrowLeft') go(i - 1, true);
+    else if (e.key === 'ArrowRight') go(i + 1, true);
+  });
+
+  restart();
+
+  if (!reduce) {
+    document.querySelectorAll('.blob').forEach(b => {
+      (function drift(first) {
+        const x = Math.random() * 100 - 50;
+        const y = Math.random() * 100 - 50;
+        const s = 0.9 + Math.random() * 0.45;
+        const d = first ? 0 : 8 + Math.random() * 8;
+        b.style.transitionDuration = d + 's';
+        b.style.transform = 'translate(' + x + 'vw, ' + y + 'vh) scale(' + s + ')';
+        setTimeout(() => drift(false), first ? 50 : d * 1000);
+      })(true);
+    });
+  }
+
+  /* smart download: resolves the latest release's assets per platform.
+     matches by file extension so it survives asset renames, and falls
+     back to the releases page until a non-prerelease exists. */
+  const REPO = 'nnmarcoo/bloom';
+
+  const PLATFORMS = [
+    { label: 'Windows', rank: n => n.endsWith('.msi') ? 3 : n.endsWith('.exe') ? 2 : -1 },
+    { label: 'macOS', rank: n => n.endsWith('.dmg') ? 3 : n.endsWith('.pkg') ? 2 : n.endsWith('.app.tar.gz') ? 1 : -1 },
+    { label: 'Linux', rank: n => n.endsWith('.appimage') ? 3 : n.endsWith('.deb') ? 2 : n.endsWith('.rpm') ? 1
+                  : (n.endsWith('.tar.gz') && !n.endsWith('.app.tar.gz')) ? 0.5 : -1 },
+  ];
+
+  function bestAsset(assets, p) {
+    let best = null, score = -1;
+    for (const a of assets) {
+      const n = a.name.toLowerCase();
+      const r = p.rank(n);
+      if (r < 0) continue;
+      const full = !/minimal|heif/.test(n) ? 0.3 : 0;
+      if (r + full > score) { score = r + full; best = a; }
+    }
+    return best;
+  }
+
+  function fmtSize(b) { return (b / 1048576).toFixed(1) + ' MB'; }
+
+  fetch('https://api.github.com/repos/' + REPO + '/releases/latest', {
+    headers: { Accept: 'application/vnd.github+json' }
+  })
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(rel => {
+      const assets = rel.assets || [];
+      const items = [];
+      for (const p of PLATFORMS) {
+        const a = bestAsset(assets, p);
+        if (a) items.push({ label: 'Download for ' + p.label, url: a.browser_download_url, size: a.size });
+      }
+      if (!items.length) return;
+
+      const main = document.querySelector('.dl-main');
+      const caret = document.querySelector('.dl-caret');
+      const menu = document.querySelector('.dl-menu');
+      main.href = rel.html_url;
+
+      menu.innerHTML = '';
+      items.forEach(it => {
+        const a = document.createElement('a');
+        a.href = it.url;
+        a.className = 'dl-item';
+        a.innerHTML = '<span>' + it.label + '</span><span class="dl-size">' + fmtSize(it.size) + '</span>';
+        menu.appendChild(a);
+      });
+      const all = document.createElement('a');
+      all.href = rel.html_url;
+      all.className = 'dl-item dl-all';
+      all.textContent = 'All builds & checksums →';
+      menu.appendChild(all);
+
+      caret.hidden = false;
+      caret.addEventListener('click', e => { e.stopPropagation(); menu.hidden = !menu.hidden; });
+      document.addEventListener('click', () => { menu.hidden = true; });
+      menu.addEventListener('click', e => e.stopPropagation());
+    })
+    .catch(() => {});
+</script>
+
+</body>
+</html>
