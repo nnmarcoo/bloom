@@ -237,15 +237,27 @@
     <section class="docsection" id="build">
       <h2>Build from source</h2>
       <p class="lead">Requires the Rust toolchain (1.87+, edition 2024).</p>
-      <pre class="codeblock">cargo build --release</pre>
-      <p class="buildnote">That core build needs nothing extra. HEIC/HEIF and video each link against a native library, so run its setup script once, then add the feature flag. Combine both flags for the full default build.</p>
-      <pre class="codeblock"># HEIC/HEIF (libheif)
-./scripts/setup-heif.sh       # setup-heif.ps1 on Windows
-cargo build --release --features heif
 
-# Video (FFmpeg)
-./scripts/setup-video.sh      # setup-video.ps1 on Windows
+      <p class="buildnote">The core build needs nothing extra:</p>
+      <pre class="codeblock">cargo build --release</pre>
+
+      <p class="buildnote">HEIC/HEIF and video each link against a native library. For each one you want, run its setup script once, then build with the matching feature flag.</p>
+      <div class="install">
+        <div class="os">
+          <h3>HEIC / HEIF <span class="fmt-tag">libheif</span></h3>
+          <pre class="codeblock">./scripts/setup-heif.sh       # setup-heif.ps1 on Windows
+cargo build --release --features heif</pre>
+        </div>
+        <div class="os">
+          <h3>Video <span class="fmt-tag">FFmpeg</span></h3>
+          <pre class="codeblock">./scripts/setup-video.sh      # setup-video.ps1 on Windows
 cargo build --release --features video</pre>
+        </div>
+      </div>
+
+      <p class="buildnote">For the full default build, set up both, then combine the flags:</p>
+      <pre class="codeblock">cargo build --release --features heif,video</pre>
+
       <div class="infonote">
         <span class="infonote-icon" aria-hidden="true">!</span>
         <p>Prebuilt downloads already bundle HEIF and video. See the README for full per-OS setup.</p>
