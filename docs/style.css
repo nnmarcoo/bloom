@@ -88,7 +88,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .fold {
   display: flex; flex-direction: column;
   min-height: calc(100vh - 58px);
-  min-height: calc(100dvh - 58px);
+  min-height: calc(100svh - 58px);
 }
 header.hero { flex: 0 0 auto; text-align: center; padding: 38px 24px 12px; }
 header.hero img.banner { width: 190px; max-width: 60%; height: auto; }
