@@ -135,12 +135,12 @@ main.carousel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: co
 
 /* docs page: sticky sidebar + content */
 .docwrap {
-  max-width: 1180px; margin: 0 auto; padding: 32px 24px 48px;
-  display: grid; grid-template-columns: 1fr min(760px, 100%) 1fr; column-gap: 40px;
+  max-width: 1000px; margin: 0 auto; padding: 32px 24px 48px;
+  display: grid; grid-template-columns: 160px minmax(0, 1fr); column-gap: 48px;
 }
-.content { grid-column: 2; }
+.content { grid-column: 2; min-width: 0; }
 .sidebar {
-  grid-column: 1; justify-self: end; width: 150px;
+  grid-column: 1; width: 160px;
   position: sticky; top: 76px; align-self: start;
   display: flex; flex-direction: column; gap: 3px;
 }
@@ -273,12 +273,18 @@ footer a:hover { color: var(--accent-bright); }
 .flinks { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; margin-bottom: 10px; }
 
 @media (max-width: 760px) {
+  .nav { gap: 16px; padding: 10px 16px; }
   .stage { min-height: 56vh; }
   .docwrap { grid-template-columns: 1fr; column-gap: 0; }
   .content { grid-column: 1; }
+  .docsection { scroll-margin-top: 96px; }
   .sidebar {
-    grid-column: 1; justify-self: stretch; width: auto;
-    position: static; flex-direction: row; flex-wrap: wrap; gap: 8px; margin-bottom: 18px;
+    grid-column: 1; width: auto;
+    position: sticky; top: 44px; z-index: 40;
+    flex-direction: row; flex-wrap: nowrap; gap: 6px;
+    margin: 0 -24px 18px; padding: 9px 24px; overflow-x: auto;
+    background: rgba(13,16,20,0.92); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
   }
-  .sidebar a { border-left: 0; }
+  .sidebar a { border-left: 0; white-space: nowrap; flex: 0 0 auto; }
 }
