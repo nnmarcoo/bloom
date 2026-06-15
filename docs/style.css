@@ -8,7 +8,11 @@
   --accent-bright: #19a3d4;
 }
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; overflow-x: clip; }
+html { scroll-behavior: smooth; overflow-x: clip; scrollbar-width: auto; scrollbar-color: var(--border) transparent; }
+::-webkit-scrollbar { width: 18px; height: 18px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; border: 3px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--fg-dim); }
 body {
   margin: 0;
   overflow-x: clip;
