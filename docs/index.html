@@ -106,7 +106,7 @@
   function restart() {
     clearInterval(timer);
     if (reduce || paused) return;
-    timer = setInterval(() => go(i + 1), 5000);
+    timer = setInterval(() => go(i + 1), 3000);
   }
 
   document.querySelector('.zone.prev').addEventListener('click', () => go(i - 1, true));
