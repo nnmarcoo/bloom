@@ -8,9 +8,10 @@
   --accent-bright: #19a3d4;
 }
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; overflow-x: clip; }
 body {
   margin: 0;
+  overflow-x: clip;
   min-height: 100vh;
   background: var(--bg);
   color: var(--fg);
