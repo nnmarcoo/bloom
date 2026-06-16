@@ -24,7 +24,7 @@ use crate::widgets::histogram::Histogram;
 
 const FILENAME_MAX_CHARS: usize = 18;
 
-#[cfg(feature = "video")]
+#[cfg(feature = "av")]
 pub struct VideoPanel<'a> {
     pub meta: &'a crate::wgpu::media::video::VideoMeta,
     pub fps: f64,
@@ -132,7 +132,7 @@ fn row_item<'a>(lbl: &'a str, val: impl ToString, muted: Color) -> Element<'a, M
     .into()
 }
 
-#[cfg(feature = "video")]
+#[cfg(feature = "av")]
 fn push_opt<'a>(
     rows: &mut Vec<Element<'a, Message>>,
     label: &'a str,
@@ -235,7 +235,7 @@ pub fn view<'a>(
     info_collapsed: &HashSet<String>,
     pixel_preview_size: u32,
     histogram: Option<&'a HistogramData>,
-    #[cfg(feature = "video")] video: Option<VideoPanel<'a>>,
+    #[cfg(feature = "av")] video: Option<VideoPanel<'a>>,
 ) -> Element<'a, Message> {
     let palette = theme.extended_palette();
     let muted = palette.background.base.text.scale_alpha(0.5);
@@ -306,9 +306,9 @@ pub fn view<'a>(
         format!("{:.0}%", program.scale() * 100.0),
         muted,
     ));
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     let is_video = video.is_some();
-    #[cfg(not(feature = "video"))]
+    #[cfg(not(feature = "av"))]
     let is_video = false;
     if let Some(bd) = program.bit_depth().filter(|_| !is_video) {
         image_rows.push(row_item(
@@ -336,7 +336,7 @@ pub fn view<'a>(
     if let Some(bytes) = program.vram_usage_bytes() {
         image_rows.push(row_item("VRAM", format_size(bytes as u64), muted));
     }
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     if let Some(v) = &video {
         image_rows.push(row_item(
             "Position",
@@ -357,7 +357,7 @@ pub fn view<'a>(
     }
     push_section(&mut rows, "IMAGE", false, image_rows);
 
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     if let Some(v) = &video {
         let m = v.meta;
         let mut video_rows: Vec<Element<'a, Message>> = Vec::new();

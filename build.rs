@@ -5,11 +5,11 @@ fn main() {
         .compile()
         .expect("failed to compile Windows resource");
 
-    #[cfg(all(windows, feature = "video"))]
+    #[cfg(all(windows, feature = "av"))]
     copy_ffmpeg_dlls();
 }
 
-#[cfg(all(windows, feature = "video"))]
+#[cfg(all(windows, feature = "av"))]
 fn copy_ffmpeg_dlls() {
     use std::path::PathBuf;
 
@@ -40,7 +40,7 @@ fn copy_ffmpeg_dlls() {
         Ok(e) => e,
         Err(_) => {
             println!(
-                "cargo:warning=FFmpeg bin dir not found at {}; run scripts/setup-video.ps1",
+                "cargo:warning=FFmpeg bin dir not found at {}; run scripts/setup-av.ps1",
                 bin.display()
             );
             return;

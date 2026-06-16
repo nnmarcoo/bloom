@@ -43,29 +43,29 @@ pub const SUPPORTED: &[&str] = &[
     "heic",
     #[cfg(feature = "heif")]
     "heif",
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     "mp4",
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     "m4v",
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     "mov",
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     "mkv",
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     "webm",
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     "avi",
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     "mpg",
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     "mpeg",
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     "ts",
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     "m2ts",
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     "wmv",
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     "flv",
     "ari",
     "arw",

@@ -42,7 +42,7 @@ jobs:
             features: "heif"
             suffix: "-heif"
           - variant: full
-            features: "heif,video"
+            features: "heif,av"
             suffix: ""
 
     steps:
@@ -63,7 +63,7 @@ jobs:
           if [[ "$FEATURES" == *heif* ]]; then
             sudo apt-get install -y libheif-dev libdav1d-dev
           fi
-          if [[ "$FEATURES" == *video* ]]; then
+          if [[ "$FEATURES" == *av* ]]; then
             sudo apt-get install -y clang libclang-dev libasound2-dev
             ffmpeg_url=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
               "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases?per_page=20" \
@@ -91,7 +91,7 @@ jobs:
           if [[ "$FEATURES" == *heif* ]]; then
             brew install libheif dav1d
           fi
-          if [[ "$FEATURES" == *video* ]]; then
+          if [[ "$FEATURES" == *av* ]]; then
             brew install ffmpeg
             echo "FFMPEG_DIR=$(brew --prefix ffmpeg)" >> "$GITHUB_ENV"
           fi
@@ -121,7 +121,7 @@ jobs:
             echo "PKG_CONFIG_PATH=$vcpkgInstalled\lib\pkgconfig" >> $env:GITHUB_ENV
             echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
           }
-          if ($env:FEATURES -like "*video*") {
+          if ($env:FEATURES -like "*av*") {
             echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
             $headers = @{ Authorization = "Bearer $env:GH_TOKEN" }
             $releases = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases?per_page=20"
@@ -149,7 +149,7 @@ jobs:
         run: |
           mkdir -p dist
           cp target/release/bloom dist/
-          if [[ "$FEATURES" == *video* ]]; then
+          if [[ "$FEATURES" == *av* ]]; then
             mkdir -p dist/lib
             cp -a "$FFMPEG_DIR"/lib/*.so* dist/lib/
           fi
@@ -278,7 +278,7 @@ jobs:
           FEATURES: ${{ matrix.features }}
         run: |
           $heif  = if ($env:FEATURES -like "*heif*")  { "true" } else { "false" }
-          $video = if ($env:FEATURES -like "*video*") { "true" } else { "false" }
+          $video = if ($env:FEATURES -like "*av*") { "true" } else { "false" }
           $zipItems = @("target\release\bloom.exe")
           $wixArgs = @("--no-build", "--nocapture", "-C", "-dHeif=$heif", "-C", "-dVideo=$video")
           if ($video -eq "true") {

@@ -38,7 +38,7 @@ use super::exif_data::ExifData;
 pub enum MediaData {
     Image(Box<ImageData>),
     Animation(Animation),
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     Video(Box<super::video::VideoInfo>),
 }
 
@@ -755,7 +755,7 @@ impl ImageData {
         let media = match ext.as_str() {
             "gif" => MediaData::Animation(Self::load_gif(path)?),
             "apng" => MediaData::Animation(Self::load_apng(path)?),
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             e if super::video::VIDEO_EXTENSIONS.contains(&e) => {
                 MediaData::Video(Box::new(super::video::probe_video(path)?))
             }

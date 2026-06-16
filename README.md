@@ -66,7 +66,7 @@
     <tr><td>SVG</td><td><code>.svg</code> <code>.svgz</code></td><td>Rasterized at native size</td></tr>
     <tr><td>TGA</td><td><code>.tga</code></td><td></td></tr>
     <tr><td>TIFF</td><td><code>.tif</code> <code>.tiff</code></td><td>No 64-bit float</td></tr>
-    <tr><td>Video</td><td><code>.mp4</code> <code>.m4v</code> <code>.mov</code> <code>.mkv</code> <code>.webm</code> <code>.avi</code> <code>.mpg</code> <code>.mpeg</code> <code>.ts</code> <code>.m2ts</code> <code>.wmv</code> <code>.flv</code></td><td>Playback with audio; in the default download or <code>--features video</code> from source</td></tr>
+    <tr><td>Video</td><td><code>.mp4</code> <code>.m4v</code> <code>.mov</code> <code>.mkv</code> <code>.webm</code> <code>.avi</code> <code>.mpg</code> <code>.mpeg</code> <code>.ts</code> <code>.m2ts</code> <code>.wmv</code> <code>.flv</code></td><td>Playback with audio; in the default download or <code>--features av</code> from source</td></tr>
     <tr><td>WebP</td><td><code>.webp</code></td><td>Static and animated</td></tr>
   </tbody>
 </table>
@@ -109,12 +109,12 @@ For video playback, the `ffmpeg-next` bindings link against FFmpeg. A helper scr
 
 ```sh
 # macOS / Linux
-./scripts/setup-video.sh
+./scripts/setup-av.sh
 
 # Windows (PowerShell) — downloads a prebuilt FFmpeg into vendor/ and sets FFMPEG_DIR
-./scripts/setup-video.ps1
+./scripts/setup-av.ps1
 
-cargo build --release --features video
+cargo build --release --features av
 ```
 
 On Linux the script installs the FFmpeg dev libraries via your system package manager (`libavformat-dev`, `libavfilter-dev`, `libavdevice-dev`, `libclang-dev` on Ubuntu/Debian; `ffmpeg-devel clang` on Fedora; `ffmpeg clang` on Arch). On Windows it fetches a prebuilt shared FFmpeg into `vendor/ffmpeg`, sets `FFMPEG_DIR`, adds the DLLs to your `PATH`, and installs LLVM via winget (needed for `ffmpeg-sys-next`'s bindgen step) — open a new terminal afterward so the environment changes take effect.

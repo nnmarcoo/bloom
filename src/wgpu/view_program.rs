@@ -286,7 +286,7 @@ impl ViewProgram {
         self.reset_crop_to_image();
     }
 
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     pub fn set_video_frame(&mut self, data: Arc<ImageData>, first: bool) {
         if first {
             self.set_display_image(data);

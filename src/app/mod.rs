@@ -542,7 +542,7 @@ impl App {
         match media {
             MediaData::Image(data) => self.program.set_image(*data),
             MediaData::Animation(anim) => self.program.set_animation(anim),
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             MediaData::Video(info) => self.transport.attach_video(*info, &mut self.program),
         }
         self.transport.on_media_applied(self.config.autoplay);
@@ -624,7 +624,7 @@ impl App {
         if let Some(pending) = &self.editing_config {
             return preferences::view(pending, &self.config.theme, &self.preference_state);
         }
-        #[cfg(feature = "video")]
+        #[cfg(feature = "av")]
         let video_panel = self.transport.video_panel();
 
         let histogram = self.histogram.as_ref().map(|h| &h.data);
@@ -648,7 +648,7 @@ impl App {
             dragging_modifier: self.edit.dragging,
             drag_hover_target: self.edit.drag_hover,
             histogram,
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             video_panel,
         }));
 

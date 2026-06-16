@@ -40,7 +40,7 @@ pub struct ViewerCtx<'a> {
     pub dragging_modifier: Option<usize>,
     pub drag_hover_target: Option<usize>,
     pub histogram: Option<&'a Histogram>,
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     pub video_panel: Option<info_panel::VideoPanel<'a>>,
 }
 
@@ -150,7 +150,7 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
             ctx.info_collapsed,
             ctx.pixel_preview_size,
             ctx.histogram,
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             ctx.video_panel,
         ));
     }

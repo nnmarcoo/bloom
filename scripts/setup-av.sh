@@ -20,8 +20,8 @@ elif [ "$OS" = "Linux" ]; then
     fi
 
 else
-    echo "Unsupported OS: $OS. Use scripts/setup-video.ps1 on Windows."
+    echo "Unsupported OS: $OS. Use scripts/setup-av.ps1 on Windows."
     exit 1
 fi
 
-echo "Done. Run: cargo build --features video"
+echo "Done. Run: cargo build --features av"

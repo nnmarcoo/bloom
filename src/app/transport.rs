@@ -4,7 +4,7 @@ use iced::Task;
 
 use crate::{app::Message, config::Config, wgpu::view_program::ViewProgram};
 
-#[cfg(feature = "video")]
+#[cfg(feature = "av")]
 use crate::wgpu::media::video::{VideoInfo, VideoState};
 
 pub type TransportView = (usize, f32, Option<(Duration, Duration)>);
@@ -28,15 +28,15 @@ pub enum TransportMsg {
 pub struct TransportState {
     pub paused: bool,
     pub scrubbing: bool,
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     video: Option<VideoState>,
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     scrub_pending: Option<Duration>,
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     scrub_sent: Option<Duration>,
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     volume: f32,
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     muted: bool,
 }
 
@@ -45,27 +45,27 @@ impl TransportState {
         Self {
             paused: false,
             scrubbing: false,
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             video: None,
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             scrub_pending: None,
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             scrub_sent: None,
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             volume: _config.volume,
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             muted: _config.muted,
         }
     }
 
     pub fn clear_video(&mut self) {
-        #[cfg(feature = "video")]
+        #[cfg(feature = "av")]
         {
             self.video = None;
         }
     }
 
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     pub fn attach_video(&mut self, info: VideoInfo, program: &mut ViewProgram) {
         match VideoState::new(info) {
             Ok(state) => {
@@ -81,7 +81,7 @@ impl TransportState {
     pub fn on_media_applied(&mut self, autoplay: bool) {
         self.paused = !autoplay;
         self.scrubbing = false;
-        #[cfg(feature = "video")]
+        #[cfg(feature = "av")]
         if !self.paused
             && let Some(video) = self.video.as_mut()
         {
@@ -90,7 +90,7 @@ impl TransportState {
     }
 
     pub fn playback_active(&self, program: &ViewProgram) -> bool {
-        #[cfg(feature = "video")]
+        #[cfg(feature = "av")]
         if self.video.is_some() {
             return true;
         }
@@ -98,32 +98,32 @@ impl TransportState {
     }
 
     pub fn is_video(&self) -> bool {
-        #[cfg(feature = "video")]
+        #[cfg(feature = "av")]
         {
             self.video.is_some()
         }
-        #[cfg(not(feature = "video"))]
+        #[cfg(not(feature = "av"))]
         {
             false
         }
     }
 
     pub fn volume_indicator(&self) -> (Option<f32>, bool) {
-        #[cfg(feature = "video")]
+        #[cfg(feature = "av")]
         {
             match &self.video {
                 Some(v) if v.has_audio() => (Some(self.volume), self.muted),
                 _ => (None, false),
             }
         }
-        #[cfg(not(feature = "video"))]
+        #[cfg(not(feature = "av"))]
         {
             (None, false)
         }
     }
 
     pub fn transport_view(&self, program: &ViewProgram) -> Option<TransportView> {
-        #[cfg(feature = "video")]
+        #[cfg(feature = "av")]
         if let Some(video) = &self.video {
             let dur = video.duration();
             let pos = video.position();
@@ -150,7 +150,7 @@ impl TransportState {
     }
 
     pub fn tick_interval(&self, program: &ViewProgram) -> Option<Duration> {
-        #[cfg(feature = "video")]
+        #[cfg(feature = "av")]
         {
             match &self.video {
                 Some(video) => (!self.paused || self.scrubbing || video.is_seeking())
@@ -160,7 +160,7 @@ impl TransportState {
                     .flatten(),
             }
         }
-        #[cfg(not(feature = "video"))]
+        #[cfg(not(feature = "av"))]
         {
             (!self.paused && !self.scrubbing)
                 .then(|| program.time_until_next_frame())
@@ -168,7 +168,7 @@ impl TransportState {
         }
     }
 
-    #[cfg(feature = "video")]
+    #[cfg(feature = "av")]
     pub fn video_panel(&self) -> Option<crate::components::info_panel::VideoPanel<'_>> {
         self.video.as_ref().map(|v| {
             let position = v.position();
@@ -206,7 +206,7 @@ pub fn update(
 ) -> Task<Message> {
     match msg {
         TransportMsg::Tick(now) => {
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
                 if let Some(frame) = video.present() {
                     program.set_video_frame(frame, false);
@@ -239,7 +239,7 @@ pub fn update(
         }
         TransportMsg::TogglePlayback => {
             state.paused = !state.paused;
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
                 if state.paused {
                     video.pause();
@@ -260,7 +260,7 @@ pub fn update(
         }
         TransportMsg::FrameFirst => {
             state.paused = true;
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
                 video.pause();
                 video.seek(Duration::ZERO, true);
@@ -270,7 +270,7 @@ pub fn update(
         }
         TransportMsg::FrameLast => {
             state.paused = true;
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
                 video.pause();
                 let target = video.duration().saturating_sub(video.frame_interval());
@@ -283,7 +283,7 @@ pub fn update(
         }
         TransportMsg::FrameNext => {
             state.paused = true;
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
                 if let Some(frame) = video.step(true) {
                     program.set_video_frame(frame, false);
@@ -296,7 +296,7 @@ pub fn update(
         }
         TransportMsg::FramePrev => {
             state.paused = true;
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
                 if let Some(frame) = video.step(false) {
                     program.set_video_frame(frame, false);
@@ -308,7 +308,7 @@ pub fn update(
             }
         }
         TransportMsg::FrameSeek(index) => {
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
                 let target = video.seek_target_from_step(index);
                 if state.scrubbing {
@@ -328,7 +328,7 @@ pub fn update(
             }
         }
         TransportMsg::SetVolume(_v) => {
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             {
                 state.volume = _v.clamp(0.0, crate::config::VOLUME_MAX);
                 state.muted = state.volume <= 0.0;
@@ -341,7 +341,7 @@ pub fn update(
         }
         TransportMsg::CommitVolume => {}
         TransportMsg::ToggleMute => {
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             {
                 state.muted = !state.muted;
                 let effective = if state.muted { 0.0 } else { state.volume };
@@ -353,7 +353,7 @@ pub fn update(
         }
         TransportMsg::ScrubStart => {
             state.scrubbing = true;
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
                 video.pause();
                 state.scrub_pending = None;
@@ -362,7 +362,7 @@ pub fn update(
         }
         TransportMsg::ScrubEnd => {
             state.scrubbing = false;
-            #[cfg(feature = "video")]
+            #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
                 state.scrub_sent = None;
                 if let Some(target) = state.scrub_pending.take() {

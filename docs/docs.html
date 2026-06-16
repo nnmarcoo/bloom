@@ -250,13 +250,13 @@ cargo build --release --features heif</pre>
         </div>
         <div class="os">
           <h3>Video <span class="fmt-tag">FFmpeg</span></h3>
-          <pre class="codeblock">./scripts/setup-video.sh      # setup-video.ps1 on Windows
-cargo build --release --features video</pre>
+          <pre class="codeblock">./scripts/setup-av.sh      # setup-av.ps1 on Windows
+cargo build --release --features av</pre>
         </div>
       </div>
 
       <p class="buildnote">For the full default build, set up both, then combine the flags:</p>
-      <pre class="codeblock">cargo build --release --features heif,video</pre>
+      <pre class="codeblock">cargo build --release --features heif,av</pre>
 
       <div class="infonote">
         <span class="infonote-icon" aria-hidden="true">!</span>
