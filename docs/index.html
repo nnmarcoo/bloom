@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="style.css">
 <meta property="og:title" content="bloom: hardware-accelerated media viewer">
 <meta property="og:description" content="GPU-rendered media viewer built with Rust.">
-<meta property="og:image" content="img/view.png">
+<meta property="og:image" content="demo/camera.png">
 <meta property="og:type" content="website">
 </head>
 <body>
@@ -44,13 +44,16 @@
   <main class="carousel">
     <div class="stage">
       <figure class="slide active">
-        <img src="img/view.png" alt="bloom viewing an image at full resolution">
+        <img src="demo/camera.png" alt="bloom viewing an image at full resolution">
       </figure>
       <figure class="slide">
-        <img src="img/view_gif.png" alt="bloom playing an animation with timeline scrubbing">
+        <img src="demo/pigeon.png" alt="bloom viewing a high-resolution photo">
       </figure>
       <figure class="slide">
-        <img src="img/preferences.png" alt="bloom preferences with themes and keybindings">
+        <video src="demo/gif.mp4" autoplay loop muted playsinline></video>
+      </figure>
+      <figure class="slide">
+        <video src="demo/bird.mp4" autoplay loop muted playsinline></video>
       </figure>
       <button class="zone prev" aria-label="Previous"></button>
       <button class="zone next" aria-label="Next"></button>
