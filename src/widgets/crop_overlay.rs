@@ -4,6 +4,7 @@ use iced::advanced::layout;
 use iced::advanced::renderer::{self, Quad};
 use iced::advanced::widget::tree::{self, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget};
+use iced::keyboard;
 use iced::mouse;
 use iced::{Background, Border, Color, Element, Event, Length, Rectangle, Renderer, Size, Theme};
 
@@ -39,6 +40,7 @@ struct DragState {
 #[derive(Default)]
 struct State {
     drag: Option<DragState>,
+    modifiers: keyboard::Modifiers,
 }
 
 pub struct CropOverlay {
@@ -162,6 +164,30 @@ impl CropOverlay {
         Handle::Outside
     }
 
+    fn current_rect(&self) -> [f32; 4] {
+        [self.x, self.y, self.w, self.h]
+    }
+
+    fn drag_rect(&self, drag: &DragState, local: Vec2, center: bool, aspect: bool) -> [f32; 4] {
+        let iw = self.img_w.max(1.0);
+        let ih = self.img_h.max(1.0);
+        let cur_uv = self
+            .program
+            .screen_to_image_uv(local)
+            .unwrap_or(vec2((self.x + self.w) / iw, (self.y + self.h) / ih));
+        Self::apply_drag(
+            drag.handle,
+            drag.start_rect,
+            drag.start_cursor_uv,
+            cur_uv,
+            iw,
+            ih,
+            center,
+            aspect,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn apply_drag(
         handle: Handle,
         start_rect: [f32; 4],
@@ -169,66 +195,131 @@ impl CropOverlay {
         current_uv: Vec2,
         img_w: f32,
         img_h: f32,
+        center: bool,
+        aspect: bool,
     ) -> [f32; 4] {
         let img = vec2(img_w, img_h);
         let d = (current_uv - start_uv) * img;
         let [sx, sy, sw, sh] = start_rect;
-        let (mut nx, mut ny, mut nw, mut nh) = (sx, sy, sw, sh);
 
         match handle {
             Handle::Inside => {
-                nx += d.x;
-                ny += d.y;
-            }
-            Handle::TL => {
-                nx += d.x;
-                ny += d.y;
-                nw -= d.x;
-                nh -= d.y;
-            }
-            Handle::TC => {
-                ny += d.y;
-                nh -= d.y;
-            }
-            Handle::TR => {
-                nw += d.x;
-                ny += d.y;
-                nh -= d.y;
-            }
-            Handle::ML => {
-                nx += d.x;
-                nw -= d.x;
-            }
-            Handle::MR => nw += d.x,
-            Handle::BL => {
-                nx += d.x;
-                nw -= d.x;
-                nh += d.y;
-            }
-            Handle::BC => nh += d.y,
-            Handle::BR => {
-                nw += d.x;
-                nh += d.y;
+                return clamp_rect(sx + d.x, sy + d.y, sw, sh, img_w, img_h);
             }
             Handle::Outside => {
                 let start_px = start_uv * img;
                 let cur_px = current_uv * img;
-                nx = start_px.x.min(cur_px.x);
-                ny = start_px.y.min(cur_px.y);
-                nw = (cur_px.x - start_px.x).abs();
-                nh = (cur_px.y - start_px.y).abs();
+                let nx = start_px.x.min(cur_px.x);
+                let ny = start_px.y.min(cur_px.y);
+                let nw = (cur_px.x - start_px.x).abs();
+                let nh = (cur_px.y - start_px.y).abs();
+                return clamp_rect(nx, ny, nw, nh, img_w, img_h);
+            }
+            _ => {}
+        }
+
+        let moves_l = matches!(handle, Handle::TL | Handle::BL | Handle::ML);
+        let moves_r = matches!(handle, Handle::TR | Handle::BR | Handle::MR);
+        let moves_t = matches!(handle, Handle::TL | Handle::TR | Handle::TC);
+        let moves_b = matches!(handle, Handle::BL | Handle::BR | Handle::BC);
+        let is_corner = (moves_l || moves_r) && (moves_t || moves_b);
+
+        let cx = sx + sw * 0.5;
+        let cy = sy + sh * 0.5;
+        let ratio = (sw / sh).max(0.0001);
+
+        let mut dw = if moves_l {
+            -d.x
+        } else if moves_r {
+            d.x
+        } else {
+            0.0
+        };
+        let mut dh = if moves_t {
+            -d.y
+        } else if moves_b {
+            d.y
+        } else {
+            0.0
+        };
+        if center {
+            dw *= 2.0;
+            dh *= 2.0;
+        }
+
+        let mut fw = sw + dw;
+        let mut fh = sh + dh;
+
+        if aspect {
+            if is_corner {
+                if fw >= fh * ratio {
+                    fh = fw / ratio;
+                } else {
+                    fw = fh * ratio;
+                }
+            } else if moves_l || moves_r {
+                fh = fw / ratio;
+            } else {
+                fw = fh * ratio;
             }
         }
 
-        const MIN: f32 = 1.0;
-        nw = nw.round().clamp(MIN, img_w);
-        nh = nh.round().clamp(MIN, img_h);
-        nx = nx.round().clamp(0.0, img_w - nw);
-        ny = ny.round().clamp(0.0, img_h - nh);
-        nw = nw.min(img_w - nx).max(MIN);
-        nh = nh.min(img_h - ny).max(MIN);
-        [nx, ny, nw, nh]
+        let span_x = 2.0 * cx.min(img_w - cx);
+        let span_y = 2.0 * cy.min(img_h - cy);
+        let max_w = if center || !(moves_l || moves_r) {
+            span_x
+        } else if moves_l {
+            sx + sw
+        } else {
+            img_w - sx
+        };
+        let max_h = if center || !(moves_t || moves_b) {
+            span_y
+        } else if moves_t {
+            sy + sh
+        } else {
+            img_h - sy
+        };
+
+        fw = fw.max(1.0);
+        fh = fh.max(1.0);
+        if aspect {
+            let s = (max_w / fw).min(max_h / fh).min(1.0);
+            fw *= s;
+            fh *= s;
+        } else {
+            fw = fw.min(max_w);
+            fh = fh.min(max_h);
+        }
+
+        let nx = if center || !(moves_l || moves_r) {
+            cx - fw * 0.5
+        } else if moves_l {
+            (sx + sw) - fw
+        } else {
+            sx
+        };
+        let ny = if center || !(moves_t || moves_b) {
+            cy - fh * 0.5
+        } else if moves_t {
+            (sy + sh) - fh
+        } else {
+            sy
+        };
+
+        clamp_rect(nx, ny, fw, fh, img_w, img_h)
     }
+}
+
+fn clamp_rect(nx: f32, ny: f32, nw: f32, nh: f32, img_w: f32, img_h: f32) -> [f32; 4] {
+    const MIN: f32 = 1.0;
+    let nw = nw.round().clamp(MIN, img_w);
+    let nh = nh.round().clamp(MIN, img_h);
+    let nx = nx.round().clamp(0.0, img_w - nw);
+    let ny = ny.round().clamp(0.0, img_h - nh);
+    let nw = nw.min(img_w - nx).max(MIN);
+    let nh = nh.min(img_h - ny).max(MIN);
+    [nx, ny, nw, nh]
 }
 
 fn fill(renderer: &mut Renderer, x: f32, y: f32, w: f32, h: f32, color: Color) {
@@ -304,12 +395,26 @@ impl Widget<Message, Theme, Renderer> for CropOverlay {
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) {
-        let Event::Mouse(mouse_event) = event else {
-            return;
-        };
         let state = tree.state.downcast_mut::<State>();
         let bounds = layout.bounds();
         let local = cursor.position_in(bounds).map(|p| vec2(p.x, p.y));
+
+        if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
+            state.modifiers = *modifiers;
+            if let (Some(drag), Some(local)) = (&state.drag, local) {
+                let rect = self.drag_rect(drag, local, modifiers.control(), modifiers.shift());
+                if rect != self.current_rect() {
+                    let [nx, ny, nw, nh] = rect;
+                    shell.publish(EditMsg::SetCropRect(self.modifier_idx, nx, ny, nw, nh).into());
+                    shell.request_redraw();
+                }
+            }
+            return;
+        }
+
+        let Event::Mouse(mouse_event) = event else {
+            return;
+        };
 
         match mouse_event {
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
@@ -332,23 +437,20 @@ impl Widget<Message, Theme, Renderer> for CropOverlay {
             mouse::Event::CursorMoved { .. } => {
                 if let Some(drag) = &state.drag {
                     let Some(local) = local else { return };
-                    let iw = self.img_w.max(1.0);
-                    let ih = self.img_h.max(1.0);
-                    let cur_uv = self
-                        .program
-                        .screen_to_image_uv(local)
-                        .unwrap_or(vec2((self.x + self.w) / iw, (self.y + self.h) / ih));
-                    let [nx, ny, nw, nh] = Self::apply_drag(
-                        drag.handle,
-                        drag.start_rect,
-                        drag.start_cursor_uv,
-                        cur_uv,
-                        iw,
-                        ih,
+                    let rect = self.drag_rect(
+                        drag,
+                        local,
+                        state.modifiers.control(),
+                        state.modifiers.shift(),
                     );
-                    shell.publish(EditMsg::SetCropRect(self.modifier_idx, nx, ny, nw, nh).into());
+                    if rect != self.current_rect() {
+                        let [nx, ny, nw, nh] = rect;
+                        shell.publish(
+                            EditMsg::SetCropRect(self.modifier_idx, nx, ny, nw, nh).into(),
+                        );
+                        shell.request_redraw();
+                    }
                     shell.capture_event();
-                    shell.request_redraw();
                 }
             }
             mouse::Event::ButtonReleased(mouse::Button::Left) if state.drag.take().is_some() => {
