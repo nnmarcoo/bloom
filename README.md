@@ -8,7 +8,7 @@
   ![Status](https://img.shields.io/badge/status-alpha-0077aa?style=for-the-badge)
 </div>
 
-<div align="center"><img src="assets/demo/view.png" alt="bloom preview" width="800"></div>
+<div align="center"><img src="docs/demo/camera.png" alt="bloom preview" width="800"></div>
 
 ---
 
