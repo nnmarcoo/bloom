@@ -101,7 +101,7 @@ header.hero p.tag { font-size: 1.1rem; color: var(--fg-dim); margin: 14px auto 2
 .cta { display: flex; gap: 14px; justify-content: center; align-items: center; flex-wrap: wrap; }
 
 main.carousel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding: 12px 24px 24px; }
-.stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: visible; }
 .slide {
   position: absolute; inset: 0; margin: 0;
   display: flex; flex-direction: row; align-items: center; justify-content: center;
@@ -116,7 +116,7 @@ main.carousel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: co
 @keyframes enterPrev { from { opacity: 0; transform: translateX(-4%); } to { opacity: 1; transform: none; } }
 @keyframes exitNext  { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(-4%); } }
 @keyframes exitPrev  { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(4%); } }
-.slide img, .slide video { display: block; width: auto; height: auto; max-width: 100%; max-height: 100%; border-radius: 10px; }
+.slide img, .slide video { display: block; width: auto; height: auto; max-width: 100%; max-height: 100%; border-radius: 10px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55), 0 4px 14px rgba(0, 0, 0, 0.4); }
 .zone { position: absolute; top: 0; bottom: 0; width: 50%; z-index: 2; cursor: pointer; background: transparent; border: 0; }
 .zone.prev { left: 0; }
 .zone.next { right: 0; }
