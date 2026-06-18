@@ -4,11 +4,7 @@ use cosmic_text::{
 
 use crate::modifiers::kinds::{Text, TextAlign};
 
-pub struct FontEntry {
-    pub family: String,
-}
-
-pub fn system_fonts(font_system: &FontSystem) -> Vec<FontEntry> {
+fn enumerate_families(font_system: &FontSystem) -> Vec<String> {
     let mut families: Vec<String> = font_system
         .db()
         .faces()
@@ -16,7 +12,18 @@ pub fn system_fonts(font_system: &FontSystem) -> Vec<FontEntry> {
         .collect();
     families.sort_unstable();
     families.dedup();
-    families.into_iter().map(|family| FontEntry { family }).collect()
+    families
+}
+
+/// Sorted, deduplicated list of system font family names, enumerated once and cached.
+/// Building a FontSystem scans the OS font dirs, so this is gated behind a OnceLock.
+pub fn font_families() -> &'static [String] {
+    use std::sync::OnceLock;
+    static FONTS: OnceLock<Vec<String>> = OnceLock::new();
+    FONTS.get_or_init(|| {
+        let fs = FontSystem::new();
+        enumerate_families(&fs)
+    })
 }
 
 pub struct GlyphQuad {

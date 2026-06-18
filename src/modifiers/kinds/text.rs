@@ -17,6 +17,20 @@ pub enum TextAlign {
     Right,
 }
 
+impl TextAlign {
+    pub const ALL: [TextAlign; 3] = [TextAlign::Left, TextAlign::Center, TextAlign::Right];
+}
+
+impl std::fmt::Display for TextAlign {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            TextAlign::Left => "Left",
+            TextAlign::Center => "Center",
+            TextAlign::Right => "Right",
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Text {
     pub content: String,
@@ -101,11 +115,34 @@ impl ModifierImpl for Text {
         _image_size: Option<(u32, u32)>,
         _rotation: u8,
     ) -> Element<'_, Message> {
+        let fonts = crate::modifiers::text_render::font_families();
+        let selected_font = if self.font.is_empty() {
+            None
+        } else {
+            Some(self.font.clone())
+        };
+        let font_picker = iced::widget::pick_list(fonts, selected_font, move |f| {
+            EditMsg::Update(index, ModifierParam::TextFont(f)).into()
+        })
+        .placeholder("Default font")
+        .text_size(11)
+        .padding([4, 6]);
+
+        let align_picker = iced::widget::pick_list(
+            &TextAlign::ALL[..],
+            Some(self.align),
+            move |a| EditMsg::Update(index, ModifierParam::TextAlign(a)).into(),
+        )
+        .text_size(11)
+        .padding([4, 6]);
+
         finish(column![
             text_input("Type something...", &self.content)
                 .on_input(move |v| EditMsg::Update(index, ModifierParam::TextContent(v)).into())
                 .size(11)
                 .padding([4, 6]),
+            font_picker,
+            align_picker,
             value_row("X", self.x, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
                 EditMsg::Update(index, ModifierParam::TextX(v)).into()
             }),

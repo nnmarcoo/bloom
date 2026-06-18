@@ -3,7 +3,7 @@ use iced::Task;
 use crate::{
     app::Message,
     components::notifications::Notification,
-    modifiers::{Modifier, ModifierKind, ModifierParam, ModifierType, kinds::Crop},
+    modifiers::{Modifier, ModifierKind, ModifierParam, ModifierType, kinds::{Crop, Text}},
     wgpu::view_program::ViewProgram,
 };
 
@@ -29,6 +29,8 @@ pub enum EditMsg {
     DragHover(usize),
     DragEnd,
     SetCropRect(usize, f32, f32, f32, f32),
+    TextAppend(usize, String),
+    TextBackspace(usize),
 }
 
 pub struct EditState {
@@ -54,6 +56,7 @@ pub fn update(state: &mut EditState, program: &mut ViewProgram, msg: EditMsg) ->
         EditMsg::SelectTool(tool) => {
             let was_crop = state.selected_tool == Tool::Crop;
             let is_crop = tool == Tool::Crop;
+            let is_text = tool == Tool::Text;
             state.selected_tool = tool;
             program.crop_tool_active = is_crop;
             if is_crop {
@@ -83,6 +86,22 @@ pub fn update(state: &mut EditState, program: &mut ViewProgram, msg: EditMsg) ->
                 program.fit();
             } else if was_crop {
                 program.fit();
+            }
+            if is_text {
+                if let Some(idx) = program
+                    .modifiers
+                    .iter()
+                    .rposition(|m| matches!(m.kind, ModifierKind::Text(_)))
+                {
+                    state.active = Some(idx);
+                } else {
+                    let idx = program.modifiers.len();
+                    program
+                        .modifiers_mut()
+                        .push(Modifier::new(ModifierKind::Text(Text::default())));
+                    state.active = Some(idx);
+                    program.mark_dirty();
+                }
             }
         }
         EditMsg::Add(t) => {
@@ -193,6 +212,22 @@ pub fn update(state: &mut EditState, program: &mut ViewProgram, msg: EditMsg) ->
                 crop.height = h;
             }
             program.mark_dirty();
+        }
+        EditMsg::TextAppend(i, s) => {
+            if let Some(m) = program.modifiers_mut().get_mut(i)
+                && let ModifierKind::Text(t) = &mut m.kind
+            {
+                t.content.push_str(&s);
+                program.mark_dirty();
+            }
+        }
+        EditMsg::TextBackspace(i) => {
+            if let Some(m) = program.modifiers_mut().get_mut(i)
+                && let ModifierKind::Text(t) = &mut m.kind
+            {
+                t.content.pop();
+                program.mark_dirty();
+            }
         }
     }
     Task::none()

@@ -19,6 +19,7 @@ use crate::{
         crop_overlay::CropOverlay,
         loading_spinner::Circular,
         menu::{menu_item, menu_item_enabled, menu_separator, styled_menu},
+        text_overlay::TextOverlay,
     },
 };
 
@@ -80,6 +81,17 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
                 img_h,
             )
             .into(),
+        );
+    }
+
+    if ctx.selected_tool == &Tool::Text
+        && ctx.loading.is_none()
+        && let Some(idx) = ctx.active_modifier
+        && let Some(crate::modifiers::ModifierKind::Text(t)) =
+            ctx.modifiers.get(idx).map(|m| &m.kind)
+    {
+        layers.push(
+            TextOverlay::new(ctx.program.clone(), idx, t.x, t.y, t.size, t.rotation).into(),
         );
     }
 
