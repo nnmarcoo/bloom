@@ -1,15 +1,18 @@
 use glam::{Vec2, vec2};
 use iced::advanced::Renderer as _;
+use iced::advanced::graphics::geometry::{Frame, Path, Renderer as GeometryRenderer, Stroke};
 use iced::advanced::layout;
-use iced::advanced::renderer::{self, Quad};
+use iced::advanced::renderer;
 use iced::advanced::widget::tree::{self, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget};
 use iced::keyboard;
 use iced::mouse;
-use iced::{Background, Border, Color, Element, Event, Length, Rectangle, Renderer, Size, Theme};
+use iced::{Color, Element, Event, Length, Rectangle, Renderer, Size, Theme};
 
 use crate::app::{EditMsg, Message};
 use crate::modifiers::ModifierParam;
+use crate::modifiers::kinds::Text;
+use crate::modifiers::text_render;
 use crate::wgpu::view_program::ViewProgram;
 
 const HANDLE_R: f32 = 6.0;
@@ -25,6 +28,8 @@ enum Grab {
 struct DragState {
     grab: Grab,
     start_cursor: Vec2,
+    start_x: f32,
+    start_y: f32,
     start_size: f32,
     start_rotation: f32,
 }
@@ -41,24 +46,23 @@ pub struct TextOverlay {
     y: f32,
     size: f32,
     rotation: f32,
+    // measured block size in image pixels at `size`
+    block_w: f32,
+    block_h: f32,
 }
 
 impl TextOverlay {
-    pub fn new(
-        program: ViewProgram,
-        idx: usize,
-        x: f32,
-        y: f32,
-        size: f32,
-        rotation: f32,
-    ) -> Self {
+    pub fn new(program: ViewProgram, idx: usize, text: &Text) -> Self {
+        let (block_w, block_h) = text_render::measure_block(text);
         Self {
             program,
             idx,
-            x,
-            y,
-            size,
-            rotation,
+            x: text.x,
+            y: text.y,
+            size: text.size,
+            rotation: text.rotation,
+            block_w,
+            block_h,
         }
     }
 
@@ -66,20 +70,41 @@ impl TextOverlay {
         self.program.image_uv_to_screen(vec2(self.x, self.y))
     }
 
-    // Half-extent of the gizmo in screen pixels, derived from font size and zoom.
-    fn extent_px(&self) -> f32 {
-        (self.size * self.program.scale() * 0.5).max(12.0)
+    // Half-extents of the box in screen pixels. When there's no measurable text
+    // (empty content), fall back to a size-proportional placeholder box so scaling
+    // is still visible.
+    fn half_extents(&self) -> Vec2 {
+        let scale = self.program.scale();
+        let (bw, bh) = if self.block_w > 0.0 && self.block_h > 0.0 {
+            (self.block_w, self.block_h)
+        } else {
+            (self.size * 0.6, self.size)
+        };
+        vec2((bw * scale * 0.5).max(6.0), (bh * scale * 0.5).max(6.0))
     }
 
+    fn rotate(&self, v: Vec2) -> Vec2 {
+        let (s, c) = self.rotation.to_radians().sin_cos();
+        vec2(v.x * c - v.y * s, v.x * s + v.y * c)
+    }
+
+    /// The four box corners (TL, TR, BR, BL) in screen space, rotated about the anchor.
+    fn corners(&self, anchor: Vec2) -> [Vec2; 4] {
+        let h = self.half_extents();
+        [
+            anchor + self.rotate(vec2(-h.x, -h.y)),
+            anchor + self.rotate(vec2(h.x, -h.y)),
+            anchor + self.rotate(vec2(h.x, h.y)),
+            anchor + self.rotate(vec2(-h.x, h.y)),
+        ]
+    }
+
+    /// Scale handle (bottom-right corner) and rotate handle (above the top edge).
     fn handle_positions(&self, anchor: Vec2) -> (Vec2, Vec2) {
-        let e = self.extent_px();
-        let rot = self.rotation.to_radians();
-        let (s, c) = rot.sin_cos();
-        // scale handle: down-right; rotate handle: straight up.
-        let scale_local = vec2(e, e);
-        let rot_local = vec2(0.0, -(e + 24.0));
-        let rotate = |v: Vec2| vec2(v.x * c - v.y * s, v.x * s + v.y * c);
-        (anchor + rotate(scale_local), anchor + rotate(rot_local))
+        let h = self.half_extents();
+        let scale_h = anchor + self.rotate(vec2(h.x, h.y));
+        let rot_h = anchor + self.rotate(vec2(0.0, -(h.y + 24.0)));
+        (scale_h, rot_h)
     }
 
     fn hit(&self, local: Vec2) -> Option<Grab> {
@@ -91,7 +116,12 @@ impl TextOverlay {
         if (local - scale_h).length() <= HANDLE_HIT {
             return Some(Grab::Scale);
         }
-        if (local - anchor).length() <= self.extent_px() + HANDLE_HIT {
+        // inside the (unrotated) box test: transform local into box space.
+        let rel = local - anchor;
+        let (s, c) = (-self.rotation.to_radians()).sin_cos();
+        let unrot = vec2(rel.x * c - rel.y * s, rel.x * s + rel.y * c);
+        let h = self.half_extents();
+        if unrot.x.abs() <= h.x + HANDLE_HIT && unrot.y.abs() <= h.y + HANDLE_HIT {
             return Some(Grab::Move);
         }
         None
@@ -100,13 +130,14 @@ impl TextOverlay {
     fn publish_drag(&self, drag: &DragState, local: Vec2, shell: &mut Shell<'_, Message>) {
         match drag.grab {
             Grab::Move => {
-                if let Some(uv) = self.program.screen_to_image_uv(local) {
-                    shell.publish(
-                        EditMsg::Update(self.idx, ModifierParam::TextX(uv.x.clamp(0.0, 1.0))).into(),
-                    );
-                    shell.publish(
-                        EditMsg::Update(self.idx, ModifierParam::TextY(uv.y.clamp(0.0, 1.0))).into(),
-                    );
+                if let (Some(start_uv), Some(cur_uv)) = (
+                    self.program.screen_to_image_uv(drag.start_cursor),
+                    self.program.screen_to_image_uv(local),
+                ) {
+                    let nx = (drag.start_x + cur_uv.x - start_uv.x).clamp(0.0, 1.0);
+                    let ny = (drag.start_y + cur_uv.y - start_uv.y).clamp(0.0, 1.0);
+                    shell.publish(EditMsg::Update(self.idx, ModifierParam::TextX(nx)).into());
+                    shell.publish(EditMsg::Update(self.idx, ModifierParam::TextY(ny)).into());
                 }
             }
             Grab::Scale => {
@@ -138,43 +169,12 @@ impl TextOverlay {
     }
 }
 
-fn fill_circle(renderer: &mut Renderer, c: Vec2, r: f32, color: Color) {
-    renderer.fill_quad(
-        Quad {
-            bounds: Rectangle {
-                x: c.x - r,
-                y: c.y - r,
-                width: r * 2.0,
-                height: r * 2.0,
-            },
-            border: Border {
-                radius: r.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Background::Color(color),
-    );
-}
-
-fn stroke_line(renderer: &mut Renderer, a: Vec2, b: Vec2, color: Color) {
-    // thin quad between two points (axis-aligned approximation is wrong for angles;
-    // draw a 1.5px-wide segment via bounding using midpoint — acceptable for a guide line).
-    let mid = (a + b) * 0.5;
-    let len = (b - a).length();
-    renderer.fill_quad(
-        Quad {
-            bounds: Rectangle {
-                x: mid.x - 0.75,
-                y: a.y.min(b.y),
-                width: 1.5,
-                height: len.max(1.0),
-            },
-            ..Default::default()
-        },
-        Background::Color(color),
-    );
-}
+const OUTLINE: Color = Color {
+    r: 0.0,
+    g: 0.0,
+    b: 0.0,
+    a: 1.0,
+};
 
 impl Widget<Message, Theme, Renderer> for TextOverlay {
     fn tag(&self) -> tree::Tag {
@@ -243,6 +243,8 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
                     state.drag = Some(DragState {
                         grab,
                         start_cursor: local,
+                        start_x: self.x,
+                        start_y: self.y,
                         start_size: self.size,
                         start_rotation: self.rotation,
                     });
@@ -281,24 +283,57 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
             return;
         };
         let widget_bounds = layout.bounds();
-        let off = vec2(widget_bounds.x, widget_bounds.y);
-        let a = anchor + off;
+        // All geometry is in coords local to the widget bounds; the renderer is
+        // translated to the bounds origin (same pattern the canvas widget uses).
+        let corners = self.corners(anchor);
         let (scale_h, rot_h) = self.handle_positions(anchor);
-        let scale_h = scale_h + off;
-        let rot_h = rot_h + off;
+        let top_mid = (corners[0] + corners[1]) * 0.5;
 
-        renderer.with_layer(widget_bounds, |renderer| {
-            let white = Color::WHITE;
-            let accent = Color {
-                r: 0.3,
-                g: 0.6,
-                b: 1.0,
-                a: 1.0,
-            };
-            stroke_line(renderer, a, rot_h, white);
-            fill_circle(renderer, a, HANDLE_R * 0.7, white);
-            fill_circle(renderer, scale_h, HANDLE_R, accent);
-            fill_circle(renderer, rot_h, HANDLE_R, accent);
+        let white = Color::WHITE;
+        let accent = Color {
+            r: 0.3,
+            g: 0.6,
+            b: 1.0,
+            a: 1.0,
+        };
+
+        // Solid outline at any angle via the geometry/canvas API. fill_quad can
+        // only draw axis-aligned rects, so the box + guide line go through a Frame
+        // which strokes arbitrary polylines. Black underlay then white core.
+        let pt = |v: Vec2| iced::Point::new(v.x, v.y);
+        let box_path = Path::new(|b| {
+            b.move_to(pt(corners[0]));
+            b.line_to(pt(corners[1]));
+            b.line_to(pt(corners[2]));
+            b.line_to(pt(corners[3]));
+            b.close();
+            b.move_to(pt(top_mid));
+            b.line_to(pt(rot_h));
+        });
+        let mut frame = Frame::new(renderer, widget_bounds.size());
+        frame.stroke(
+            &box_path,
+            Stroke::default().with_color(OUTLINE).with_width(3.0),
+        );
+        frame.stroke(&box_path, Stroke::default().with_color(white).with_width(1.5));
+
+        // Handles in the same frame so they layer ON TOP of the box (fill_quad and
+        // draw_geometry render on separate layers and don't respect call order).
+        let mut handle = |c: Vec2, r: f32, fill: Color| {
+            let path = Path::circle(pt(c), r);
+            frame.fill(&path, fill);
+            frame.stroke(&path, Stroke::default().with_color(OUTLINE).with_width(1.5));
+        };
+        for c in corners {
+            handle(c, HANDLE_R * 0.55, white);
+        }
+        handle(scale_h, HANDLE_R, accent);
+        handle(rot_h, HANDLE_R, accent);
+
+        let geometry = frame.into_geometry();
+        let translation = iced::Vector::new(widget_bounds.x, widget_bounds.y);
+        renderer.with_translation(translation, |renderer| {
+            renderer.draw_geometry(geometry);
         });
     }
 

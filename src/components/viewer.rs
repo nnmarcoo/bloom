@@ -91,7 +91,7 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
             ctx.modifiers.get(idx).map(|m| &m.kind)
     {
         layers.push(
-            TextOverlay::new(ctx.program.clone(), idx, t.x, t.y, t.size, t.rotation).into(),
+            TextOverlay::new(ctx.program.clone(), idx, t).into(),
         );
     }
 

@@ -48,23 +48,9 @@ impl TextBitmap {
     }
 }
 
-pub fn rasterize_text(
-    text: &Text,
-    font_system: &mut FontSystem,
-    swash: &mut SwashCache,
-) -> TextBitmap {
-    let mut bitmap = TextBitmap {
-        glyphs: Vec::new(),
-        min_x: 0.0,
-        min_y: 0.0,
-        max_x: 0.0,
-        max_y: 0.0,
-    };
-
-    if text.content.is_empty() {
-        return bitmap;
-    }
-
+/// Shape `text` at its current size into a laid-out buffer (no rasterization).
+/// Single shaping path shared by rasterize_text (GPU/export) and measure_text (overlay).
+fn shape_buffer(text: &Text, font_system: &mut FontSystem) -> Buffer {
     let metrics = Metrics::new(text.size, text.size * 1.2);
     let mut buffer = Buffer::new(font_system, metrics);
     buffer.set_size(font_system, None, None);
@@ -87,6 +73,54 @@ pub fn rasterize_text(
         Some(align),
     );
     buffer.shape_until_scroll(font_system, false);
+    buffer
+}
+
+/// Block size in pixels at `text.size`, from shaping only (no glyph rasterization).
+/// Cheap enough to call per-frame for the editing gizmo.
+pub fn measure_text(text: &Text, font_system: &mut FontSystem) -> (f32, f32) {
+    if text.content.is_empty() {
+        return (0.0, 0.0);
+    }
+    let buffer = shape_buffer(text, font_system);
+    let mut w: f32 = 0.0;
+    let mut h: f32 = 0.0;
+    for run in buffer.layout_runs() {
+        w = w.max(run.line_w);
+        h = h.max(run.line_top + run.line_height);
+    }
+    (w, h)
+}
+
+/// Convenience for UI code (the editing overlay) that has no FontSystem on hand.
+/// Uses a process-wide measuring FontSystem behind a mutex. Shaping a short string
+/// is sub-millisecond, so per-frame calls during a drag are fine.
+pub fn measure_block(text: &Text) -> (f32, f32) {
+    use std::sync::{Mutex, OnceLock};
+    static FS: OnceLock<Mutex<FontSystem>> = OnceLock::new();
+    let fs = FS.get_or_init(|| Mutex::new(FontSystem::new()));
+    let mut guard = fs.lock().unwrap();
+    measure_text(text, &mut guard)
+}
+
+pub fn rasterize_text(
+    text: &Text,
+    font_system: &mut FontSystem,
+    swash: &mut SwashCache,
+) -> TextBitmap {
+    let mut bitmap = TextBitmap {
+        glyphs: Vec::new(),
+        min_x: 0.0,
+        min_y: 0.0,
+        max_x: 0.0,
+        max_y: 0.0,
+    };
+
+    if text.content.is_empty() {
+        return bitmap;
+    }
+
+    let buffer = shape_buffer(text, font_system);
 
     let mut first = true;
     for run in buffer.layout_runs() {
