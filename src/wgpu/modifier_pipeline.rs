@@ -7,7 +7,7 @@ use iced::wgpu::{
 
 use crate::{
     modifiers::{
-        Modifier,
+        InputClass, Modifier,
         gpu::{ModUniforms, TileInfo, build_segment_uniforms},
     },
     wgpu::{gpu, tiled_source::TiledSource, view_pipeline::tile_ndc_culled},
@@ -94,19 +94,23 @@ impl ScratchTarget {
     }
 }
 
-fn segment_modifiers(modifiers: &[Modifier]) -> Vec<Vec<&Modifier>> {
-    let mut segments: Vec<Vec<&Modifier>> = Vec::new();
+enum PlanItem<'a> {
+    Fused(Vec<&'a Modifier>),
+}
+
+fn plan_modifiers(modifiers: &[Modifier]) -> Vec<PlanItem<'_>> {
+    let mut plan: Vec<PlanItem> = Vec::new();
     let mut current: Vec<&Modifier> = Vec::new();
     for m in modifiers.iter().filter(|m| m.has_visible_effect()) {
-        if m.kind.is_resampling() && !current.is_empty() {
-            segments.push(std::mem::take(&mut current));
+        if matches!(m.kind.input_class(), InputClass::NonPointwise) && !current.is_empty() {
+            plan.push(PlanItem::Fused(std::mem::take(&mut current)));
         }
         current.push(m);
     }
     if !current.is_empty() {
-        segments.push(current);
+        plan.push(PlanItem::Fused(current));
     }
-    segments
+    plan
 }
 
 pub struct ModifierPipeline {
@@ -230,7 +234,7 @@ impl ModifierPipeline {
         };
         let downscale = proc_scale < 1.0;
 
-        let mut segments: Option<Vec<Vec<&Modifier>>> = None;
+        let mut plan: Option<Vec<PlanItem>> = None;
         let mut encoder: Option<CommandEncoder> = None;
         let mut pool_used = 0usize;
 
@@ -297,9 +301,9 @@ impl ModifierPipeline {
                     full_h: source.full_height,
                 };
 
-                let segs = segments.get_or_insert_with(|| segment_modifiers(modifiers));
-                let n_seg = segs.len();
-                if n_seg > 1 {
+                let plan = plan.get_or_insert_with(|| plan_modifiers(modifiers));
+                let n_items = plan.len();
+                if n_items > 1 {
                     self.ensure_scratch(device, eff_w, eff_h);
                 }
 
@@ -307,8 +311,8 @@ impl ModifierPipeline {
                 let sampler = &self.trilinear_sampler;
                 let output_view = &self.tile_outputs[ti].as_ref().unwrap().view;
                 let mut prev: &TextureView = &tile.source_view;
-                for (k, seg) in segs.iter().enumerate() {
-                    let out: &TextureView = if k == n_seg - 1 {
+                for (k, item) in plan.iter().enumerate() {
+                    let out: &TextureView = if k == n_items - 1 {
                         output_view
                     } else if k % 2 == 0 {
                         &self.scratch_a.as_ref().unwrap().view
@@ -316,31 +320,37 @@ impl ModifierPipeline {
                         &self.scratch_b.as_ref().unwrap().view
                     };
 
-                    let uniforms = build_segment_uniforms(seg, &tile_info);
-                    if pool_used == self.uniform_pool.len() {
-                        self.uniform_pool.push(gpu::uniform_buffer::<ModUniforms>(
-                            device,
-                            Some("combined-modifiers-uniform"),
-                        ));
-                    }
-                    let buffer = &self.uniform_pool[pool_used];
-                    pool_used += 1;
-                    gpu::write_uniform(queue, buffer, &uniforms);
-                    let bg = gpu::standard_bind_group(
-                        device,
-                        &combined.bgl,
-                        buffer,
-                        prev,
-                        sampler,
-                        Some("combined-modifiers-bg"),
-                    );
+                    match item {
+                        PlanItem::Fused(seg) => {
+                            let uniforms = build_segment_uniforms(seg, &tile_info);
+                            if pool_used == self.uniform_pool.len() {
+                                self.uniform_pool.push(gpu::uniform_buffer::<ModUniforms>(
+                                    device,
+                                    Some("combined-modifiers-uniform"),
+                                ));
+                            }
+                            let buffer = &self.uniform_pool[pool_used];
+                            pool_used += 1;
+                            gpu::write_uniform(queue, buffer, &uniforms);
+                            let bg = gpu::standard_bind_group(
+                                device,
+                                &combined.bgl,
+                                buffer,
+                                prev,
+                                sampler,
+                                Some("combined-modifiers-bg"),
+                            );
 
-                    let enc = encoder.get_or_insert_with(|| {
-                        device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
-                            label: Some("modifier-pipeline-encoder"),
-                        })
-                    });
-                    combined.run(enc, &bg, out);
+                            let enc = encoder.get_or_insert_with(|| {
+                                device.create_command_encoder(
+                                    &iced::wgpu::CommandEncoderDescriptor {
+                                        label: Some("modifier-pipeline-encoder"),
+                                    },
+                                )
+                            });
+                            combined.run(enc, &bg, out);
+                        }
+                    }
 
                     prev = out;
                 }

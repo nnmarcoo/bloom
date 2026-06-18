@@ -1,4 +1,4 @@
-use crate::modifiers::{Modifier, ModifierKind};
+use crate::modifiers::{InputClass, Modifier, ModifierKind};
 
 pub(crate) fn apply_modifiers(
     modifiers: &[Modifier],
@@ -54,7 +54,7 @@ fn apply_prior_non_resampling(
     mut c: [f32; 4],
 ) -> [f32; 4] {
     for m in modifiers {
-        if !m.has_visible_effect() || m.kind.is_resampling() {
+        if !m.has_visible_effect() || matches!(m.kind.input_class(), InputClass::NonPointwise) {
             continue;
         }
         c = m.kind.apply_cpu(img_w, img_h, uv, c);

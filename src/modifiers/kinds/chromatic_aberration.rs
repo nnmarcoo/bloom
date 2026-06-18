@@ -6,7 +6,7 @@ use iced::widget::column;
 
 use crate::app::{EditMsg, Message};
 use crate::modifiers::gpu::{ModEntry, TileInfo, make_entry};
-use crate::modifiers::{ModifierImpl, ModifierParam, ids};
+use crate::modifiers::{InputClass, ModifierImpl, ModifierParam, ids};
 use crate::widgets::value_slider::Fmt;
 
 use super::{finish, hash_f32, value_row};
@@ -31,8 +31,8 @@ impl ModifierImpl for ChromaticAberration {
         self.amount != 0.0
     }
 
-    fn is_resampling(&self) -> bool {
-        true
+    fn input_class(&self) -> InputClass {
+        InputClass::NonPointwise
     }
 
     fn apply_param(&mut self, param: ModifierParam, _img_size: Option<(u32, u32)>) {

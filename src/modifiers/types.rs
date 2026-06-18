@@ -10,6 +10,12 @@ use crate::modifiers::kinds::{
     Threshold, Vibrance, Vignette,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputClass {
+    Pointwise,
+    NonPointwise,
+}
+
 pub trait ModifierImpl {
     fn name(&self) -> &'static str;
 
@@ -17,8 +23,8 @@ pub trait ModifierImpl {
         true
     }
 
-    fn is_resampling(&self) -> bool {
-        false
+    fn input_class(&self) -> InputClass {
+        InputClass::Pointwise
     }
 
     fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>);
@@ -133,8 +139,8 @@ impl ModifierKind {
         self.as_impl().has_effect()
     }
 
-    pub fn is_resampling(&self) -> bool {
-        self.as_impl().is_resampling()
+    pub fn input_class(&self) -> InputClass {
+        self.as_impl().input_class()
     }
 
     pub fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>) {
