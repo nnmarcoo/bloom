@@ -7,10 +7,13 @@ use iced::wgpu::{
 
 use crate::{
     modifiers::{
-        InputClass, Modifier,
+        InputClass, Modifier, ModifierKind,
         gpu::{ModUniforms, TileInfo, build_segment_uniforms},
     },
-    wgpu::{gpu, tiled_source::TiledSource, view_pipeline::tile_ndc_culled},
+    wgpu::{
+        gpu, passes::chromatic_aberration::ChromaticAberrationPass, tiled_source::TiledSource,
+        view_pipeline::tile_ndc_culled,
+    },
 };
 
 struct CombinedPass {
@@ -96,16 +99,21 @@ impl ScratchTarget {
 
 enum PlanItem<'a> {
     Fused(Vec<&'a Modifier>),
+    Step(&'a Modifier),
 }
 
 fn plan_modifiers(modifiers: &[Modifier]) -> Vec<PlanItem<'_>> {
     let mut plan: Vec<PlanItem> = Vec::new();
     let mut current: Vec<&Modifier> = Vec::new();
     for m in modifiers.iter().filter(|m| m.has_visible_effect()) {
-        if matches!(m.kind.input_class(), InputClass::NonPointwise) && !current.is_empty() {
-            plan.push(PlanItem::Fused(std::mem::take(&mut current)));
+        if matches!(m.kind.input_class(), InputClass::NonPointwise) {
+            if !current.is_empty() {
+                plan.push(PlanItem::Fused(std::mem::take(&mut current)));
+            }
+            plan.push(PlanItem::Step(m));
+        } else {
+            current.push(m);
         }
-        current.push(m);
     }
     if !current.is_empty() {
         plan.push(PlanItem::Fused(current));
@@ -122,7 +130,9 @@ pub struct ModifierPipeline {
     scratch_b: Option<ScratchTarget>,
 
     uniform_pool: Vec<iced::wgpu::Buffer>,
+    ca_uniform_pool: Vec<iced::wgpu::Buffer>,
     combined: CombinedPass,
+    chromatic_aberration: ChromaticAberrationPass,
     display_bgl: BindGroupLayout,
     trilinear_sampler: Sampler,
     linear_sampler: Sampler,
@@ -176,7 +186,9 @@ impl ModifierPipeline {
             scratch_a: None,
             scratch_b: None,
             uniform_pool: Vec::new(),
+            ca_uniform_pool: Vec::new(),
             combined: CombinedPass::new(device, format),
+            chromatic_aberration: ChromaticAberrationPass::new(device, format),
             display_bgl,
             trilinear_sampler,
             linear_sampler,
@@ -237,6 +249,7 @@ impl ModifierPipeline {
         let mut plan: Option<Vec<PlanItem>> = None;
         let mut encoder: Option<CommandEncoder> = None;
         let mut pool_used = 0usize;
+        let mut ca_pool_used = 0usize;
 
         for ti in 0..n_tiles {
             let tile = &source.tiles[ti];
@@ -349,6 +362,27 @@ impl ModifierPipeline {
                                 )
                             });
                             combined.run(enc, &bg, out);
+                        }
+                        PlanItem::Step(m) => {
+                            if let ModifierKind::ChromaticAberration(ca) = &m.kind {
+                                let amount = ca.amount;
+                                if ca_pool_used == self.ca_uniform_pool.len() {
+                                    self.ca_uniform_pool
+                                        .push(self.chromatic_aberration.uniform_buffer(device));
+                                }
+                                let buffer = &self.ca_uniform_pool[ca_pool_used];
+                                ca_pool_used += 1;
+                                let enc = encoder.get_or_insert_with(|| {
+                                    device.create_command_encoder(
+                                        &iced::wgpu::CommandEncoderDescriptor {
+                                            label: Some("modifier-pipeline-encoder"),
+                                        },
+                                    )
+                                });
+                                self.chromatic_aberration.record(
+                                    device, queue, enc, buffer, amount, &tile_info, prev, out,
+                                );
+                            }
                         }
                     }
 

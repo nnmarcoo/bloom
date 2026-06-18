@@ -209,31 +209,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var c = textureSample(t_image, s_image, in.uv);
 
     for (var i = 0u; i < u.count; i++) {
-        let e = u.entries[i];
-        let kind = bitcast<u32>(e.data[0].x);
-
-        if kind == 11u {
-            let p0 = e.data[0].y;
-            let p1 = e.data[0].z;
-            let p2 = e.data[0].w;
-            let p3 = e.data[1].x;
-            let p4 = e.data[1].y;
-
-            let tile_origin = vec2<f32>(p1, p2);
-            let tile_size = vec2<f32>(p3, p4);
-            let full_uv = in.uv * tile_size + tile_origin;
-            let offset = full_uv - vec2<f32>(0.5);
-            let r_full = clamp(vec2<f32>(0.5) + offset * (1.0 + p0), vec2<f32>(0.0), vec2<f32>(1.0));
-            let b_full = clamp(vec2<f32>(0.5) + offset * (1.0 - p0), vec2<f32>(0.0), vec2<f32>(1.0));
-            let r_tile = clamp((r_full - tile_origin) / tile_size, vec2<f32>(0.0), vec2<f32>(1.0));
-            let b_tile = clamp((b_full - tile_origin) / tile_size, vec2<f32>(0.0), vec2<f32>(1.0));
-
-            let cr = textureSample(t_image, s_image, r_tile);
-            let cb = textureSample(t_image, s_image, b_tile);
-            c = vec4<f32>(cr.r, c.g, cb.b, c.a);
-        } else {
-            c = apply_entry(e, in.uv, c);
-        }
+        c = apply_entry(u.entries[i], in.uv, c);
     }
 
     return clamp(c, vec4<f32>(0.0), vec4<f32>(1.0));
