@@ -134,8 +134,8 @@ impl TextOverlay {
                     self.program.screen_to_image_uv(drag.start_cursor),
                     self.program.screen_to_image_uv(local),
                 ) {
-                    let nx = (drag.start_x + cur_uv.x - start_uv.x).clamp(0.0, 1.0);
-                    let ny = (drag.start_y + cur_uv.y - start_uv.y).clamp(0.0, 1.0);
+                    let nx = drag.start_x + cur_uv.x - start_uv.x;
+                    let ny = drag.start_y + cur_uv.y - start_uv.y;
                     shell.publish(EditMsg::Update(self.idx, ModifierParam::TextX(nx)).into());
                     shell.publish(EditMsg::Update(self.idx, ModifierParam::TextY(ny)).into());
                 }

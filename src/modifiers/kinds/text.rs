@@ -6,9 +6,40 @@ use iced::widget::{column, text_input};
 
 use crate::app::{EditMsg, Message};
 use crate::modifiers::{InputClass, ModifierImpl, ModifierParam};
+use crate::widgets::number_entry::NumberEntry;
 use crate::widgets::value_slider::Fmt;
 
 use super::{finish, hash_f32, value_row};
+
+// Labeled NumberEntry row, for unbounded values where a slider's track is misleading.
+#[allow(clippy::too_many_arguments)]
+fn entry_row<'a>(
+    label: &'a str,
+    value: f32,
+    min: f32,
+    max: f32,
+    step: f32,
+    drag_per_px: f32,
+    suffix: &'static str,
+    on_change: impl Fn(f32) -> Message + 'static,
+) -> Element<'a, Message> {
+    let control = NumberEntry::new(value, on_change)
+        .range(min, max)
+        .step(step)
+        .drag_per_px(drag_per_px)
+        .suffix(suffix)
+        .width(70.0);
+    iced::widget::row![
+        iced::widget::text(label)
+            .size(10)
+            .width(iced::Length::Fixed(58.0)),
+        iced::widget::container(control).center_x(iced::Length::Fill),
+    ]
+    .width(iced::Length::Fill)
+    .align_y(iced::alignment::Vertical::Center)
+    .spacing(4)
+    .into()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextAlign {
@@ -87,9 +118,11 @@ impl ModifierImpl for Text {
             ModifierParam::TextSize(v) => self.size = v,
             ModifierParam::TextRotation(v) => self.rotation = v,
             ModifierParam::TextOpacity(v) => self.opacity = v,
-            ModifierParam::TextR(v) => self.r = v,
-            ModifierParam::TextG(v) => self.g = v,
-            ModifierParam::TextB(v) => self.b = v,
+            ModifierParam::TextColor([r, g, b]) => {
+                self.r = r;
+                self.g = g;
+                self.b = b;
+            }
             _ => {}
         }
     }
@@ -126,6 +159,7 @@ impl ModifierImpl for Text {
         })
         .placeholder("Default font")
         .text_size(11)
+        .width(iced::Length::Fill)
         .padding([4, 6]);
 
         let align_picker = iced::widget::pick_list(
@@ -134,6 +168,7 @@ impl ModifierImpl for Text {
             move |a| EditMsg::Update(index, ModifierParam::TextAlign(a)).into(),
         )
         .text_size(11)
+        .width(iced::Length::Fill)
         .padding([4, 6]);
 
         finish(column![
@@ -143,15 +178,15 @@ impl ModifierImpl for Text {
                 .padding([4, 6]),
             font_picker,
             align_picker,
-            value_row("X", self.x, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
+            entry_row("X", self.x, -5.0, 5.0, 0.01, 0.005, "", move |v| {
                 EditMsg::Update(index, ModifierParam::TextX(v)).into()
             }),
-            value_row("Y", self.y, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
+            entry_row("Y", self.y, -5.0, 5.0, 0.01, 0.005, "", move |v| {
                 EditMsg::Update(index, ModifierParam::TextY(v)).into()
             }),
-            value_row("Size", self.size, 4.0..=200.0, 0.5, Fmt::num(0), move |v| {
+            entry_row("Size", self.size, 1.0, 100000.0, 1.0, 1.0, "px", move |v| {
                 EditMsg::Update(index, ModifierParam::TextSize(v)).into()
-            },),
+            }),
             value_row(
                 "Rotation",
                 self.rotation,
@@ -168,15 +203,21 @@ impl ModifierImpl for Text {
                 Fmt::num(2),
                 move |v| EditMsg::Update(index, ModifierParam::TextOpacity(v)).into(),
             ),
-            value_row("R", self.r, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
-                EditMsg::Update(index, ModifierParam::TextR(v)).into()
-            }),
-            value_row("G", self.g, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
-                EditMsg::Update(index, ModifierParam::TextG(v)).into()
-            }),
-            value_row("B", self.b, 0.0..=1.0, 0.01, Fmt::num(2), move |v| {
-                EditMsg::Update(index, ModifierParam::TextB(v)).into()
-            }),
+            iced::widget::row![
+                iced::widget::text("Color")
+                    .size(10)
+                    .width(iced::Length::Fixed(58.0)),
+                iced::widget::container(crate::widgets::color_swatch::ColorSwatch::new(
+                    self.r,
+                    self.g,
+                    self.b,
+                    move |rgb| EditMsg::Update(index, ModifierParam::TextColor(rgb)).into()
+                ))
+                .center_x(iced::Length::Fill),
+            ]
+            .width(iced::Length::Fill)
+            .align_y(iced::alignment::Vertical::Center)
+            .spacing(4),
         ])
     }
 }
