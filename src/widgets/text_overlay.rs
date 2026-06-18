@@ -146,7 +146,9 @@ impl TextOverlay {
                 };
                 let start_dist = (drag.start_cursor - anchor).length().max(1.0);
                 let cur_dist = (local - anchor).length().max(1.0);
-                let new_size = (drag.start_size * cur_dist / start_dist).clamp(4.0, 2000.0);
+                // Only a lower floor: dragging the cursor onto the anchor sends
+                // cur_dist→0 (size→0), which is degenerate. No upper bound.
+                let new_size = (drag.start_size * cur_dist / start_dist).max(1.0);
                 shell.publish(EditMsg::Update(self.idx, ModifierParam::TextSize(new_size)).into());
             }
             Grab::Rotate => {
