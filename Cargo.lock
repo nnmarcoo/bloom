@@ -582,6 +582,7 @@ dependencies = [
  "arboard",
  "basis-universal",
  "bytemuck",
+ "cosmic-text",
  "cpal",
  "crossbeam-channel",
  "dds",

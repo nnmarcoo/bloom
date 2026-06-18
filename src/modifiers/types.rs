@@ -224,6 +224,8 @@ pub enum ModifierParam {
     CropWidth(f32),
     CropHeight(f32),
     TextContent(String),
+    TextFont(String),
+    TextAlign(crate::modifiers::kinds::TextAlign),
     TextX(f32),
     TextY(f32),
     TextSize(f32),

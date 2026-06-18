@@ -5,14 +5,23 @@ use iced::Element;
 use iced::widget::{column, text_input};
 
 use crate::app::{EditMsg, Message};
-use crate::modifiers::{ModifierImpl, ModifierParam};
+use crate::modifiers::{InputClass, ModifierImpl, ModifierParam};
 use crate::widgets::value_slider::Fmt;
 
 use super::{finish, hash_f32, value_row};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextAlign {
+    Left,
+    Center,
+    Right,
+}
+
 #[derive(Debug, Clone)]
 pub struct Text {
     pub content: String,
+    pub font: String,
+    pub align: TextAlign,
     pub x: f32,
     pub y: f32,
     pub size: f32,
@@ -27,6 +36,8 @@ impl Default for Text {
     fn default() -> Self {
         Self {
             content: String::new(),
+            font: String::new(),
+            align: TextAlign::Left,
             x: 0.5,
             y: 0.5,
             size: 48.0,
@@ -45,12 +56,18 @@ impl ModifierImpl for Text {
     }
 
     fn has_effect(&self) -> bool {
-        false
+        !self.content.is_empty() && self.opacity > 0.0
+    }
+
+    fn input_class(&self) -> InputClass {
+        InputClass::NonPointwise
     }
 
     fn apply_param(&mut self, param: ModifierParam, _img_size: Option<(u32, u32)>) {
         match param {
             ModifierParam::TextContent(v) => self.content = v,
+            ModifierParam::TextFont(v) => self.font = v,
+            ModifierParam::TextAlign(v) => self.align = v,
             ModifierParam::TextX(v) => self.x = v,
             ModifierParam::TextY(v) => self.y = v,
             ModifierParam::TextSize(v) => self.size = v,
@@ -66,6 +83,8 @@ impl ModifierImpl for Text {
     fn hash(&self, hasher: &mut DefaultHasher) {
         18u8.hash(hasher);
         self.content.hash(hasher);
+        self.font.hash(hasher);
+        (self.align as u8).hash(hasher);
         hash_f32(self.x, hasher);
         hash_f32(self.y, hasher);
         hash_f32(self.size, hasher);
