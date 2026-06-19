@@ -1,3 +1,4 @@
+use crate::modifiers::text_raster::TextRaster;
 use crate::modifiers::{InputClass, Modifier, ModifierKind};
 
 pub(crate) fn apply_modifiers(
@@ -6,58 +7,116 @@ pub(crate) fn apply_modifiers(
     img_w: u32,
     img_h: u32,
     uv: [f32; 2],
+    c: [f32; 4],
+) -> [f32; 4] {
+    apply_modifiers_with_text(modifiers, &[], pixels, img_w, img_h, 0.0, 0.0, uv, c)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_modifiers_with_text(
+    modifiers: &[Modifier],
+    text_layers: &[Option<TextRaster>],
+    pixels: &[u8],
+    img_w: u32,
+    img_h: u32,
+    fx: f32,
+    fy: f32,
+    uv: [f32; 2],
     mut c: [f32; 4],
 ) -> [f32; 4] {
     for (i, m) in modifiers.iter().enumerate() {
         if !m.has_visible_effect() {
             continue;
         }
-        if let ModifierKind::ChromaticAberration(ca) = &m.kind {
-            let scale = ca.amount / img_w as f32;
-            let r_uv = [
-                (uv[0] + (uv[0] - 0.5) * scale).clamp(0.0, 1.0),
-                (uv[1] + (uv[1] - 0.5) * scale).clamp(0.0, 1.0),
-            ];
-            let b_uv = [
-                (uv[0] - (uv[0] - 0.5) * scale).clamp(0.0, 1.0),
-                (uv[1] - (uv[1] - 0.5) * scale).clamp(0.0, 1.0),
-            ];
-            let prior = &modifiers[..i];
-            let cr = apply_prior_non_resampling(
-                prior,
-                img_w,
-                img_h,
-                r_uv,
-                sample_pixel(pixels, img_w, img_h, r_uv[0], r_uv[1]),
-            );
-            let cb = apply_prior_non_resampling(
-                prior,
-                img_w,
-                img_h,
-                b_uv,
-                sample_pixel(pixels, img_w, img_h, b_uv[0], b_uv[1]),
-            );
-            c[0] = cr[0];
-            c[2] = cb[2];
-        } else {
-            c = m.kind.apply_cpu(img_w, img_h, uv, c);
+        match &m.kind {
+            ModifierKind::ChromaticAberration(ca) => {
+                let scale = ca.amount / img_w as f32;
+                let r_uv = [
+                    (uv[0] + (uv[0] - 0.5) * scale).clamp(0.0, 1.0),
+                    (uv[1] + (uv[1] - 0.5) * scale).clamp(0.0, 1.0),
+                ];
+                let b_uv = [
+                    (uv[0] - (uv[0] - 0.5) * scale).clamp(0.0, 1.0),
+                    (uv[1] - (uv[1] - 0.5) * scale).clamp(0.0, 1.0),
+                ];
+                let prior = &modifiers[..i];
+                let cr = apply_prior(
+                    prior,
+                    &text_layers[..i.min(text_layers.len())],
+                    img_w,
+                    img_h,
+                    r_uv,
+                    sample_pixel(pixels, img_w, img_h, r_uv[0], r_uv[1]),
+                );
+                let cb = apply_prior(
+                    prior,
+                    &text_layers[..i.min(text_layers.len())],
+                    img_w,
+                    img_h,
+                    b_uv,
+                    sample_pixel(pixels, img_w, img_h, b_uv[0], b_uv[1]),
+                );
+                c[0] = cr[0];
+                c[2] = cb[2];
+            }
+            ModifierKind::Text(_) => {
+                if let Some(Some(raster)) = text_layers.get(i)
+                    && let Some(src) = raster.sample(fx, fy)
+                {
+                    c = blend_over(c, src);
+                }
+            }
+            _ => {
+                c = m.kind.apply_cpu(img_w, img_h, uv, c);
+            }
         }
     }
     c.map(|v| v.clamp(0.0, 1.0))
 }
 
-fn apply_prior_non_resampling(
+fn blend_over(dst: [f32; 4], src: [f32; 4]) -> [f32; 4] {
+    let sa = src[3];
+    let da = dst[3];
+    let out_a = sa + da * (1.0 - sa);
+    if out_a <= 0.0 {
+        return [0.0; 4];
+    }
+    let blend = |s: f32, d: f32| (s * sa + d * da * (1.0 - sa)) / out_a;
+    [
+        blend(src[0], dst[0]),
+        blend(src[1], dst[1]),
+        blend(src[2], dst[2]),
+        out_a,
+    ]
+}
+
+fn apply_prior(
     modifiers: &[Modifier],
+    text_layers: &[Option<TextRaster>],
     img_w: u32,
     img_h: u32,
     uv: [f32; 2],
     mut c: [f32; 4],
 ) -> [f32; 4] {
-    for m in modifiers {
-        if !m.has_visible_effect() || matches!(m.kind.input_class(), InputClass::NonPointwise) {
+    let fx = uv[0] * img_w as f32;
+    let fy = uv[1] * img_h as f32;
+    for (i, m) in modifiers.iter().enumerate() {
+        if !m.has_visible_effect() {
             continue;
         }
-        c = m.kind.apply_cpu(img_w, img_h, uv, c);
+        match &m.kind {
+            ModifierKind::Text(_) => {
+                if let Some(Some(raster)) = text_layers.get(i)
+                    && let Some(src) = raster.sample(fx, fy)
+                {
+                    c = blend_over(c, src);
+                }
+            }
+            kind if matches!(kind.input_class(), InputClass::NonPointwise) => {}
+            kind => {
+                c = kind.apply_cpu(img_w, img_h, uv, c);
+            }
+        }
     }
     c
 }

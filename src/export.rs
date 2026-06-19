@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use rayon::prelude::*;
 
+use crate::modifiers::text_raster::{self, TextRaster};
 use crate::modifiers::{Modifier, cpu};
 
 pub struct ExportFrame {
@@ -37,9 +38,13 @@ struct ExportCtx<'a> {
     out_h: u32,
     rotation: u8,
     modifiers: &'a [Modifier],
+    text_layers: &'a [Option<TextRaster>],
 }
 
-fn still_ctx(data: &ExportData) -> Result<ExportCtx<'_>, String> {
+fn still_ctx<'a>(
+    data: &'a ExportData,
+    text_layers: &'a [Option<TextRaster>],
+) -> Result<ExportCtx<'a>, String> {
     let img_w = data.width;
     let img_h = data.height;
 
@@ -78,18 +83,21 @@ fn still_ctx(data: &ExportData) -> Result<ExportCtx<'_>, String> {
         out_h,
         rotation: data.rotation,
         modifiers: &data.modifiers,
+        text_layers,
     })
 }
 
 pub fn render_still_rgba(data: &ExportData) -> Result<(u32, u32, Vec<u8>), String> {
-    let ctx = still_ctx(data)?;
+    let text_layers = text_raster::build_layers(&data.modifiers, data.width, data.height);
+    let ctx = still_ctx(data, &text_layers)?;
     let mut rgba = vec![0u8; ctx.out_w as usize * ctx.out_h as usize * 4];
     render_into(&mut rgba, &ctx);
     Ok((ctx.out_w, ctx.out_h, rgba))
 }
 
 pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Result<String, String> {
-    let ctx = still_ctx(&data)?;
+    let text_layers = text_raster::build_layers(&data.modifiers, data.width, data.height);
+    let ctx = still_ctx(&data, &text_layers)?;
 
     let ext = path
         .extension()
@@ -306,7 +314,124 @@ fn fill_row(row: &mut [u8], oy: u32, ctx: &ExportCtx) {
         let p = &ctx.pixels[src..src + 4];
         let raw = cpu::pixel_to_f32(p);
         let uv = [fx as f32 / ctx.img_w as f32, fy as f32 / ctx.img_h as f32];
-        let result = cpu::apply_modifiers(ctx.modifiers, ctx.pixels, ctx.img_w, ctx.img_h, uv, raw);
+        let result = cpu::apply_modifiers_with_text(
+            ctx.modifiers,
+            ctx.text_layers,
+            ctx.pixels,
+            ctx.img_w,
+            ctx.img_h,
+            fx as f32 + 0.5,
+            fy as f32 + 0.5,
+            uv,
+            raw,
+        );
         row[out..out + 4].copy_from_slice(&cpu::f32_to_pixel(result));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modifiers::ModifierKind;
+    use crate::modifiers::kinds::Text;
+
+    #[test]
+    fn text_appears_in_still_export() {
+        let (w, h) = (256u32, 128u32);
+        let pixels = Arc::new(vec![0u8; (w * h * 4) as usize]);
+
+        let text = Text {
+            content: "Hi".to_string(),
+            size: 80.0,
+            x: 0.5,
+            y: 0.5,
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            opacity: 1.0,
+            ..Text::default()
+        };
+        let data = ExportData {
+            frames: vec![ExportFrame {
+                pixels,
+                delay: Duration::ZERO,
+            }],
+            still_index: 0,
+            width: w,
+            height: h,
+            modifiers: vec![Modifier::new(ModifierKind::Text(text))],
+            crop: None,
+            rotation: 0,
+        };
+
+        let (ow, oh, rgba) = render_still_rgba(&data).expect("render");
+        assert_eq!((ow, oh), (w, h));
+
+        let lit = rgba.chunks_exact(4).filter(|p| p[0] > 200).count();
+        assert!(lit > 0, "expected white text pixels in export, found none");
+    }
+
+    #[test]
+    fn chromatic_aberration_does_not_turn_text_green() {
+        use crate::modifiers::kinds::ChromaticAberration;
+
+        let (w, h) = (256u32, 128u32);
+        let pixels = Arc::new(vec![0u8; (w * h * 4) as usize]);
+
+        let text = Text {
+            content: "Hi".to_string(),
+            size: 80.0,
+            x: 0.5,
+            y: 0.5,
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            opacity: 1.0,
+            ..Text::default()
+        };
+        let ca = ChromaticAberration { amount: 30.0 };
+        let data = ExportData {
+            frames: vec![ExportFrame {
+                pixels,
+                delay: Duration::ZERO,
+            }],
+            still_index: 0,
+            width: w,
+            height: h,
+            modifiers: vec![
+                Modifier::new(ModifierKind::Text(text)),
+                Modifier::new(ModifierKind::ChromaticAberration(ca)),
+            ],
+            crop: None,
+            rotation: 0,
+        };
+
+        let (_, _, rgba) = render_still_rgba(&data).expect("render");
+
+        let green_only = rgba
+            .chunks_exact(4)
+            .filter(|p| p[1] > 200 && p[0] < 40 && p[2] < 40)
+            .count();
+        let white = rgba
+            .chunks_exact(4)
+            .filter(|p| p[0] > 200 && p[1] > 200 && p[2] > 200)
+            .count();
+
+        assert!(
+            rgba.chunks_exact(4).any(|p| p[0] > 150),
+            "CA should leave red text coverage"
+        );
+        assert!(
+            rgba.chunks_exact(4).any(|p| p[2] > 150),
+            "CA should leave blue text coverage"
+        );
+        assert!(
+            white > 0,
+            "expected a white core where red/green/blue overlap"
+        );
+        assert!(
+            green_only < white,
+            "text dominated by green fringe (green-only {green_only} vs white {white})"
+        );
     }
 }
