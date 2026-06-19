@@ -3,7 +3,10 @@ use iced::Task;
 use crate::{
     app::Message,
     components::notifications::Notification,
-    modifiers::{Modifier, ModifierKind, ModifierParam, ModifierType, kinds::{Crop, Text}},
+    modifiers::{
+        Modifier, ModifierKind, ModifierParam, ModifierType,
+        kinds::{Crop, Text},
+    },
     wgpu::view_program::ViewProgram,
 };
 
@@ -29,8 +32,6 @@ pub enum EditMsg {
     DragHover(usize),
     DragEnd,
     SetCropRect(usize, f32, f32, f32, f32),
-    TextAppend(usize, String),
-    TextBackspace(usize),
 }
 
 pub struct EditState {
@@ -212,22 +213,6 @@ pub fn update(state: &mut EditState, program: &mut ViewProgram, msg: EditMsg) ->
                 crop.height = h;
             }
             program.mark_dirty();
-        }
-        EditMsg::TextAppend(i, s) => {
-            if let Some(m) = program.modifiers_mut().get_mut(i)
-                && let ModifierKind::Text(t) = &mut m.kind
-            {
-                t.content.push_str(&s);
-                program.mark_dirty();
-            }
-        }
-        EditMsg::TextBackspace(i) => {
-            if let Some(m) = program.modifiers_mut().get_mut(i)
-                && let ModifierKind::Text(t) = &mut m.kind
-            {
-                t.content.pop();
-                program.mark_dirty();
-            }
         }
     }
     Task::none()

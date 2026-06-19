@@ -33,7 +33,7 @@ pub use motion_blur::MotionBlur;
 pub use pixel_sort::PixelSort;
 pub use posterize::Posterize;
 pub use radial_blur::RadialBlur;
-pub use text::{Text, TextAlign};
+pub use text::Text;
 pub use threshold::Threshold;
 pub use vibrance::Vibrance;
 pub use vignette::Vignette;

@@ -1,8 +1,6 @@
-use cosmic_text::{
-    Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache, SwashContent,
-};
+use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache, SwashContent};
 
-use crate::modifiers::kinds::{Text, TextAlign};
+use crate::modifiers::kinds::Text;
 
 fn enumerate_families(font_system: &FontSystem) -> Vec<String> {
     let mut families: Vec<String> = font_system
@@ -15,8 +13,6 @@ fn enumerate_families(font_system: &FontSystem) -> Vec<String> {
     families
 }
 
-/// Sorted, deduplicated list of system font family names, enumerated once and cached.
-/// Building a FontSystem scans the OS font dirs, so this is gated behind a OnceLock.
 pub fn font_families() -> &'static [String] {
     use std::sync::OnceLock;
     static FONTS: OnceLock<Vec<String>> = OnceLock::new();
@@ -48,8 +44,6 @@ impl TextBitmap {
     }
 }
 
-/// Shape `text` at its current size into a laid-out buffer (no rasterization).
-/// Single shaping path shared by rasterize_text (GPU/export) and measure_text (overlay).
 fn shape_buffer(text: &Text, font_system: &mut FontSystem) -> Buffer {
     let metrics = Metrics::new(text.size, text.size * 1.2);
     let mut buffer = Buffer::new(font_system, metrics);
@@ -60,24 +54,11 @@ fn shape_buffer(text: &Text, font_system: &mut FontSystem) -> Buffer {
     } else {
         Attrs::new().family(Family::Name(&text.font))
     };
-    let align = match text.align {
-        TextAlign::Left => cosmic_text::Align::Left,
-        TextAlign::Center => cosmic_text::Align::Center,
-        TextAlign::Right => cosmic_text::Align::Right,
-    };
-    buffer.set_text(
-        font_system,
-        &text.content,
-        &attrs,
-        Shaping::Advanced,
-        Some(align),
-    );
+    buffer.set_text(font_system, &text.content, &attrs, Shaping::Advanced, None);
     buffer.shape_until_scroll(font_system, false);
     buffer
 }
 
-/// Block size in pixels at `text.size`, from shaping only (no glyph rasterization).
-/// Cheap enough to call per-frame for the editing gizmo.
 pub fn measure_text(text: &Text, font_system: &mut FontSystem) -> (f32, f32) {
     if text.content.is_empty() {
         return (0.0, 0.0);
@@ -92,15 +73,166 @@ pub fn measure_text(text: &Text, font_system: &mut FontSystem) -> (f32, f32) {
     (w, h)
 }
 
-/// Convenience for UI code (the editing overlay) that has no FontSystem on hand.
-/// Uses a process-wide measuring FontSystem behind a mutex. Shaping a short string
-/// is sub-millisecond, so per-frame calls during a drag are fine.
 pub fn measure_block(text: &Text) -> (f32, f32) {
+    let mut guard = measuring_font_system();
+    measure_text(text, &mut guard)
+}
+
+fn measuring_font_system() -> std::sync::MutexGuard<'static, FontSystem> {
     use std::sync::{Mutex, OnceLock};
     static FS: OnceLock<Mutex<FontSystem>> = OnceLock::new();
     let fs = FS.get_or_init(|| Mutex::new(FontSystem::new()));
-    let mut guard = fs.lock().unwrap();
-    measure_text(text, &mut guard)
+    fs.lock().unwrap()
+}
+
+fn block_origin(buffer: &Buffer) -> (f32, f32) {
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    for run in buffer.layout_runs() {
+        min_y = min_y.min(run.line_top);
+        for glyph in run.glyphs.iter() {
+            min_x = min_x.min(glyph.x);
+        }
+    }
+    let min_x = if min_x.is_finite() { min_x } else { 0.0 };
+    let min_y = if min_y.is_finite() { min_y } else { 0.0 };
+    (min_x, min_y)
+}
+
+fn line_byte_bases(content: &str) -> Vec<usize> {
+    let mut bases = vec![0usize];
+    for (i, b) in content.bytes().enumerate() {
+        if b == b'\n' {
+            bases.push(i + 1);
+        }
+    }
+    bases
+}
+
+fn line_byte_span(bases: &[usize], line_i: usize, content_len: usize) -> (usize, usize) {
+    let base = bases.get(line_i).copied().unwrap_or(0);
+    let end = bases.get(line_i + 1).map(|b| b - 1).unwrap_or(content_len);
+    (base, end)
+}
+
+pub fn caret_offset(text: &Text, caret: usize) -> (f32, f32, f32) {
+    let default_h = text.size * 1.2;
+    if text.content.is_empty() {
+        return (0.0, 0.0, default_h);
+    }
+    let mut guard = measuring_font_system();
+    let buffer = shape_buffer(text, &mut guard);
+    let (ox, oy) = block_origin(&buffer);
+    let bases = line_byte_bases(&text.content);
+    let content_len = text.content.len();
+
+    let mut fallback: Option<(f32, f32, f32)> = None;
+
+    for run in buffer.layout_runs() {
+        let (base, line_end) = line_byte_span(&bases, run.line_i, content_len);
+        fallback = Some((0.0, run.line_top, run.line_height));
+
+        if caret < base || caret > line_end {
+            continue;
+        }
+
+        let mut x = 0.0;
+        for glyph in run.glyphs.iter() {
+            if caret < base + glyph.end {
+                x = glyph.x;
+                break;
+            }
+            x = glyph.x + glyph.w;
+        }
+        return (x - ox, run.line_top - oy, run.line_height);
+    }
+
+    let (cx, cy, ch) = fallback.unwrap_or((0.0, 0.0, default_h));
+    (cx - ox, cy - oy, ch)
+}
+
+pub fn selection_rects(text: &Text, lo: usize, hi: usize) -> Vec<(f32, f32, f32, f32)> {
+    if lo >= hi || text.content.is_empty() {
+        return Vec::new();
+    }
+    let mut guard = measuring_font_system();
+    let buffer = shape_buffer(text, &mut guard);
+    let (ox, oy) = block_origin(&buffer);
+    let bases = line_byte_bases(&text.content);
+    let content_len = text.content.len();
+    let mut rects = Vec::new();
+
+    for run in buffer.layout_runs() {
+        let (base, line_end) = line_byte_span(&bases, run.line_i, content_len);
+        let s = lo.max(base);
+        let e = hi.min(line_end);
+        if s > e {
+            continue;
+        }
+
+        let mut x0: Option<f32> = None;
+        let mut x1: Option<f32> = None;
+        for glyph in run.glyphs.iter() {
+            let g_start = base + glyph.start;
+            let g_end = base + glyph.end;
+            if g_end <= s {
+                continue;
+            }
+            if g_start >= e {
+                break;
+            }
+            x0 = Some(x0.map_or(glyph.x, |v: f32| v.min(glyph.x)));
+            x1 = Some(x1.map_or(glyph.x + glyph.w, |v: f32| v.max(glyph.x + glyph.w)));
+        }
+        if let (Some(a), Some(b)) = (x0, x1)
+            && b > a
+        {
+            rects.push((a - ox, run.line_top - oy, b - a, run.line_height));
+        }
+    }
+    rects
+}
+
+pub fn caret_at_point(text: &Text, local_x: f32, local_y: f32) -> usize {
+    if text.content.is_empty() {
+        return 0;
+    }
+    let mut guard = measuring_font_system();
+    let buffer = shape_buffer(text, &mut guard);
+    let (ox, oy) = block_origin(&buffer);
+    let bases = line_byte_bases(&text.content);
+    let content_len = text.content.len();
+    let px = local_x + ox;
+    let py = local_y + oy;
+
+    let mut chosen: Option<usize> = None;
+    let mut best_dy = f32::INFINITY;
+
+    for run in buffer.layout_runs() {
+        let top = run.line_top;
+        let bot = run.line_top + run.line_height;
+        let dy = if py < top {
+            top - py
+        } else if py > bot {
+            py - bot
+        } else {
+            0.0
+        };
+        if dy < best_dy {
+            best_dy = dy;
+            let (base, line_end) = line_byte_span(&bases, run.line_i, content_len);
+            let mut idx = line_end;
+            for glyph in run.glyphs.iter() {
+                let mid = glyph.x + glyph.w * 0.5;
+                if px < mid {
+                    idx = base + glyph.start;
+                    break;
+                }
+            }
+            chosen = Some(idx);
+        }
+    }
+    chosen.unwrap_or(0)
 }
 
 pub fn rasterize_text(

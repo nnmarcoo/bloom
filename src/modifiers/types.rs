@@ -181,7 +181,6 @@ impl ModifierKind {
             _ => None,
         }
     }
-
 }
 
 #[derive(Debug, Clone)]
@@ -225,7 +224,6 @@ pub enum ModifierParam {
     CropHeight(f32),
     TextContent(String),
     TextFont(String),
-    TextAlign(crate::modifiers::kinds::TextAlign),
     TextX(f32),
     TextY(f32),
     TextSize(f32),

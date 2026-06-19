@@ -20,16 +20,12 @@ const GAP: f32 = 8.0;
 const PAD: f32 = 8.0;
 
 fn popup_size() -> Size {
-    Size::new(
-        POPUP_W,
-        PAD + SQUARE + GAP + HUE_H + PAD,
-    )
+    Size::new(POPUP_W, PAD + SQUARE + GAP + HUE_H + PAD)
 }
 
 #[derive(Default)]
 struct State {
     open: bool,
-    // which region the pointer is dragging within the popup
     drag: Drag,
 }
 
@@ -55,7 +51,6 @@ impl<Message> ColorSwatch<Message> {
     }
 }
 
-// HSV (not HSL) is nicer for a square+hue picker. Local conversions:
 fn rgb_to_hsv(rgb: [f32; 3]) -> [f32; 3] {
     let max = rgb[0].max(rgb[1]).max(rgb[2]);
     let min = rgb[0].min(rgb[1]).min(rgb[2]);
@@ -258,7 +253,6 @@ impl<Message: Clone> Overlay<Message, Theme, Renderer> for PickerOverlay<'_, Mes
         let origin = layout.bounds().position();
         let palette = theme.extended_palette();
 
-        // popup background
         renderer.fill_quad(
             Quad {
                 bounds: layout.bounds(),
@@ -276,7 +270,6 @@ impl<Message: Clone> Overlay<Message, Theme, Renderer> for PickerOverlay<'_, Mes
         let square = self.square_rect(origin);
         let hue = self.hue_rect(origin);
 
-        // SV square: hue base, white->transparent left-right, transparent->black top-bottom.
         let hue_color = color(hsv_to_rgb([hsv[0], 1.0, 1.0]));
         renderer.fill_quad(
             Quad {
@@ -284,13 +277,11 @@ impl<Message: Clone> Overlay<Message, Theme, Renderer> for PickerOverlay<'_, Mes
                 ..Quad::default()
             },
             Background::Gradient(Gradient::Linear(
-                // 90° = left→right: white (low saturation) at left, hue at right
                 Linear::new(std::f32::consts::FRAC_PI_2)
                     .add_stop(0.0, Color::WHITE)
                     .add_stop(1.0, hue_color),
             )),
         );
-        // black vertical overlay (top transparent -> bottom black)
         renderer.fill_quad(
             Quad {
                 bounds: square,
@@ -302,12 +293,10 @@ impl<Message: Clone> Overlay<Message, Theme, Renderer> for PickerOverlay<'_, Mes
                     .add_stop(1.0, Color::BLACK),
             )),
         );
-        // SV cursor
         let cx = square.x + hsv[1] * square.width;
         let cy = square.y + (1.0 - hsv[2]) * square.height;
         ring(renderer, cx, cy);
 
-        // hue strip
         renderer.fill_quad(
             Quad {
                 bounds: hue,
@@ -368,7 +357,6 @@ impl<Message: Clone> Overlay<Message, Theme, Renderer> for PickerOverlay<'_, Mes
                     emit(Drag::Hue, p, shell);
                     shell.capture_event();
                 } else if !cursor.is_over(layout.bounds()) && !cursor.is_over(self.anchor) {
-                    // click outside closes
                     let st = self.state.downcast_mut::<State>();
                     st.open = false;
                     st.drag = Drag::None;

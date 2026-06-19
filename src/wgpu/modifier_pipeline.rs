@@ -12,7 +12,10 @@ use crate::{
     },
     wgpu::{
         gpu,
-        passes::{chromatic_aberration::ChromaticAberrationPass, text::{TextLayer, TextPass}},
+        passes::{
+            chromatic_aberration::ChromaticAberrationPass,
+            text::{TextLayer, TextPass},
+        },
         tiled_source::TiledSource,
         view_pipeline::tile_ndc_culled,
     },

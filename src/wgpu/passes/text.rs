@@ -6,9 +6,9 @@ use iced::wgpu::{
     BindGroupLayout, BlendState, Buffer, ColorTargetState, ColorWrites, CommandEncoder, Device,
     FragmentState, LoadOp, MultisampleState, Operations, PipelineCompilationOptions,
     PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue, RenderPassColorAttachment,
-    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, Sampler, ShaderModuleDescriptor,
-    ShaderSource, ShaderStages, StoreOp, TexelCopyBufferLayout, Texture, TextureFormat,
-    TextureUsages, TextureView, VertexState,
+    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, Sampler,
+    ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, TexelCopyBufferLayout, Texture,
+    TextureFormat, TextureUsages, TextureView, VertexState,
 };
 
 use crate::{
@@ -35,11 +35,9 @@ struct TextUniforms {
 pub struct TextLayer {
     _texture: Texture,
     view: TextureView,
-    // bbox in raster (reference) pixels
     bbox_w: f32,
     bbox_h: f32,
     raster_size: f32,
-    // copy of the params needed at record time
     x: f32,
     y: f32,
     size: f32,
@@ -130,11 +128,13 @@ impl TextPass {
         }
     }
 
-    /// Rasterize `text` at a capped reference size and upload a single alpha texture.
-    /// Returns None if there's nothing to draw. Cost is bounded by REFERENCE_SIZE,
-    /// independent of the on-screen display size (GPU scales the quad).
-    pub fn build_layer(&mut self, device: &Device, queue: &Queue, text: &Text) -> Option<TextLayer> {
-        let raster_size = text.size.min(REFERENCE_SIZE).max(1.0);
+    pub fn build_layer(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        text: &Text,
+    ) -> Option<TextLayer> {
+        let raster_size = text.size.clamp(1.0, REFERENCE_SIZE);
         let mut raster_text = text.clone();
         raster_text.size = raster_size;
 
@@ -226,9 +226,6 @@ impl TextPass {
         input: &TextureView,
         output: &TextureView,
     ) {
-        // Seed `output` with the prior segment's content (`input`), then blend glyphs
-        // on top with LoadOp::Load. The glyph fragment shader only writes glyph pixels,
-        // so the background must be copied first.
         let copy_bg = gpu::standard_bind_group(
             device,
             &self.bgl,
@@ -260,10 +257,7 @@ impl TextPass {
 
         let scale = layer.size / layer.raster_size;
         let uniforms = TextUniforms {
-            anchor: [
-                layer.x * tile.full_w as f32,
-                layer.y * tile.full_h as f32,
-            ],
+            anchor: [layer.x * tile.full_w as f32, layer.y * tile.full_h as f32],
             block_size: [layer.bbox_w * scale, layer.bbox_h * scale],
             pivot: [0.5, 0.5],
             tile_origin: [tile.tile_x as f32, tile.tile_y as f32],

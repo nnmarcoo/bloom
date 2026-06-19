@@ -5,10 +5,7 @@ use iced::wgpu::{
     Sampler, ShaderStages, StoreOp, TextureFormat, TextureView,
 };
 
-use crate::{
-    modifiers::gpu::TileInfo,
-    wgpu::gpu,
-};
+use crate::{modifiers::gpu::TileInfo, wgpu::gpu};
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]

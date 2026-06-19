@@ -11,7 +11,6 @@ use crate::widgets::value_slider::Fmt;
 
 use super::{finish, hash_f32, value_row};
 
-// Labeled NumberEntry row, for unbounded values where a slider's track is misleading.
 #[allow(clippy::too_many_arguments)]
 fn entry_row<'a>(
     label: &'a str,
@@ -41,32 +40,10 @@ fn entry_row<'a>(
     .into()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TextAlign {
-    Left,
-    Center,
-    Right,
-}
-
-impl TextAlign {
-    pub const ALL: [TextAlign; 3] = [TextAlign::Left, TextAlign::Center, TextAlign::Right];
-}
-
-impl std::fmt::Display for TextAlign {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            TextAlign::Left => "Left",
-            TextAlign::Center => "Center",
-            TextAlign::Right => "Right",
-        })
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Text {
     pub content: String,
     pub font: String,
-    pub align: TextAlign,
     pub x: f32,
     pub y: f32,
     pub size: f32,
@@ -82,7 +59,6 @@ impl Default for Text {
         Self {
             content: String::new(),
             font: String::new(),
-            align: TextAlign::Left,
             x: 0.5,
             y: 0.5,
             size: 48.0,
@@ -112,7 +88,6 @@ impl ModifierImpl for Text {
         match param {
             ModifierParam::TextContent(v) => self.content = v,
             ModifierParam::TextFont(v) => self.font = v,
-            ModifierParam::TextAlign(v) => self.align = v,
             ModifierParam::TextX(v) => self.x = v,
             ModifierParam::TextY(v) => self.y = v,
             ModifierParam::TextSize(v) => self.size = v,
@@ -131,7 +106,6 @@ impl ModifierImpl for Text {
         18u8.hash(hasher);
         self.content.hash(hasher);
         self.font.hash(hasher);
-        (self.align as u8).hash(hasher);
         hash_f32(self.x, hasher);
         hash_f32(self.y, hasher);
         hash_f32(self.size, hasher);
@@ -162,22 +136,12 @@ impl ModifierImpl for Text {
         .width(iced::Length::Fill)
         .padding([4, 6]);
 
-        let align_picker = iced::widget::pick_list(
-            &TextAlign::ALL[..],
-            Some(self.align),
-            move |a| EditMsg::Update(index, ModifierParam::TextAlign(a)).into(),
-        )
-        .text_size(11)
-        .width(iced::Length::Fill)
-        .padding([4, 6]);
-
         finish(column![
             text_input("Type something...", &self.content)
                 .on_input(move |v| EditMsg::Update(index, ModifierParam::TextContent(v)).into())
                 .size(11)
                 .padding([4, 6]),
             font_picker,
-            align_picker,
             entry_row("X", self.x, -5.0, 5.0, 0.01, 0.005, "", move |v| {
                 EditMsg::Update(index, ModifierParam::TextX(v)).into()
             }),

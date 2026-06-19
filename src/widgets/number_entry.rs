@@ -14,9 +14,6 @@ use iced::{
 
 use crate::styles::radius;
 
-/// A value-direct numeric entry: click to type, drag horizontally to scrub,
-/// scroll to nudge, Enter/Esc to commit/cancel. Unlike a slider it implies no
-/// upper bound, which suits open-ended values like font size.
 pub struct NumberEntry<Message> {
     value: f32,
     on_change: Box<dyn Fn(f32) -> Message>,
@@ -77,7 +74,6 @@ impl<Message> NumberEntry<Message> {
     }
 
     fn display_value(&self) -> String {
-        // integer-ish when step is whole, else 1 decimal
         if self.step.fract() == 0.0 {
             format!("{}", self.value.round() as i64)
         } else {
@@ -261,7 +257,6 @@ where
                                     buffer.clear();
                                     *fresh = false;
                                 }
-                                // single decimal point only
                                 if !(ch == '.' && buffer.contains('.')) && buffer.len() < 6 {
                                     buffer.push(ch);
                                 }

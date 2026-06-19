@@ -90,9 +90,7 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
         && let Some(crate::modifiers::ModifierKind::Text(t)) =
             ctx.modifiers.get(idx).map(|m| &m.kind)
     {
-        layers.push(
-            TextOverlay::new(ctx.program.clone(), idx, t).into(),
-        );
+        layers.push(TextOverlay::new(ctx.program.clone(), idx, t).into());
     }
 
     if let Some(filename) = ctx.loading {
