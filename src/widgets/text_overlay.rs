@@ -643,17 +643,6 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
             Stroke::default().with_color(Color::WHITE).with_width(1.5),
         );
 
-        let mut handle = |c: Vec2, r: f32, fill: Color| {
-            let path = Path::circle(pt(c), r);
-            frame.fill(&path, fill);
-            frame.stroke(&path, Stroke::default().with_color(OUTLINE).with_width(1.5));
-        };
-        for c in corners {
-            handle(c, HANDLE_R * 0.55, Color::WHITE);
-        }
-        handle(scale_h, HANDLE_R, ACCENT);
-        handle(rot_h, HANDLE_R, ACCENT);
-
         if is_active && state.sel_range().is_none() {
             let caret = clamp_caret(&eff_text.content, state.caret);
             let (top, bot) = self.caret_segment(anchor, &eff_text, h, caret);
@@ -671,10 +660,24 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
             );
         }
 
+        let mut handle_frame = Frame::new(renderer, widget_bounds.size());
+        let mut handle = |c: Vec2, r: f32, fill: Color| {
+            let path = Path::circle(pt(c), r);
+            handle_frame.fill(&path, fill);
+            handle_frame.stroke(&path, Stroke::default().with_color(OUTLINE).with_width(1.5));
+        };
+        for c in corners {
+            handle(c, HANDLE_R, Color::WHITE);
+        }
+        handle(scale_h, HANDLE_R, ACCENT);
+        handle(rot_h, HANDLE_R, ACCENT);
+
         let geometry = frame.into_geometry();
+        let handle_geometry = handle_frame.into_geometry();
         let translation = iced::Vector::new(widget_bounds.x, widget_bounds.y);
         renderer.with_translation(translation, |renderer| {
             renderer.draw_geometry(geometry);
+            renderer.draw_geometry(handle_geometry);
         });
     }
 
