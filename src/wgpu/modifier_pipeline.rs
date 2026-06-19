@@ -107,6 +107,13 @@ enum PlanItem<'a> {
     Step(usize, &'a Modifier),
 }
 
+fn text_raster_density(physical_scale: f32) -> f32 {
+    if physical_scale <= 1.0 {
+        return 1.0;
+    }
+    physical_scale.log2().ceil().exp2().clamp(1.0, 8.0)
+}
+
 fn plan_modifiers(modifiers: &[Modifier]) -> Vec<PlanItem<'_>> {
     let mut plan: Vec<PlanItem> = Vec::new();
     let mut current: Vec<&Modifier> = Vec::new();
@@ -141,6 +148,7 @@ pub struct ModifierPipeline {
     ca_uniform_pool: Vec<iced::wgpu::Buffer>,
     text_uniform_pool: Vec<iced::wgpu::Buffer>,
     text_layers: Vec<Option<TextLayer>>,
+    text_density: f32,
     combined: CombinedPass,
     chromatic_aberration: ChromaticAberrationPass,
     text: TextPass,
@@ -200,6 +208,7 @@ impl ModifierPipeline {
             ca_uniform_pool: Vec::new(),
             text_uniform_pool: Vec::new(),
             text_layers: Vec::new(),
+            text_density: 0.0,
             combined: CombinedPass::new(device, format),
             chromatic_aberration: ChromaticAberrationPass::new(device, format),
             text: TextPass::new(device, format),
@@ -252,21 +261,6 @@ impl ModifierPipeline {
             }
         }
 
-        if dirty || self.text_layers.len() != modifiers.len() {
-            let mut layers: Vec<Option<TextLayer>> = Vec::with_capacity(modifiers.len());
-            for m in modifiers {
-                let layer = if m.has_visible_effect()
-                    && let ModifierKind::Text(t) = &m.kind
-                {
-                    self.text.build_layer(device, queue, t)
-                } else {
-                    None
-                };
-                layers.push(layer);
-            }
-            self.text_layers = layers;
-        }
-
         let physical_scale = source.physical_scale;
         let proc_scale = if physical_scale > 0.0 {
             physical_scale.log2().ceil().exp2().min(1.0)
@@ -274,6 +268,30 @@ impl ModifierPipeline {
             1.0
         };
         let downscale = proc_scale < 1.0;
+
+        let text_density = text_raster_density(physical_scale);
+        let density_changed = (text_density - self.text_density).abs() > f32::EPSILON;
+
+        if dirty || density_changed || self.text_layers.len() != modifiers.len() {
+            let mut layers: Vec<Option<TextLayer>> = Vec::with_capacity(modifiers.len());
+            for m in modifiers {
+                let layer = if m.has_visible_effect()
+                    && let ModifierKind::Text(t) = &m.kind
+                {
+                    self.text.build_layer(device, queue, t, text_density)
+                } else {
+                    None
+                };
+                layers.push(layer);
+            }
+            self.text_layers = layers;
+            self.text_density = text_density;
+            if density_changed && !dirty {
+                for o in self.tile_outputs.iter_mut().flatten() {
+                    o.valid = false;
+                }
+            }
+        }
 
         let mut plan: Option<Vec<PlanItem>> = None;
         let mut encoder: Option<CommandEncoder> = None;

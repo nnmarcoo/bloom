@@ -16,7 +16,34 @@ use crate::{
     wgpu::gpu,
 };
 
-const REFERENCE_SIZE: f32 = 256.0;
+const REFERENCE_SIZE: f32 = 1024.0;
+const MIN_DENSITY: f32 = 1.0;
+
+fn downsample_r8(src: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
+    let nw = (w / 2).max(1);
+    let nh = (h / 2).max(1);
+    let mut dst = vec![0u8; (nw * nh) as usize];
+    for y in 0..nh {
+        for x in 0..nw {
+            let sx = x * 2;
+            let sy = y * 2;
+            let mut sum = 0u32;
+            let mut count = 0u32;
+            for dy in 0..2 {
+                for dx in 0..2 {
+                    let px = sx + dx;
+                    let py = sy + dy;
+                    if px < w && py < h {
+                        sum += src[(py * w + px) as usize] as u32;
+                        count += 1;
+                    }
+                }
+            }
+            dst[(y * nw + x) as usize] = (sum / count.max(1)) as u8;
+        }
+    }
+    (dst, nw, nh)
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -116,6 +143,7 @@ impl TextPass {
             address_mode_v: iced::wgpu::AddressMode::ClampToEdge,
             mag_filter: iced::wgpu::FilterMode::Linear,
             min_filter: iced::wgpu::FilterMode::Linear,
+            mipmap_filter: iced::wgpu::FilterMode::Linear,
             ..Default::default()
         });
         Self {
@@ -133,8 +161,9 @@ impl TextPass {
         device: &Device,
         queue: &Queue,
         text: &Text,
+        display_density: f32,
     ) -> Option<TextLayer> {
-        let raster_size = text.size.clamp(1.0, REFERENCE_SIZE);
+        let raster_size = (text.size * display_density.max(MIN_DENSITY)).clamp(1.0, REFERENCE_SIZE);
         let mut raster_text = text.clone();
         raster_text.size = raster_size;
 
@@ -175,28 +204,47 @@ impl TextPass {
             }
         }
 
-        let texture = gpu::texture_2d(
+        let mip_count = gpu::hw_mip_count(tw, th);
+        let texture = gpu::texture_2d_mipmapped(
             device,
             tw,
             th,
+            mip_count,
             TextureFormat::R8Unorm,
             TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             Some("text-glyph-texture"),
         );
-        queue.write_texture(
-            texture.as_image_copy(),
-            &buf,
-            TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(tw),
-                rows_per_image: Some(th),
-            },
-            iced::wgpu::Extent3d {
-                width: tw,
-                height: th,
-                depth_or_array_layers: 1,
-            },
-        );
+
+        let mut level = buf;
+        let mut lw = tw;
+        let mut lh = th;
+        for mip in 0..mip_count {
+            queue.write_texture(
+                iced::wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: mip,
+                    origin: iced::wgpu::Origin3d::ZERO,
+                    aspect: iced::wgpu::TextureAspect::All,
+                },
+                &level,
+                TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(lw),
+                    rows_per_image: Some(lh),
+                },
+                iced::wgpu::Extent3d {
+                    width: lw,
+                    height: lh,
+                    depth_or_array_layers: 1,
+                },
+            );
+            if mip + 1 < mip_count {
+                let (next, nw, nh) = downsample_r8(&level, lw, lh);
+                level = next;
+                lw = nw;
+                lh = nh;
+            }
+        }
         let view = texture.create_view(&Default::default());
 
         Some(TextLayer {
