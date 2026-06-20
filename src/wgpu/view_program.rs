@@ -471,7 +471,13 @@ impl ViewProgram {
         if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
             return None;
         }
-        let img_ndc = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
+        let display_uv = if let Some([min_u, min_v, max_u, max_v]) = self.active_crop() {
+            let span = vec2((max_u - min_u).max(1e-6), (max_v - min_v).max(1e-6));
+            vec2((uv.x - min_u) / span.x, (uv.y - min_v) / span.y)
+        } else {
+            uv
+        };
+        let img_ndc = vec4(display_uv.x * 2.0 - 1.0, 1.0 - display_uv.y * 2.0, 0.0, 1.0);
         let screen_ndc = self.build_transform(viewport) * img_ndc;
         Some(vec2(
             (screen_ndc.x + 1.0) * 0.5 * viewport.x,
