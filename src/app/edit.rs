@@ -107,6 +107,7 @@ pub fn update(state: &mut EditState, program: &mut ViewProgram, msg: EditMsg) ->
         }
         EditMsg::Add(t) => {
             let is_crop = matches!(t, ModifierType::Crop);
+            let is_text = matches!(t, ModifierType::Text);
             let already_has_crop =
                 is_crop && program.modifiers.iter().any(|m| m.kind.as_crop().is_some());
             if already_has_crop {
@@ -131,6 +132,10 @@ pub fn update(state: &mut EditState, program: &mut ViewProgram, msg: EditMsg) ->
             program.modifiers_mut().push(Modifier::new(kind));
             let idx = program.modifiers.len() - 1;
             state.active = Some(idx);
+            if is_text {
+                state.selected_tool = Tool::Text;
+                program.crop_tool_active = false;
+            }
             program.mark_dirty();
         }
         EditMsg::Remove(i) => {

@@ -93,24 +93,84 @@ impl State {
     }
 }
 
-pub struct TextOverlay {
-    program: ViewProgram,
+struct OtherText {
     idx: usize,
     text: Text,
     block_w: f32,
     block_h: f32,
 }
 
+pub struct TextOverlay {
+    program: ViewProgram,
+    active: bool,
+    idx: usize,
+    text: Text,
+    block_w: f32,
+    block_h: f32,
+    others: Vec<OtherText>,
+}
+
 impl TextOverlay {
-    pub fn new(program: ViewProgram, idx: usize, text: &Text) -> Self {
-        let (block_w, block_h) = text_render::measure_block(text);
+    pub fn new(
+        program: ViewProgram,
+        active: Option<(usize, &Text)>,
+        others: Vec<(usize, Text)>,
+    ) -> Self {
+        let (idx, text) = active
+            .map(|(i, t)| (i, t.clone()))
+            .unwrap_or((usize::MAX, Text::default()));
+        let (block_w, block_h) = text_render::measure_block(&text);
+        let others = others
+            .into_iter()
+            .map(|(idx, text)| {
+                let (block_w, block_h) = text_render::measure_block(&text);
+                OtherText {
+                    idx,
+                    text,
+                    block_w,
+                    block_h,
+                }
+            })
+            .collect();
         Self {
             program,
+            active: active.is_some(),
             idx,
-            text: text.clone(),
+            text,
             block_w,
             block_h,
+            others,
         }
+    }
+
+    fn other_box(&self, other: &OtherText) -> Option<(Vec2, Vec2, [Vec2; 4])> {
+        let t = &other.text;
+        let anchor = self.program.image_uv_to_screen(vec2(t.x, t.y))?;
+        let h = self.half_extents_of(t, other.block_w, other.block_h);
+        let (s, c) = t.rotation.to_radians().sin_cos();
+        let rot = |v: Vec2| vec2(v.x * c - v.y * s, v.x * s + v.y * c);
+        let corners = [
+            anchor + rot(vec2(-h.x, -h.y)),
+            anchor + rot(vec2(h.x, -h.y)),
+            anchor + rot(vec2(h.x, h.y)),
+            anchor + rot(vec2(-h.x, h.y)),
+        ];
+        Some((anchor, h, corners))
+    }
+
+    fn other_hit(&self, local: Vec2) -> Option<usize> {
+        for other in &self.others {
+            let Some((anchor, h, _)) = self.other_box(other) else {
+                continue;
+            };
+            let (s, c) = (-other.text.rotation.to_radians()).sin_cos();
+            let d = local - anchor;
+            let unrot = vec2(d.x * c - d.y * s, d.x * s + d.y * c);
+            if unrot.x.abs() <= h.x + EDGE_BAND && unrot.y.abs() <= h.y + EDGE_BAND {
+                return Some(other.idx);
+            }
+        }
+        None
     }
 
     fn content(&self) -> &str {
@@ -149,14 +209,18 @@ impl TextOverlay {
             .image_uv_to_screen(vec2(self.text.x, self.text.y))
     }
 
-    fn half_extents_for(&self, block_w: f32, block_h: f32) -> Vec2 {
+    fn half_extents_of(&self, text: &Text, block_w: f32, block_h: f32) -> Vec2 {
         let scale = self.program.scale();
         let (bw, bh) = if block_w > 0.0 && block_h > 0.0 {
             (block_w, block_h)
         } else {
-            (self.text.size * 0.6, self.text.size)
+            (text.size * 0.6, text.size)
         };
         vec2((bw * scale * 0.5).max(6.0), (bh * scale * 0.5).max(6.0))
+    }
+
+    fn half_extents_for(&self, block_w: f32, block_h: f32) -> Vec2 {
+        self.half_extents_of(&self.text, block_w, block_h)
     }
 
     fn half_extents(&self) -> Vec2 {
@@ -188,6 +252,9 @@ impl TextOverlay {
     }
 
     fn hit(&self, local: Vec2) -> Option<Grab> {
+        if !self.active {
+            return None;
+        }
         let anchor = self.anchor_screen()?;
         let (scale_h, rot_h) = self.handle_positions(anchor);
         if (local - rot_h).length() <= HANDLE_HIT {
@@ -518,6 +585,9 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
             ..
         }) = event
         {
+            if !self.active {
+                return;
+            }
             state.shift = modifiers.shift();
             self.handle_keyboard(state, text.as_deref(), key, *modifiers, clipboard, shell);
             shell.capture_event();
@@ -532,7 +602,17 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
         match mouse_event {
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
                 let Some(local) = local else { return };
-                let Some(grab) = self.hit(local) else { return };
+                let Some(grab) = self.hit(local) else {
+                    if let Some(other_idx) = self.other_hit(local) {
+                        shell.publish(EditMsg::SetActive(other_idx).into());
+                        shell.capture_event();
+                        shell.request_redraw();
+                    } else if self.active {
+                        shell.publish(EditMsg::ClearActive.into());
+                        shell.request_redraw();
+                    }
+                    return;
+                };
                 let text_anchor = if grab == Grab::Text
                     && let Some(anchor) = self.anchor_screen()
                 {
@@ -600,18 +680,53 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
         _viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_ref::<State>();
-        let Some(anchor) = self.anchor_screen() else {
-            return;
-        };
         let accent = theme.extended_palette().primary.base.color;
         let widget_bounds = layout.bounds();
+        let pt = |v: Vec2| iced::Point::new(v.x, v.y);
+        let translation = iced::Vector::new(widget_bounds.x, widget_bounds.y);
+
+        let mut others_frame = Frame::new(renderer, widget_bounds.size());
+        for other in &self.others {
+            if let Some((_, _, corners)) = self.other_box(other) {
+                let path = Path::new(|b| {
+                    b.move_to(pt(corners[0]));
+                    b.line_to(pt(corners[1]));
+                    b.line_to(pt(corners[2]));
+                    b.line_to(pt(corners[3]));
+                    b.close();
+                });
+                others_frame.stroke(
+                    &path,
+                    Stroke::default()
+                        .with_color(OUTLINE.scale_alpha(0.5))
+                        .with_width(1.5),
+                );
+                others_frame.stroke(
+                    &path,
+                    Stroke::default()
+                        .with_color(Color::WHITE.scale_alpha(0.5))
+                        .with_width(1.0),
+                );
+            }
+        }
+
+        let anchor = match (self.active, self.anchor_screen()) {
+            (true, Some(a)) => a,
+            _ => {
+                let others_geometry = others_frame.into_geometry();
+                renderer.with_translation(translation, |renderer| {
+                    renderer.draw_geometry(others_geometry);
+                });
+                return;
+            }
+        };
+
         let (eff_text, block_w, block_h) = self.effective(state);
         let h = self.half_extents_for(block_w, block_h);
         let corners = self.corners_for(anchor, h);
         let (scale_h, rot_h) = self.handle_positions_for(anchor, h);
         let top_mid = (corners[0] + corners[1]) * 0.5;
 
-        let pt = |v: Vec2| iced::Point::new(v.x, v.y);
         let box_path = Path::new(|b| {
             b.move_to(pt(corners[0]));
             b.line_to(pt(corners[1]));
@@ -677,10 +792,11 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
         handle(scale_h, HANDLE_R, accent);
         handle(rot_h, HANDLE_R, accent);
 
+        let others_geometry = others_frame.into_geometry();
         let geometry = frame.into_geometry();
         let handle_geometry = handle_frame.into_geometry();
-        let translation = iced::Vector::new(widget_bounds.x, widget_bounds.y);
         renderer.with_translation(translation, |renderer| {
+            renderer.draw_geometry(others_geometry);
             renderer.draw_geometry(geometry);
             renderer.draw_geometry(handle_geometry);
         });
@@ -709,7 +825,13 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
             Some(Grab::Move) => mouse::Interaction::Grab,
             Some(Grab::Text) => mouse::Interaction::Text,
             Some(_) => mouse::Interaction::Crosshair,
-            None => mouse::Interaction::None,
+            None => {
+                if self.other_hit(local).is_some() {
+                    mouse::Interaction::Pointer
+                } else {
+                    mouse::Interaction::None
+                }
+            }
         }
     }
 }

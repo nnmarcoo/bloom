@@ -12,7 +12,7 @@ use crate::{
     components::notifications::NotificationEntry,
     components::{edit_panel, info_panel, notifications},
     gallery::Gallery,
-    modifiers::Modifier,
+    modifiers::{Modifier, kinds::Text},
     styles::{PAD, spinner_bg_style},
     wgpu::view_program::{Histogram, ViewProgram},
     widgets::{
@@ -84,13 +84,28 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
         );
     }
 
-    if ctx.selected_tool == &Tool::Text
-        && ctx.loading.is_none()
-        && let Some(idx) = ctx.active_modifier
-        && let Some(crate::modifiers::ModifierKind::Text(t)) =
-            ctx.modifiers.get(idx).map(|m| &m.kind)
-    {
-        layers.push(TextOverlay::new(ctx.program.clone(), idx, t).into());
+    if ctx.selected_tool == &Tool::Text && ctx.loading.is_none() {
+        use crate::modifiers::ModifierKind;
+        let active = ctx.active_modifier.and_then(|idx| match ctx.modifiers.get(idx) {
+            Some(m) => match &m.kind {
+                ModifierKind::Text(t) => Some((idx, t)),
+                _ => None,
+            },
+            None => None,
+        });
+        let active_idx = active.map(|(i, _)| i);
+        let others: Vec<(usize, Text)> = ctx
+            .modifiers
+            .iter()
+            .enumerate()
+            .filter_map(|(i, m)| match &m.kind {
+                ModifierKind::Text(t) if Some(i) != active_idx => Some((i, t.clone())),
+                _ => None,
+            })
+            .collect();
+        if active.is_some() || !others.is_empty() {
+            layers.push(TextOverlay::new(ctx.program.clone(), active, others).into());
+        }
     }
 
     if let Some(filename) = ctx.loading {
