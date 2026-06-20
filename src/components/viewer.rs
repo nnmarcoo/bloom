@@ -86,13 +86,15 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
 
     if ctx.selected_tool == &Tool::Text && ctx.loading.is_none() {
         use crate::modifiers::ModifierKind;
-        let active = ctx.active_modifier.and_then(|idx| match ctx.modifiers.get(idx) {
-            Some(m) => match &m.kind {
-                ModifierKind::Text(t) => Some((idx, t)),
-                _ => None,
-            },
-            None => None,
-        });
+        let active = ctx
+            .active_modifier
+            .and_then(|idx| match ctx.modifiers.get(idx) {
+                Some(m) => match &m.kind {
+                    ModifierKind::Text(t) => Some((idx, t)),
+                    _ => None,
+                },
+                None => None,
+            });
         let active_idx = active.map(|(i, _)| i);
         let others: Vec<(usize, Text)> = ctx
             .modifiers
