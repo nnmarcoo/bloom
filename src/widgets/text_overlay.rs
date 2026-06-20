@@ -20,6 +20,7 @@ const HANDLE_R: f32 = 6.0;
 const HANDLE_HIT: f32 = 12.0;
 const EDGE_BAND: f32 = 10.0;
 const DRAG_THRESHOLD: f32 = 2.0;
+const ROTATION_SNAP: f32 = 15.0;
 
 const OUTLINE: Color = Color {
     r: 0.0,
@@ -75,6 +76,7 @@ struct State {
     caret_idx: Option<usize>,
     selection: Option<usize>,
     pending: Option<String>,
+    shift: bool,
 }
 
 impl State {
@@ -218,7 +220,13 @@ impl TextOverlay {
         vec2(v.x * c - v.y * s, v.x * s + v.y * c)
     }
 
-    fn publish_drag(&self, drag: &DragState, local: Vec2, shell: &mut Shell<'_, Message>) {
+    fn publish_drag(
+        &self,
+        drag: &DragState,
+        local: Vec2,
+        shift: bool,
+        shell: &mut Shell<'_, Message>,
+    ) {
         match drag.grab {
             Grab::Move => {
                 if let (Some(start_uv), Some(cur_uv)) = (
@@ -248,6 +256,9 @@ impl TextOverlay {
                 let a1 = local - anchor;
                 let delta = a1.y.atan2(a1.x) - a0.y.atan2(a0.x);
                 let mut deg = drag.start_rotation + delta.to_degrees();
+                if shift {
+                    deg = (deg / ROTATION_SNAP).round() * ROTATION_SNAP;
+                }
                 while deg > 180.0 {
                     deg -= 360.0;
                 }
@@ -503,6 +514,11 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
             state.selection = Some(clamp_caret(&clamp_against, sel));
         }
 
+        if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
+            state.shift = modifiers.shift();
+            return;
+        }
+
         if let Event::Keyboard(keyboard::Event::KeyPressed {
             text,
             key,
@@ -510,6 +526,7 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
             ..
         }) = event
         {
+            state.shift = modifiers.shift();
             self.handle_keyboard(state, text.as_deref(), key, *modifiers, clipboard, shell);
             shell.capture_event();
             shell.request_redraw();
@@ -560,8 +577,9 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
                         state.selection = Some(anchor_byte);
                     }
                 } else {
+                    let shift = state.shift;
                     let drag = state.drag.as_ref().unwrap();
-                    self.publish_drag(drag, local, shell);
+                    self.publish_drag(drag, local, shift, shell);
                 }
                 shell.capture_event();
                 shell.request_redraw();
