@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use glam::{Vec2, vec2};
 use iced::advanced::Renderer as _;
 use iced::advanced::clipboard::Kind as ClipboardKind;
@@ -95,10 +97,6 @@ pub struct TextOverlay {
     program: ViewProgram,
     idx: usize,
     text: Text,
-    x: f32,
-    y: f32,
-    size: f32,
-    rotation: f32,
     block_w: f32,
     block_h: f32,
 }
@@ -110,10 +108,6 @@ impl TextOverlay {
             program,
             idx,
             text: text.clone(),
-            x: text.x,
-            y: text.y,
-            size: text.size,
-            rotation: text.rotation,
             block_w,
             block_h,
         }
@@ -123,15 +117,15 @@ impl TextOverlay {
         &self.text.content
     }
 
-    fn effective(&self, state: &State) -> (Text, f32, f32) {
+    fn effective(&self, state: &State) -> (Cow<'_, Text>, f32, f32) {
         match &state.pending {
             Some(s) if *s != self.text.content => {
                 let mut t = self.text.clone();
                 t.content = s.clone();
                 let (bw, bh) = text_render::measure_block(&t);
-                (t, bw, bh)
+                (Cow::Owned(t), bw, bh)
             }
-            _ => (self.text.clone(), self.block_w, self.block_h),
+            _ => (Cow::Borrowed(&self.text), self.block_w, self.block_h),
         }
     }
 
@@ -151,7 +145,8 @@ impl TextOverlay {
     }
 
     fn anchor_screen(&self) -> Option<Vec2> {
-        self.program.image_uv_to_screen(vec2(self.x, self.y))
+        self.program
+            .image_uv_to_screen(vec2(self.text.x, self.text.y))
     }
 
     fn half_extents_for(&self, block_w: f32, block_h: f32) -> Vec2 {
@@ -159,7 +154,7 @@ impl TextOverlay {
         let (bw, bh) = if block_w > 0.0 && block_h > 0.0 {
             (block_w, block_h)
         } else {
-            (self.size * 0.6, self.size)
+            (self.text.size * 0.6, self.text.size)
         };
         vec2((bw * scale * 0.5).max(6.0), (bh * scale * 0.5).max(6.0))
     }
@@ -169,7 +164,7 @@ impl TextOverlay {
     }
 
     fn rotate(&self, v: Vec2) -> Vec2 {
-        let (s, c) = self.rotation.to_radians().sin_cos();
+        let (s, c) = self.text.rotation.to_radians().sin_cos();
         vec2(v.x * c - v.y * s, v.x * s + v.y * c)
     }
 
@@ -216,7 +211,7 @@ impl TextOverlay {
     }
 
     fn unrotate(&self, v: Vec2) -> Vec2 {
-        let (s, c) = (-self.rotation.to_radians()).sin_cos();
+        let (s, c) = (-self.text.rotation.to_radians()).sin_cos();
         vec2(v.x * c - v.y * s, v.x * s + v.y * c)
     }
 
@@ -505,13 +500,10 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
         if state.pending.as_deref() == Some(self.content()) {
             state.pending = None;
         }
-        let clamp_against = state
-            .pending
-            .clone()
-            .unwrap_or_else(|| self.content().to_string());
-        state.caret = clamp_caret(&clamp_against, state.caret);
+        let clamp_against = state.pending.as_deref().unwrap_or(self.content());
+        state.caret = clamp_caret(clamp_against, state.caret);
         if let Some(sel) = state.selection {
-            state.selection = Some(clamp_caret(&clamp_against, sel));
+            state.selection = Some(clamp_caret(clamp_against, sel));
         }
 
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
@@ -554,10 +546,10 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
                 state.drag = Some(DragState {
                     grab,
                     start_cursor: local,
-                    start_x: self.x,
-                    start_y: self.y,
-                    start_size: self.size,
-                    start_rotation: self.rotation,
+                    start_x: self.text.x,
+                    start_y: self.text.y,
+                    start_size: self.text.size,
+                    start_rotation: self.text.rotation,
                     text_anchor,
                     moved: false,
                 });
