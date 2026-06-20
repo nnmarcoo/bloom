@@ -27,12 +27,6 @@ const OUTLINE: Color = Color {
     b: 0.0,
     a: 1.0,
 };
-const ACCENT: Color = Color {
-    r: 0.3,
-    g: 0.6,
-    b: 1.0,
-    a: 1.0,
-};
 
 fn clamp_caret(s: &str, caret: usize) -> usize {
     let caret = caret.min(s.len());
@@ -589,7 +583,7 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
         &self,
         tree: &Tree,
         renderer: &mut Renderer,
-        _theme: &Theme,
+        theme: &Theme,
         _style: &renderer::Style,
         layout: Layout<'_>,
         _cursor: mouse::Cursor,
@@ -599,6 +593,7 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
         let Some(anchor) = self.anchor_screen() else {
             return;
         };
+        let accent = theme.extended_palette().primary.base.color;
         let widget_bounds = layout.bounds();
         let (eff_text, block_w, block_h) = self.effective(state);
         let h = self.half_extents_for(block_w, block_h);
@@ -621,7 +616,7 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
         let is_active = state.caret_idx == Some(self.idx);
 
         if is_active && let Some((lo, hi)) = state.sel_range() {
-            let sel_fill = Color { a: 0.35, ..ACCENT };
+            let sel_fill = accent.scale_alpha(0.35);
             for (rx, ry, rw, rh) in text_render::selection_rects(&eff_text, lo, hi) {
                 let quad = Path::new(|b| {
                     b.move_to(pt(self.block_to_screen(anchor, h, rx, ry)));
@@ -656,7 +651,7 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
             );
             frame.stroke(
                 &caret_path,
-                Stroke::default().with_color(ACCENT).with_width(2.0),
+                Stroke::default().with_color(accent).with_width(2.0),
             );
         }
 
@@ -669,8 +664,8 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
         for c in corners {
             handle(c, HANDLE_R, Color::WHITE);
         }
-        handle(scale_h, HANDLE_R, ACCENT);
-        handle(rot_h, HANDLE_R, ACCENT);
+        handle(scale_h, HANDLE_R, accent);
+        handle(rot_h, HANDLE_R, accent);
 
         let geometry = frame.into_geometry();
         let handle_geometry = handle_frame.into_geometry();
