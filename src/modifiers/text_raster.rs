@@ -36,41 +36,12 @@ impl TextRaster {
         raster_text.size = raster_size;
 
         let bmp = text_render::rasterize_text(&raster_text, font_system, swash);
-        if bmp.is_empty() {
-            return None;
-        }
-
-        let bbox_w = (bmp.max_x - bmp.min_x).ceil().max(1.0);
-        let bbox_h = (bmp.max_y - bmp.min_y).ceil().max(1.0);
-        let bw = bbox_w as usize;
-        let bh = bbox_h as usize;
-
-        let mut alpha = vec![0u8; bw * bh];
-        for g in &bmp.glyphs {
-            let ox = (g.dst_x - bmp.min_x).round() as i32;
-            let oy = (g.dst_y - bmp.min_y).round() as i32;
-            let gw = g.width.round() as i32;
-            let gh = g.height.round() as i32;
-            for row in 0..gh {
-                let py = oy + row;
-                if py < 0 || py >= bh as i32 {
-                    continue;
-                }
-                for col in 0..gw {
-                    let px = ox + col;
-                    if px < 0 || px >= bw as i32 {
-                        continue;
-                    }
-                    let src = row as usize * gw as usize + col as usize;
-                    let Some(&a) = g.alpha.get(src) else { continue };
-                    if a == 0 {
-                        continue;
-                    }
-                    let dst = py as usize * bw + px as usize;
-                    alpha[dst] = alpha[dst].max(a);
-                }
-            }
-        }
+        let packed = bmp.pack_alpha()?;
+        let bbox_w = packed.bbox_w;
+        let bbox_h = packed.bbox_h;
+        let bw = packed.width as usize;
+        let bh = packed.height as usize;
+        let alpha = packed.alpha;
 
         let scale = text.size / raster_size;
         let (sin, cos) = text.rotation.to_radians().sin_cos();
@@ -191,6 +162,13 @@ mod tests {
     }
 }
 
+fn raster_resources()
+-> &'static std::sync::Mutex<(FontSystem, SwashCache)> {
+    use std::sync::{Mutex, OnceLock};
+    static RES: OnceLock<Mutex<(FontSystem, SwashCache)>> = OnceLock::new();
+    RES.get_or_init(|| Mutex::new((FontSystem::new(), SwashCache::new())))
+}
+
 pub fn build_layers(
     modifiers: &[crate::modifiers::Modifier],
     full_w: u32,
@@ -205,15 +183,15 @@ pub fn build_layers(
         return Vec::new();
     }
 
-    let mut font_system = FontSystem::new();
-    let mut swash = SwashCache::new();
+    let mut guard = raster_resources().lock().unwrap_or_else(|e| e.into_inner());
+    let (font_system, swash) = &mut *guard;
     modifiers
         .iter()
         .map(|m| {
             if m.has_visible_effect()
                 && let ModifierKind::Text(t) = &m.kind
             {
-                TextRaster::build(t, full_w, full_h, &mut font_system, &mut swash)
+                TextRaster::build(t, full_w, full_h, font_system, swash)
             } else {
                 None
             }

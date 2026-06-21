@@ -73,6 +73,17 @@ pub struct TextLayer {
     color: [f32; 3],
 }
 
+impl TextLayer {
+    pub fn refresh_transform(&mut self, text: &Text) {
+        self.x = text.x;
+        self.y = text.y;
+        self.size = text.size;
+        self.rotation = text.rotation;
+        self.opacity = text.opacity;
+        self.color = [text.r, text.g, text.b];
+    }
+}
+
 pub struct TextPass {
     pipeline: RenderPipeline,
     copy_pipeline: RenderPipeline,
@@ -168,41 +179,12 @@ impl TextPass {
         raster_text.size = raster_size;
 
         let bmp = text_render::rasterize_text(&raster_text, &mut self.font_system, &mut self.swash);
-        if bmp.is_empty() {
-            return None;
-        }
-
-        let bbox_w = (bmp.max_x - bmp.min_x).ceil().max(1.0);
-        let bbox_h = (bmp.max_y - bmp.min_y).ceil().max(1.0);
-        let tw = bbox_w as u32;
-        let th = bbox_h as u32;
-
-        let mut buf = vec![0u8; (tw as usize) * (th as usize)];
-        for g in &bmp.glyphs {
-            let ox = (g.dst_x - bmp.min_x).round() as i32;
-            let oy = (g.dst_y - bmp.min_y).round() as i32;
-            let gw = g.width.round() as i32;
-            let gh = g.height.round() as i32;
-            for row in 0..gh {
-                let py = oy + row;
-                if py < 0 || py >= th as i32 {
-                    continue;
-                }
-                for col in 0..gw {
-                    let px = ox + col;
-                    if px < 0 || px >= tw as i32 {
-                        continue;
-                    }
-                    let src = (row as usize) * (gw as usize) + col as usize;
-                    let Some(&a) = g.alpha.get(src) else { continue };
-                    if a == 0 {
-                        continue;
-                    }
-                    let dst = (py as usize) * (tw as usize) + px as usize;
-                    buf[dst] = buf[dst].max(a);
-                }
-            }
-        }
+        let packed = bmp.pack_alpha()?;
+        let bbox_w = packed.bbox_w;
+        let bbox_h = packed.bbox_h;
+        let tw = packed.width;
+        let th = packed.height;
+        let buf = packed.alpha;
 
         let mip_count = gpu::hw_mip_count(tw, th);
         let texture = gpu::texture_2d_mipmapped(

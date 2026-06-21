@@ -71,6 +71,31 @@ impl Default for Text {
     }
 }
 
+impl Text {
+    pub fn raster_hash(&self, density: f32) -> u64 {
+        use std::hash::Hasher;
+        let mut hasher = DefaultHasher::new();
+        self.content.hash(&mut hasher);
+        self.font.hash(&mut hasher);
+        hash_f32(self.size, &mut hasher);
+        hash_f32(density, &mut hasher);
+        hasher.finish()
+    }
+
+    pub fn hash_full(&self, hasher: &mut DefaultHasher) {
+        self.content.hash(hasher);
+        self.font.hash(hasher);
+        hash_f32(self.x, hasher);
+        hash_f32(self.y, hasher);
+        hash_f32(self.size, hasher);
+        hash_f32(self.rotation, hasher);
+        hash_f32(self.opacity, hasher);
+        hash_f32(self.r, hasher);
+        hash_f32(self.g, hasher);
+        hash_f32(self.b, hasher);
+    }
+}
+
 impl ModifierImpl for Text {
     fn name(&self) -> &'static str {
         "Text"

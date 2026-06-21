@@ -148,7 +148,7 @@ pub struct ModifierPipeline {
     ca_uniform_pool: Vec<iced::wgpu::Buffer>,
     text_uniform_pool: Vec<iced::wgpu::Buffer>,
     text_layers: Vec<Option<TextLayer>>,
-    text_density: f32,
+    text_sigs: Vec<Option<u64>>,
     combined: CombinedPass,
     chromatic_aberration: ChromaticAberrationPass,
     text: TextPass,
@@ -208,7 +208,7 @@ impl ModifierPipeline {
             ca_uniform_pool: Vec::new(),
             text_uniform_pool: Vec::new(),
             text_layers: Vec::new(),
-            text_density: 0.0,
+            text_sigs: Vec::new(),
             combined: CombinedPass::new(device, format),
             chromatic_aberration: ChromaticAberrationPass::new(device, format),
             text: TextPass::new(device, format),
@@ -270,26 +270,44 @@ impl ModifierPipeline {
         let downscale = proc_scale < 1.0;
 
         let text_density = text_raster_density(physical_scale);
-        let density_changed = (text_density - self.text_density).abs() > f32::EPSILON;
 
-        if dirty || density_changed || self.text_layers.len() != modifiers.len() {
-            let mut layers: Vec<Option<TextLayer>> = Vec::with_capacity(modifiers.len());
-            for m in modifiers {
-                let layer = if m.has_visible_effect()
-                    && let ModifierKind::Text(t) = &m.kind
-                {
-                    self.text.build_layer(device, queue, t, text_density)
-                } else {
-                    None
-                };
-                layers.push(layer);
-            }
-            self.text_layers = layers;
-            self.text_density = text_density;
-            if density_changed && !dirty {
-                for o in self.tile_outputs.iter_mut().flatten() {
-                    o.valid = false;
+        if self.text_layers.len() != modifiers.len() {
+            self.text_layers.clear();
+            self.text_layers.resize_with(modifiers.len(), || None);
+            self.text_sigs.clear();
+            self.text_sigs.resize(modifiers.len(), None);
+        }
+
+        let mut raster_changed = false;
+        for (i, m) in modifiers.iter().enumerate() {
+            let sig = if m.has_visible_effect()
+                && let ModifierKind::Text(t) = &m.kind
+            {
+                Some(t.raster_hash(text_density))
+            } else {
+                None
+            };
+
+            if self.text_sigs[i] == sig && self.text_layers[i].is_some() == sig.is_some() {
+                if let (Some(layer), ModifierKind::Text(t)) = (&mut self.text_layers[i], &m.kind) {
+                    layer.refresh_transform(t);
                 }
+                continue;
+            }
+
+            self.text_layers[i] = match (sig, &m.kind) {
+                (Some(_), ModifierKind::Text(t)) => {
+                    self.text.build_layer(device, queue, t, text_density)
+                }
+                _ => None,
+            };
+            self.text_sigs[i] = sig;
+            raster_changed = true;
+        }
+
+        if raster_changed && !dirty {
+            for o in self.tile_outputs.iter_mut().flatten() {
+                o.valid = false;
             }
         }
 

@@ -44,7 +44,7 @@ pub enum MediaData {
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ImageId(u64);
 
 #[derive(Debug)]

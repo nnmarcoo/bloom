@@ -38,10 +38,70 @@ pub struct TextBitmap {
     pub max_y: f32,
 }
 
+pub struct PackedAlpha {
+    pub alpha: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub bbox_w: f32,
+    pub bbox_h: f32,
+}
+
 impl TextBitmap {
     pub fn is_empty(&self) -> bool {
         self.glyphs.is_empty()
     }
+
+    pub fn pack_alpha(&self) -> Option<PackedAlpha> {
+        if self.is_empty() {
+            return None;
+        }
+        let bbox_w = (self.max_x - self.min_x).ceil().max(1.0);
+        let bbox_h = (self.max_y - self.min_y).ceil().max(1.0);
+        let w = bbox_w as u32;
+        let h = bbox_h as u32;
+        let mut buf = vec![0u8; (w as usize) * (h as usize)];
+
+        for g in &self.glyphs {
+            let ox = (g.dst_x - self.min_x).round() as i32;
+            let oy = (g.dst_y - self.min_y).round() as i32;
+            let gw = g.width.round() as i32;
+            let gh = g.height.round() as i32;
+            for row in 0..gh {
+                let py = oy + row;
+                if py < 0 || py >= h as i32 {
+                    continue;
+                }
+                for col in 0..gw {
+                    let px = ox + col;
+                    if px < 0 || px >= w as i32 {
+                        continue;
+                    }
+                    let src = (row as usize) * (gw as usize) + col as usize;
+                    let Some(&a) = g.alpha.get(src) else { continue };
+                    if a == 0 {
+                        continue;
+                    }
+                    let dst = (py as usize) * (w as usize) + px as usize;
+                    let prev = buf[dst];
+                    buf[dst] = src_over_u8(a, prev);
+                }
+            }
+        }
+
+        Some(PackedAlpha {
+            alpha: buf,
+            width: w,
+            height: h,
+            bbox_w,
+            bbox_h,
+        })
+    }
+}
+
+fn src_over_u8(src: u8, dst: u8) -> u8 {
+    let s = src as u32;
+    let d = dst as u32;
+    (s + d * (255 - s) / 255).min(255) as u8
 }
 
 fn shape_buffer(text: &Text, font_system: &mut FontSystem) -> Buffer {
@@ -73,9 +133,45 @@ pub fn measure_text(text: &Text, font_system: &mut FontSystem) -> (f32, f32) {
     (w, h)
 }
 
+fn measure_key(text: &Text) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    text.content.hash(&mut h);
+    text.font.hash(&mut h);
+    text.size.to_bits().hash(&mut h);
+    h.finish()
+}
+
 pub fn measure_block(text: &Text) -> (f32, f32) {
-    let mut guard = measuring_font_system();
-    measure_text(text, &mut guard)
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<u64, (f32, f32)>>> = OnceLock::new();
+    const CACHE_CAP: usize = 64;
+
+    if text.content.is_empty() {
+        return (0.0, 0.0);
+    }
+
+    let key = measure_key(text);
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = cache.lock()
+        && let Some(&v) = guard.get(&key)
+    {
+        return v;
+    }
+
+    let measured = {
+        let mut guard = measuring_font_system();
+        measure_text(text, &mut guard)
+    };
+    if let Ok(mut guard) = cache.lock() {
+        if guard.len() >= CACHE_CAP {
+            guard.clear();
+        }
+        guard.insert(key, measured);
+    }
+    measured
 }
 
 fn measuring_font_system() -> std::sync::MutexGuard<'static, FontSystem> {
@@ -272,7 +368,13 @@ pub fn rasterize_text(
 
             let alpha = match image.content {
                 SwashContent::Mask => image.data.clone(),
-                SwashContent::SubpixelMask => image.data.clone(),
+                SwashContent::SubpixelMask => image
+                    .data
+                    .chunks_exact(3)
+                    .map(|px| {
+                        (((px[0] as u16) + (px[1] as u16) + (px[2] as u16)) / 3) as u8
+                    })
+                    .collect::<Vec<u8>>(),
                 SwashContent::Color => image
                     .data
                     .chunks_exact(4)
