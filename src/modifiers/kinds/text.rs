@@ -147,19 +147,11 @@ impl ModifierImpl for Text {
         _image_size: Option<(u32, u32)>,
         _rotation: u8,
     ) -> Element<'_, Message> {
-        let fonts = crate::modifiers::text_render::font_families();
-        let selected_font = if self.font.is_empty() {
-            None
-        } else {
-            Some(self.font.clone())
-        };
-        let font_picker = iced::widget::pick_list(fonts, selected_font, move |f| {
-            EditMsg::Update(index, ModifierParam::TextFont(f)).into()
-        })
-        .placeholder("Default font")
-        .text_size(11)
-        .width(iced::Length::Fill)
-        .padding([4, 6]);
+        let font_picker =
+            crate::widgets::font_picker::FontPicker::new(self.font.clone(), move |f| {
+                EditMsg::Update(index, ModifierParam::TextFont(f)).into()
+            })
+            .width(iced::Length::Fill);
 
         finish(column![
             text_input("Type something...", &self.content)
