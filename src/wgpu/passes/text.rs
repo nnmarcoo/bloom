@@ -1,5 +1,4 @@
 use bytemuck::{Pod, Zeroable};
-use cosmic_text::{FontSystem, SwashCache};
 use std::borrow::Cow;
 
 use iced::wgpu::{
@@ -12,7 +11,7 @@ use iced::wgpu::{
 };
 
 use crate::{
-    modifiers::{gpu::TileInfo, kinds::Text, text_render},
+    modifiers::{gpu::TileInfo, kinds::Text, text_render, text_render::FontResources},
     wgpu::gpu,
 };
 
@@ -89,8 +88,6 @@ pub struct TextPass {
     copy_pipeline: RenderPipeline,
     bgl: BindGroupLayout,
     sampler: Sampler,
-    font_system: FontSystem,
-    swash: SwashCache,
 }
 
 impl TextPass {
@@ -162,13 +159,11 @@ impl TextPass {
             copy_pipeline,
             bgl,
             sampler,
-            font_system: FontSystem::new(),
-            swash: SwashCache::new(),
         }
     }
 
     pub fn build_layer(
-        &mut self,
+        &self,
         device: &Device,
         queue: &Queue,
         text: &Text,
@@ -178,8 +173,11 @@ impl TextPass {
         let mut raster_text = text.clone();
         raster_text.size = raster_size;
 
-        let bmp = text_render::rasterize_text(&raster_text, &mut self.font_system, &mut self.swash);
-        let packed = bmp.pack_alpha()?;
+        let packed = {
+            let mut guard = text_render::lock_font_resources();
+            let FontResources { font_system, swash } = &mut *guard;
+            text_render::rasterize_text(&raster_text, font_system, swash).pack_alpha()
+        }?;
         let bbox_w = packed.bbox_w;
         let bbox_h = packed.bbox_h;
         let tw = packed.width;

@@ -1,6 +1,27 @@
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache, SwashContent};
 
 use crate::modifiers::kinds::Text;
+
+pub struct FontResources {
+    pub font_system: FontSystem,
+    pub swash: SwashCache,
+}
+
+fn font_resources() -> &'static Mutex<FontResources> {
+    static RES: OnceLock<Mutex<FontResources>> = OnceLock::new();
+    RES.get_or_init(|| {
+        Mutex::new(FontResources {
+            font_system: FontSystem::new(),
+            swash: SwashCache::new(),
+        })
+    })
+}
+
+pub fn lock_font_resources() -> MutexGuard<'static, FontResources> {
+    font_resources().lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn enumerate_families(font_system: &FontSystem) -> Vec<String> {
     let mut families: Vec<String> = font_system
@@ -14,11 +35,10 @@ fn enumerate_families(font_system: &FontSystem) -> Vec<String> {
 }
 
 pub fn font_families() -> &'static [String] {
-    use std::sync::OnceLock;
     static FONTS: OnceLock<Vec<String>> = OnceLock::new();
     FONTS.get_or_init(|| {
-        let fs = FontSystem::new();
-        enumerate_families(&fs)
+        let guard = lock_font_resources();
+        enumerate_families(&guard.font_system)
     })
 }
 
@@ -162,8 +182,8 @@ pub fn measure_block(text: &Text) -> (f32, f32) {
     }
 
     let measured = {
-        let mut guard = measuring_font_system();
-        measure_text(text, &mut guard)
+        let mut guard = lock_font_resources();
+        measure_text(text, &mut guard.font_system)
     };
     if let Ok(mut guard) = cache.lock() {
         if guard.len() >= CACHE_CAP {
@@ -172,13 +192,6 @@ pub fn measure_block(text: &Text) -> (f32, f32) {
         guard.insert(key, measured);
     }
     measured
-}
-
-fn measuring_font_system() -> std::sync::MutexGuard<'static, FontSystem> {
-    use std::sync::{Mutex, OnceLock};
-    static FS: OnceLock<Mutex<FontSystem>> = OnceLock::new();
-    let fs = FS.get_or_init(|| Mutex::new(FontSystem::new()));
-    fs.lock().unwrap()
 }
 
 fn block_origin(buffer: &Buffer) -> (f32, f32) {
@@ -216,8 +229,8 @@ pub fn caret_offset(text: &Text, caret: usize) -> (f32, f32, f32) {
     if text.content.is_empty() {
         return (0.0, 0.0, default_h);
     }
-    let mut guard = measuring_font_system();
-    let buffer = shape_buffer(text, &mut guard);
+    let mut guard = lock_font_resources();
+    let buffer = shape_buffer(text, &mut guard.font_system);
     let (ox, oy) = block_origin(&buffer);
     let bases = line_byte_bases(&text.content);
     let content_len = text.content.len();
@@ -251,8 +264,8 @@ pub fn selection_rects(text: &Text, lo: usize, hi: usize) -> Vec<(f32, f32, f32,
     if lo >= hi || text.content.is_empty() {
         return Vec::new();
     }
-    let mut guard = measuring_font_system();
-    let buffer = shape_buffer(text, &mut guard);
+    let mut guard = lock_font_resources();
+    let buffer = shape_buffer(text, &mut guard.font_system);
     let (ox, oy) = block_origin(&buffer);
     let bases = line_byte_bases(&text.content);
     let content_len = text.content.len();
@@ -293,8 +306,8 @@ pub fn caret_at_point(text: &Text, local_x: f32, local_y: f32) -> usize {
     if text.content.is_empty() {
         return 0;
     }
-    let mut guard = measuring_font_system();
-    let buffer = shape_buffer(text, &mut guard);
+    let mut guard = lock_font_resources();
+    let buffer = shape_buffer(text, &mut guard.font_system);
     let (ox, oy) = block_origin(&buffer);
     let bases = line_byte_bases(&text.content);
     let content_len = text.content.len();
@@ -371,9 +384,7 @@ pub fn rasterize_text(
                 SwashContent::SubpixelMask => image
                     .data
                     .chunks_exact(3)
-                    .map(|px| {
-                        (((px[0] as u16) + (px[1] as u16) + (px[2] as u16)) / 3) as u8
-                    })
+                    .map(|px| (((px[0] as u16) + (px[1] as u16) + (px[2] as u16)) / 3) as u8)
                     .collect::<Vec<u8>>(),
                 SwashContent::Color => image
                     .data

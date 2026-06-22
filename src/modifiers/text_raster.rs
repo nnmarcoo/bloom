@@ -2,6 +2,7 @@ use cosmic_text::{FontSystem, SwashCache};
 
 use crate::modifiers::kinds::Text;
 use crate::modifiers::text_render;
+use crate::modifiers::text_render::FontResources;
 
 const REFERENCE_SIZE: f32 = 1024.0;
 
@@ -162,13 +163,6 @@ mod tests {
     }
 }
 
-fn raster_resources()
--> &'static std::sync::Mutex<(FontSystem, SwashCache)> {
-    use std::sync::{Mutex, OnceLock};
-    static RES: OnceLock<Mutex<(FontSystem, SwashCache)>> = OnceLock::new();
-    RES.get_or_init(|| Mutex::new((FontSystem::new(), SwashCache::new())))
-}
-
 pub fn build_layers(
     modifiers: &[crate::modifiers::Modifier],
     full_w: u32,
@@ -183,8 +177,8 @@ pub fn build_layers(
         return Vec::new();
     }
 
-    let mut guard = raster_resources().lock().unwrap_or_else(|e| e.into_inner());
-    let (font_system, swash) = &mut *guard;
+    let mut guard = text_render::lock_font_resources();
+    let FontResources { font_system, swash } = &mut *guard;
     modifiers
         .iter()
         .map(|m| {
