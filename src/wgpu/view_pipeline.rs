@@ -270,12 +270,12 @@ impl ViewPipeline {
         queue: &Queue,
         modifiers: &[Modifier],
         dirty: bool,
-    ) {
+    ) -> bool {
         let source = match &self.source {
             Some(s) => s,
             None => {
                 self.modifier_pipeline = None;
-                return;
+                return false;
             }
         };
 
@@ -284,7 +284,7 @@ impl ViewPipeline {
 
         if !modifiers.iter().any(|m| m.has_visible_effect()) {
             self.modifier_pipeline = None;
-            return;
+            return false;
         }
 
         let (w, h) = (source.full_width, source.full_height);
@@ -296,10 +296,13 @@ impl ViewPipeline {
 
         if needs_create {
             let mut mp = ModifierPipeline::new(device, self.format, w, h);
-            mp.prepare(device, queue, source, modifiers, false);
+            let pending = mp.prepare(device, queue, source, modifiers, false);
             self.modifier_pipeline = Some(mp);
+            pending
         } else if let Some(mp) = &mut self.modifier_pipeline {
-            mp.prepare(device, queue, source, modifiers, dirty);
+            mp.prepare(device, queue, source, modifiers, dirty)
+        } else {
+            false
         }
     }
 

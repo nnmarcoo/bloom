@@ -33,6 +33,7 @@ pub struct ViewPrimitive {
     pub modifiers: Arc<Vec<Modifier>>,
     pub dirty: bool,
     pub pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
+    pub text_rebuild_pending: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Primitive for ViewPrimitive {
@@ -80,7 +81,10 @@ impl Primitive for ViewPrimitive {
             grid.viewport = grid.viewport.map(|v| v * sf);
             pipeline.update_pixel_grid(queue, &grid);
         }
-        pipeline.prepare_modifiers(device, queue, &self.modifiers, self.dirty);
+        let rebuild_pending =
+            pipeline.prepare_modifiers(device, queue, &self.modifiers, self.dirty);
+        self.text_rebuild_pending
+            .store(rebuild_pending, Ordering::Release);
     }
 
     fn render(
