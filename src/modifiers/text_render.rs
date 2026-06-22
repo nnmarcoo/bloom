@@ -144,6 +144,10 @@ pub fn measure_text(text: &Text, font_system: &mut FontSystem) -> (f32, f32) {
         return (0.0, 0.0);
     }
     let buffer = shape_buffer(text, font_system);
+    measure_buffer(&buffer)
+}
+
+fn measure_buffer(buffer: &Buffer) -> (f32, f32) {
     let mut w: f32 = 0.0;
     let mut h: f32 = 0.0;
     for run in buffer.layout_runs() {
@@ -151,6 +155,155 @@ pub fn measure_text(text: &Text, font_system: &mut FontSystem) -> (f32, f32) {
         h = h.max(run.line_top + run.line_height);
     }
     (w, h)
+}
+
+pub struct ShapedText {
+    buffer: Option<Buffer>,
+    ox: f32,
+    oy: f32,
+    bases: Vec<usize>,
+    content_len: usize,
+    default_h: f32,
+}
+
+impl ShapedText {
+    pub fn shape(text: &Text) -> Self {
+        let default_h = text.size * 1.2;
+        if text.content.is_empty() {
+            return Self {
+                buffer: None,
+                ox: 0.0,
+                oy: 0.0,
+                bases: vec![0],
+                content_len: 0,
+                default_h,
+            };
+        }
+        let buffer = {
+            let mut guard = lock_font_resources();
+            shape_buffer(text, &mut guard.font_system)
+        };
+        let (ox, oy) = block_origin(&buffer);
+        Self {
+            bases: line_byte_bases(&text.content),
+            content_len: text.content.len(),
+            ox,
+            oy,
+            default_h,
+            buffer: Some(buffer),
+        }
+    }
+
+    pub fn measure(&self) -> (f32, f32) {
+        let Some(buffer) = &self.buffer else {
+            return (0.0, 0.0);
+        };
+        measure_buffer(buffer)
+    }
+
+    pub fn caret_offset(&self, caret: usize) -> (f32, f32, f32) {
+        let Some(buffer) = &self.buffer else {
+            return (0.0, 0.0, self.default_h);
+        };
+        let mut fallback: Option<(f32, f32, f32)> = None;
+        for run in buffer.layout_runs() {
+            let (base, line_end) = line_byte_span(&self.bases, run.line_i, self.content_len);
+            fallback = Some((0.0, run.line_top, run.line_height));
+
+            if caret < base || caret > line_end {
+                continue;
+            }
+
+            let mut x = 0.0;
+            for glyph in run.glyphs.iter() {
+                if caret < base + glyph.end {
+                    x = glyph.x;
+                    break;
+                }
+                x = glyph.x + glyph.w;
+            }
+            return (x - self.ox, run.line_top - self.oy, run.line_height);
+        }
+
+        let (cx, cy, ch) = fallback.unwrap_or((0.0, 0.0, self.default_h));
+        (cx - self.ox, cy - self.oy, ch)
+    }
+
+    pub fn selection_rects(&self, lo: usize, hi: usize) -> Vec<(f32, f32, f32, f32)> {
+        let Some(buffer) = &self.buffer else {
+            return Vec::new();
+        };
+        if lo >= hi {
+            return Vec::new();
+        }
+        let mut rects = Vec::new();
+        for run in buffer.layout_runs() {
+            let (base, line_end) = line_byte_span(&self.bases, run.line_i, self.content_len);
+            let s = lo.max(base);
+            let e = hi.min(line_end);
+            if s > e {
+                continue;
+            }
+
+            let mut x0: Option<f32> = None;
+            let mut x1: Option<f32> = None;
+            for glyph in run.glyphs.iter() {
+                let g_start = base + glyph.start;
+                let g_end = base + glyph.end;
+                if g_end <= s {
+                    continue;
+                }
+                if g_start >= e {
+                    break;
+                }
+                x0 = Some(x0.map_or(glyph.x, |v: f32| v.min(glyph.x)));
+                x1 = Some(x1.map_or(glyph.x + glyph.w, |v: f32| v.max(glyph.x + glyph.w)));
+            }
+            if let (Some(a), Some(b)) = (x0, x1)
+                && b > a
+            {
+                rects.push((a - self.ox, run.line_top - self.oy, b - a, run.line_height));
+            }
+        }
+        rects
+    }
+
+    pub fn caret_at_point(&self, local_x: f32, local_y: f32) -> usize {
+        let Some(buffer) = &self.buffer else {
+            return 0;
+        };
+        let px = local_x + self.ox;
+        let py = local_y + self.oy;
+
+        let mut chosen: Option<usize> = None;
+        let mut best_dy = f32::INFINITY;
+
+        for run in buffer.layout_runs() {
+            let top = run.line_top;
+            let bot = run.line_top + run.line_height;
+            let dy = if py < top {
+                top - py
+            } else if py > bot {
+                py - bot
+            } else {
+                0.0
+            };
+            if dy < best_dy {
+                best_dy = dy;
+                let (base, line_end) = line_byte_span(&self.bases, run.line_i, self.content_len);
+                let mut idx = line_end;
+                for glyph in run.glyphs.iter() {
+                    let mid = glyph.x + glyph.w * 0.5;
+                    if px < mid {
+                        idx = base + glyph.start;
+                        break;
+                    }
+                }
+                chosen = Some(idx);
+            }
+        }
+        chosen.unwrap_or(0)
+    }
 }
 
 fn measure_key(text: &Text) -> u64 {
@@ -224,124 +377,8 @@ fn line_byte_span(bases: &[usize], line_i: usize, content_len: usize) -> (usize,
     (base, end)
 }
 
-pub fn caret_offset(text: &Text, caret: usize) -> (f32, f32, f32) {
-    let default_h = text.size * 1.2;
-    if text.content.is_empty() {
-        return (0.0, 0.0, default_h);
-    }
-    let mut guard = lock_font_resources();
-    let buffer = shape_buffer(text, &mut guard.font_system);
-    let (ox, oy) = block_origin(&buffer);
-    let bases = line_byte_bases(&text.content);
-    let content_len = text.content.len();
-
-    let mut fallback: Option<(f32, f32, f32)> = None;
-
-    for run in buffer.layout_runs() {
-        let (base, line_end) = line_byte_span(&bases, run.line_i, content_len);
-        fallback = Some((0.0, run.line_top, run.line_height));
-
-        if caret < base || caret > line_end {
-            continue;
-        }
-
-        let mut x = 0.0;
-        for glyph in run.glyphs.iter() {
-            if caret < base + glyph.end {
-                x = glyph.x;
-                break;
-            }
-            x = glyph.x + glyph.w;
-        }
-        return (x - ox, run.line_top - oy, run.line_height);
-    }
-
-    let (cx, cy, ch) = fallback.unwrap_or((0.0, 0.0, default_h));
-    (cx - ox, cy - oy, ch)
-}
-
-pub fn selection_rects(text: &Text, lo: usize, hi: usize) -> Vec<(f32, f32, f32, f32)> {
-    if lo >= hi || text.content.is_empty() {
-        return Vec::new();
-    }
-    let mut guard = lock_font_resources();
-    let buffer = shape_buffer(text, &mut guard.font_system);
-    let (ox, oy) = block_origin(&buffer);
-    let bases = line_byte_bases(&text.content);
-    let content_len = text.content.len();
-    let mut rects = Vec::new();
-
-    for run in buffer.layout_runs() {
-        let (base, line_end) = line_byte_span(&bases, run.line_i, content_len);
-        let s = lo.max(base);
-        let e = hi.min(line_end);
-        if s > e {
-            continue;
-        }
-
-        let mut x0: Option<f32> = None;
-        let mut x1: Option<f32> = None;
-        for glyph in run.glyphs.iter() {
-            let g_start = base + glyph.start;
-            let g_end = base + glyph.end;
-            if g_end <= s {
-                continue;
-            }
-            if g_start >= e {
-                break;
-            }
-            x0 = Some(x0.map_or(glyph.x, |v: f32| v.min(glyph.x)));
-            x1 = Some(x1.map_or(glyph.x + glyph.w, |v: f32| v.max(glyph.x + glyph.w)));
-        }
-        if let (Some(a), Some(b)) = (x0, x1)
-            && b > a
-        {
-            rects.push((a - ox, run.line_top - oy, b - a, run.line_height));
-        }
-    }
-    rects
-}
-
 pub fn caret_at_point(text: &Text, local_x: f32, local_y: f32) -> usize {
-    if text.content.is_empty() {
-        return 0;
-    }
-    let mut guard = lock_font_resources();
-    let buffer = shape_buffer(text, &mut guard.font_system);
-    let (ox, oy) = block_origin(&buffer);
-    let bases = line_byte_bases(&text.content);
-    let content_len = text.content.len();
-    let px = local_x + ox;
-    let py = local_y + oy;
-
-    let mut chosen: Option<usize> = None;
-    let mut best_dy = f32::INFINITY;
-
-    for run in buffer.layout_runs() {
-        let top = run.line_top;
-        let bot = run.line_top + run.line_height;
-        let dy = if py < top {
-            top - py
-        } else if py > bot {
-            py - bot
-        } else {
-            0.0
-        };
-        if dy < best_dy {
-            best_dy = dy;
-            let (base, line_end) = line_byte_span(&bases, run.line_i, content_len);
-            let mut idx = line_end;
-            for glyph in run.glyphs.iter() {
-                let mid = glyph.x + glyph.w * 0.5;
-                if px < mid {
-                    idx = base + glyph.start;
-                    break;
-                }
-            }
-            chosen = Some(idx);
-        }
-    }
-    chosen.unwrap_or(0)
+    ShapedText::shape(text).caret_at_point(local_x, local_y)
 }
 
 pub fn rasterize_text(

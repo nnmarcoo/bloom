@@ -177,21 +177,33 @@ impl TextOverlay {
         &self.text.content
     }
 
-    fn effective(&self, state: &State) -> (Cow<'_, Text>, f32, f32) {
+    fn effective_text(&self, state: &State) -> Cow<'_, Text> {
         match &state.pending {
             Some(s) if *s != self.text.content => {
                 let mut t = self.text.clone();
                 t.content = s.clone();
-                let (bw, bh) = text_render::measure_block(&t);
-                (Cow::Owned(t), bw, bh)
+                Cow::Owned(t)
             }
-            _ => (Cow::Borrowed(&self.text), self.block_w, self.block_h),
+            _ => Cow::Borrowed(&self.text),
         }
     }
 
-    fn caret_segment(&self, anchor: Vec2, text: &Text, h: Vec2, caret: usize) -> (Vec2, Vec2) {
+    fn measured(&self, state: &State, eff_text: &Text) -> (f32, f32) {
+        match &state.pending {
+            Some(s) if *s != self.text.content => text_render::measure_block(eff_text),
+            _ => (self.block_w, self.block_h),
+        }
+    }
+
+    fn caret_segment(
+        &self,
+        anchor: Vec2,
+        shaped: &text_render::ShapedText,
+        h: Vec2,
+        caret: usize,
+    ) -> (Vec2, Vec2) {
         let scale = self.program.scale();
-        let (cx, cy, line_h) = text_render::caret_offset(text, caret);
+        let (cx, cy, line_h) = shaped.caret_offset(caret);
         let box_h = h.y * 2.0;
         let caret_h = (line_h * scale).min(box_h);
         let x = -h.x + cx * scale;
@@ -721,7 +733,15 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
             }
         };
 
-        let (eff_text, block_w, block_h) = self.effective(state);
+        let is_active = state.caret_idx == Some(self.idx);
+
+        let eff_text = self.effective_text(state);
+        let shaped = is_active.then(|| text_render::ShapedText::shape(&eff_text));
+
+        let (block_w, block_h) = match &shaped {
+            Some(s) => s.measure(),
+            None => self.measured(state, &eff_text),
+        };
         let h = self.half_extents_for(block_w, block_h);
         let corners = self.corners_for(anchor, h);
         let (scale_h, rot_h) = self.handle_positions_for(anchor, h);
@@ -738,11 +758,9 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
         });
         let mut frame = Frame::new(renderer, widget_bounds.size());
 
-        let is_active = state.caret_idx == Some(self.idx);
-
         if is_active && let Some((lo, hi)) = state.sel_range() {
             let sel_fill = accent.scale_alpha(0.35);
-            for (rx, ry, rw, rh) in text_render::selection_rects(&eff_text, lo, hi) {
+            for (rx, ry, rw, rh) in shaped.as_ref().unwrap().selection_rects(lo, hi) {
                 let quad = Path::new(|b| {
                     b.move_to(pt(self.block_to_screen(anchor, h, rx, ry)));
                     b.line_to(pt(self.block_to_screen(anchor, h, rx + rw, ry)));
@@ -765,7 +783,7 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
 
         if is_active && state.sel_range().is_none() {
             let caret = clamp_caret(&eff_text.content, state.caret);
-            let (top, bot) = self.caret_segment(anchor, &eff_text, h, caret);
+            let (top, bot) = self.caret_segment(anchor, shaped.as_ref().unwrap(), h, caret);
             let caret_path = Path::new(|b| {
                 b.move_to(pt(top));
                 b.line_to(pt(bot));
