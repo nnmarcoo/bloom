@@ -240,6 +240,14 @@ fn add_row<'a>() -> Element<'a, Message> {
                     )
                 )
                 .side(SubMenuSide::Left),
+                sub_menu(
+                    "Create",
+                    styled_menu(
+                        column![menu_item("Text", EditMsg::Add(ModifierType::Text).into()),],
+                        160
+                    )
+                )
+                .side(SubMenuSide::Left),
             ],
             180,
         ),

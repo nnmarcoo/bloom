@@ -49,8 +49,12 @@ pub fn view<'a>(
                 Position::Left,
             ),
             with_tooltip(
-                svg_button_disabled(include_bytes!("../../assets/icons/text.svg")),
-                "Text (coming soon)",
+                tool_button(
+                    include_bytes!("../../assets/icons/text.svg"),
+                    Tool::Text,
+                    selected_tool,
+                ),
+                "Text",
                 Position::Left,
             ),
             with_tooltip(

@@ -7,10 +7,18 @@ use iced::wgpu::{
 
 use crate::{
     modifiers::{
-        Modifier,
+        InputClass, Modifier, ModifierKind,
         gpu::{ModUniforms, TileInfo, build_segment_uniforms},
     },
-    wgpu::{gpu, tiled_source::TiledSource, view_pipeline::tile_ndc_culled},
+    wgpu::{
+        gpu,
+        passes::{
+            chromatic_aberration::ChromaticAberrationPass,
+            text::{TextLayer, TextPass},
+        },
+        tiled_source::TiledSource,
+        view_pipeline::tile_ndc_culled,
+    },
 };
 
 struct CombinedPass {
@@ -94,19 +102,31 @@ impl ScratchTarget {
     }
 }
 
-fn segment_modifiers(modifiers: &[Modifier]) -> Vec<Vec<&Modifier>> {
-    let mut segments: Vec<Vec<&Modifier>> = Vec::new();
+enum PlanItem<'a> {
+    Fused(Vec<&'a Modifier>),
+    Step(usize, &'a Modifier),
+}
+
+fn plan_modifiers(modifiers: &[Modifier]) -> Vec<PlanItem<'_>> {
+    let mut plan: Vec<PlanItem> = Vec::new();
     let mut current: Vec<&Modifier> = Vec::new();
-    for m in modifiers.iter().filter(|m| m.has_visible_effect()) {
-        if m.kind.is_resampling() && !current.is_empty() {
-            segments.push(std::mem::take(&mut current));
+    for (i, m) in modifiers.iter().enumerate() {
+        if !m.has_visible_effect() {
+            continue;
         }
-        current.push(m);
+        if matches!(m.kind.input_class(), InputClass::NonPointwise) {
+            if !current.is_empty() {
+                plan.push(PlanItem::Fused(std::mem::take(&mut current)));
+            }
+            plan.push(PlanItem::Step(i, m));
+        } else {
+            current.push(m);
+        }
     }
     if !current.is_empty() {
-        segments.push(current);
+        plan.push(PlanItem::Fused(current));
     }
-    segments
+    plan
 }
 
 pub struct ModifierPipeline {
@@ -118,7 +138,13 @@ pub struct ModifierPipeline {
     scratch_b: Option<ScratchTarget>,
 
     uniform_pool: Vec<iced::wgpu::Buffer>,
+    ca_uniform_pool: Vec<iced::wgpu::Buffer>,
+    text_uniform_pool: Vec<iced::wgpu::Buffer>,
+    text_layers: Vec<Option<TextLayer>>,
+    text_sigs: Vec<Option<u64>>,
     combined: CombinedPass,
+    chromatic_aberration: ChromaticAberrationPass,
+    text: TextPass,
     display_bgl: BindGroupLayout,
     trilinear_sampler: Sampler,
     linear_sampler: Sampler,
@@ -172,7 +198,13 @@ impl ModifierPipeline {
             scratch_a: None,
             scratch_b: None,
             uniform_pool: Vec::new(),
+            ca_uniform_pool: Vec::new(),
+            text_uniform_pool: Vec::new(),
+            text_layers: Vec::new(),
+            text_sigs: Vec::new(),
             combined: CombinedPass::new(device, format),
+            chromatic_aberration: ChromaticAberrationPass::new(device, format),
+            text: TextPass::new(device, format),
             display_bgl,
             trilinear_sampler,
             linear_sampler,
@@ -230,9 +262,51 @@ impl ModifierPipeline {
         };
         let downscale = proc_scale < 1.0;
 
-        let mut segments: Option<Vec<Vec<&Modifier>>> = None;
+        if self.text_layers.len() != modifiers.len() {
+            self.text_layers.clear();
+            self.text_layers.resize_with(modifiers.len(), || None);
+            self.text_sigs.clear();
+            self.text_sigs.resize(modifiers.len(), None);
+        }
+
+        let mut raster_changed = false;
+        for (i, m) in modifiers.iter().enumerate() {
+            let sig = if m.has_visible_effect()
+                && let ModifierKind::Text(t) = &m.kind
+            {
+                Some(t.raster_hash())
+            } else {
+                None
+            };
+
+            let unchanged =
+                self.text_sigs[i] == sig && self.text_layers[i].is_some() == sig.is_some();
+            if unchanged {
+                if let (Some(layer), ModifierKind::Text(t)) = (&mut self.text_layers[i], &m.kind) {
+                    layer.refresh_transform(t);
+                }
+                continue;
+            }
+
+            self.text_layers[i] = match (sig, &m.kind) {
+                (Some(_), ModifierKind::Text(t)) => self.text.build_layer(device, queue, t),
+                _ => None,
+            };
+            self.text_sigs[i] = sig;
+            raster_changed = true;
+        }
+
+        if raster_changed && !dirty {
+            for o in self.tile_outputs.iter_mut().flatten() {
+                o.valid = false;
+            }
+        }
+
+        let mut plan: Option<Vec<PlanItem>> = None;
         let mut encoder: Option<CommandEncoder> = None;
         let mut pool_used = 0usize;
+        let mut ca_pool_used = 0usize;
+        let mut text_pool_used = 0usize;
 
         for ti in 0..n_tiles {
             let tile = &source.tiles[ti];
@@ -297,9 +371,9 @@ impl ModifierPipeline {
                     full_h: source.full_height,
                 };
 
-                let segs = segments.get_or_insert_with(|| segment_modifiers(modifiers));
-                let n_seg = segs.len();
-                if n_seg > 1 {
+                let plan = plan.get_or_insert_with(|| plan_modifiers(modifiers));
+                let n_items = plan.len();
+                if n_items > 1 {
                     self.ensure_scratch(device, eff_w, eff_h);
                 }
 
@@ -307,8 +381,8 @@ impl ModifierPipeline {
                 let sampler = &self.trilinear_sampler;
                 let output_view = &self.tile_outputs[ti].as_ref().unwrap().view;
                 let mut prev: &TextureView = &tile.source_view;
-                for (k, seg) in segs.iter().enumerate() {
-                    let out: &TextureView = if k == n_seg - 1 {
+                for (k, item) in plan.iter().enumerate() {
+                    let out: &TextureView = if k == n_items - 1 {
                         output_view
                     } else if k % 2 == 0 {
                         &self.scratch_a.as_ref().unwrap().view
@@ -316,31 +390,81 @@ impl ModifierPipeline {
                         &self.scratch_b.as_ref().unwrap().view
                     };
 
-                    let uniforms = build_segment_uniforms(seg, &tile_info);
-                    if pool_used == self.uniform_pool.len() {
-                        self.uniform_pool.push(gpu::uniform_buffer::<ModUniforms>(
-                            device,
-                            Some("combined-modifiers-uniform"),
-                        ));
-                    }
-                    let buffer = &self.uniform_pool[pool_used];
-                    pool_used += 1;
-                    gpu::write_uniform(queue, buffer, &uniforms);
-                    let bg = gpu::standard_bind_group(
-                        device,
-                        &combined.bgl,
-                        buffer,
-                        prev,
-                        sampler,
-                        Some("combined-modifiers-bg"),
-                    );
+                    match item {
+                        PlanItem::Fused(seg) => {
+                            let uniforms = build_segment_uniforms(seg, &tile_info);
+                            if pool_used == self.uniform_pool.len() {
+                                self.uniform_pool.push(gpu::uniform_buffer::<ModUniforms>(
+                                    device,
+                                    Some("combined-modifiers-uniform"),
+                                ));
+                            }
+                            let buffer = &self.uniform_pool[pool_used];
+                            pool_used += 1;
+                            gpu::write_uniform(queue, buffer, &uniforms);
+                            let bg = gpu::standard_bind_group(
+                                device,
+                                &combined.bgl,
+                                buffer,
+                                prev,
+                                sampler,
+                                Some("combined-modifiers-bg"),
+                            );
 
-                    let enc = encoder.get_or_insert_with(|| {
-                        device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
-                            label: Some("modifier-pipeline-encoder"),
-                        })
-                    });
-                    combined.run(enc, &bg, out);
+                            let enc = encoder.get_or_insert_with(|| {
+                                device.create_command_encoder(
+                                    &iced::wgpu::CommandEncoderDescriptor {
+                                        label: Some("modifier-pipeline-encoder"),
+                                    },
+                                )
+                            });
+                            combined.run(enc, &bg, out);
+                        }
+                        PlanItem::Step(idx, m) => match &m.kind {
+                            ModifierKind::ChromaticAberration(ca) => {
+                                let amount = ca.amount;
+                                if ca_pool_used == self.ca_uniform_pool.len() {
+                                    self.ca_uniform_pool
+                                        .push(self.chromatic_aberration.uniform_buffer(device));
+                                }
+                                let buffer = &self.ca_uniform_pool[ca_pool_used];
+                                ca_pool_used += 1;
+                                let enc = encoder.get_or_insert_with(|| {
+                                    device.create_command_encoder(
+                                        &iced::wgpu::CommandEncoderDescriptor {
+                                            label: Some("modifier-pipeline-encoder"),
+                                        },
+                                    )
+                                });
+                                self.chromatic_aberration.record(
+                                    device, queue, enc, buffer, amount, &tile_info, prev, out,
+                                );
+                            }
+                            ModifierKind::Text(_) => {
+                                if let Some(layer) =
+                                    self.text_layers.get(*idx).and_then(|l| l.as_ref())
+                                {
+                                    if text_pool_used == self.text_uniform_pool.len() {
+                                        self.text_uniform_pool
+                                            .push(self.text.uniform_buffer(device));
+                                    }
+                                    let buffer = &self.text_uniform_pool[text_pool_used];
+                                    text_pool_used += 1;
+                                    let enc = encoder.get_or_insert_with(|| {
+                                        device.create_command_encoder(
+                                            &iced::wgpu::CommandEncoderDescriptor {
+                                                label: Some("modifier-pipeline-encoder"),
+                                            },
+                                        )
+                                    });
+                                    self.text.record(
+                                        device, queue, enc, buffer, layer, &tile_info, prev, out,
+                                    );
+                                }
+                            }
+                            _ => {}
+                        },
+                    }
 
                     prev = out;
                 }

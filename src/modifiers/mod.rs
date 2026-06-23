@@ -1,6 +1,10 @@
 pub mod cpu;
 pub mod gpu;
 pub mod kinds;
+pub mod text_raster;
+pub mod text_render;
 mod types;
 
-pub use types::{Modifier, ModifierImpl, ModifierKind, ModifierParam, ModifierType, ids};
+pub use types::{
+    InputClass, Modifier, ModifierImpl, ModifierKind, ModifierParam, ModifierType, ids,
+};

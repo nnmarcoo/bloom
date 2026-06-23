@@ -1,12 +1,16 @@
 pub mod angle_dial;
+pub mod color_swatch;
 pub mod crop_overlay;
+pub mod font_picker;
 pub mod histogram;
 pub mod hover_row;
 pub mod loading_spinner;
 pub mod menu;
 pub mod menu_button;
+pub mod number_entry;
 pub mod scale_entry;
 pub mod slide_in;
+pub mod text_overlay;
 pub mod theme_picker;
 pub mod timeline;
 pub mod value_slider;

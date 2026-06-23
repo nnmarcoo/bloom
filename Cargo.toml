@@ -34,6 +34,7 @@ eula = false
 [dependencies]
 # UI
 iced = { version = "0.14.0", features = ["canvas", "advanced", "svg", "tokio", "image"] }
+cosmic-text = "0.15.0"
 iced_aw = { version = "0.13.1", default-features = false, features = ["context_menu"] }
 tokio = { version = "1", features = ["rt", "sync", "macros"] }
 
@@ -91,6 +92,10 @@ serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.0.3"
 dirs = "6.0.0"
 rawler = "0.7.2"
+fdsm = "0.8.0"
+fdsm-ttf-parser = "0.2.0"
+ttf-parser = "0.25"
+nalgebra = "0.34"
 
 [features]
 heif = ["dep:libheif-rs"]

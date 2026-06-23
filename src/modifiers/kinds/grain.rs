@@ -8,6 +8,7 @@ use crate::app::{EditMsg, Message};
 use crate::modifiers::cpu::hash21;
 use crate::modifiers::gpu::{ModEntry, TileInfo, make_entry};
 use crate::modifiers::{ModifierImpl, ModifierParam, ids};
+use crate::widgets::number_entry::NumberEntry;
 use crate::widgets::value_slider::Fmt;
 
 use super::{clamped_luma, finish, hash_f32, value_row};
@@ -149,9 +150,25 @@ impl ModifierImpl for Grain {
                 Fmt::num(2),
                 move |v| EditMsg::Update(index, ModifierParam::GrainColor(v)).into(),
             ),
-            value_row("Seed", self.seed, 0.0..=99.0, 1.0, Fmt::num(0), move |v| {
-                EditMsg::Update(index, ModifierParam::GrainSeed(v)).into()
-            },),
+            iced::widget::row![
+                iced::widget::text("Seed")
+                    .size(10)
+                    .width(iced::Length::Fixed(58.0)),
+                iced::widget::container(
+                    NumberEntry::new(self.seed, move |v| EditMsg::Update(
+                        index,
+                        ModifierParam::GrainSeed(v)
+                    )
+                    .into())
+                    .range(0.0, 9999.0)
+                    .step(1.0)
+                    .width(70.0)
+                )
+                .center_x(iced::Length::Fill),
+            ]
+            .width(iced::Length::Fill)
+            .align_y(iced::alignment::Vertical::Center)
+            .spacing(4),
         ])
     }
 }

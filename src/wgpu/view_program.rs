@@ -13,7 +13,7 @@ use rayon::prelude::*;
 
 use crate::{
     app::Message,
-    modifiers::{Modifier, cpu},
+    modifiers::{Modifier, cpu, text_raster::TextRaster},
     wgpu::{
         media::animation::Animation,
         media::exif_data::ExifData,
@@ -75,6 +75,16 @@ pub struct ViewProgram {
     pub crop_tool_active: bool,
     dirty: Arc<std::sync::atomic::AtomicBool>,
     pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
+    text_raster_cache: Arc<std::sync::Mutex<Option<TextRasterCache>>>,
+    eyedropper_cache: Arc<std::sync::Mutex<Option<EyedropperCache>>>,
+}
+
+type TextRasterCache = (u64, u32, u32, Vec<Option<TextRaster>>);
+
+struct EyedropperCache {
+    key: u64,
+    info: Option<(u32, u32, Vec2, [u8; 4])>,
+    pixels: std::collections::HashMap<u32, Vec<u8>>,
 }
 
 impl Default for ViewProgram {
@@ -106,6 +116,8 @@ impl Default for ViewProgram {
             crop_tool_active: false,
             dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pre_clear_gpu: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            text_raster_cache: Arc::new(std::sync::Mutex::new(None)),
+            eyedropper_cache: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 }
@@ -471,7 +483,13 @@ impl ViewProgram {
         if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
             return None;
         }
-        let img_ndc = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
+        let display_uv = if let Some([min_u, min_v, max_u, max_v]) = self.active_crop() {
+            let span = vec2((max_u - min_u).max(1e-6), (max_v - min_v).max(1e-6));
+            vec2((uv.x - min_u) / span.x, (uv.y - min_v) / span.y)
+        } else {
+            uv
+        };
+        let img_ndc = vec4(display_uv.x * 2.0 - 1.0, 1.0 - display_uv.y * 2.0, 0.0, 1.0);
         let screen_ndc = self.build_transform(viewport) * img_ndc;
         Some(vec2(
             (screen_ndc.x + 1.0) * 0.5 * viewport.x,
@@ -502,12 +520,45 @@ impl ViewProgram {
         Some(local_px + origin)
     }
 
-    fn sample_pixel(&self, px: u32, py: u32, uv: [f32; 2]) -> Option<[u8; 4]> {
+    fn with_text_rasters<R>(
+        &self,
+        img_w: u32,
+        img_h: u32,
+        f: impl FnOnce(&[Option<TextRaster>]) -> R,
+    ) -> R {
+        let hash = hash_text_modifiers(&self.modifiers);
+        let mut cache = self
+            .text_raster_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let stale = cache
+            .as_ref()
+            .map(|(h, w, hgt, _)| (*h, *w, *hgt) != (hash, img_w, img_h))
+            .unwrap_or(true);
+        if stale {
+            let layers = crate::modifiers::text_raster::build_layers(&self.modifiers, img_w, img_h);
+            *cache = Some((hash, img_w, img_h, layers));
+        }
+        f(&cache.as_ref().unwrap().3)
+    }
+
+    fn has_any_visible_modifier(&self) -> bool {
+        self.modifiers.iter().any(|m| m.has_visible_effect())
+    }
+
+    fn sample_pixel(
+        &self,
+        text_layers: &[Option<TextRaster>],
+        px: u32,
+        py: u32,
+        uv: [f32; 2],
+    ) -> Option<[u8; 4]> {
         let image = self.image.as_ref()?;
         let idx = (py as usize * image.width as usize + px as usize) * 4;
         let pixels = image.pixels_snapshot();
         let p = pixels.get(idx..idx + 4)?;
         Some(cpu::f32_to_pixel(self.apply_modifiers_cpu(
+            text_layers,
             &pixels,
             image.width,
             image.height,
@@ -523,22 +574,34 @@ impl ViewProgram {
             return None;
         }
         let (px, py) = (img.x as u32, img.y as u32);
-        self.sample_pixel(
-            px,
-            py,
-            [px as f32 / self.image_size.x, py as f32 / self.image_size.y],
+        let uv = [px as f32 / self.image_size.x, py as f32 / self.image_size.y];
+        self.with_text_rasters(
+            self.image_size.x as u32,
+            self.image_size.y as u32,
+            |layers| self.sample_pixel(layers, px, py, uv),
         )
     }
 
     fn apply_modifiers_cpu(
         &self,
+        text_layers: &[Option<crate::modifiers::text_raster::TextRaster>],
         pixels: &[u8],
         img_w: u32,
         img_h: u32,
         uv: [f32; 2],
         c: [f32; 4],
     ) -> [f32; 4] {
-        cpu::apply_modifiers(&self.modifiers, pixels, img_w, img_h, uv, c)
+        cpu::apply_modifiers_with_text(
+            &self.modifiers,
+            text_layers,
+            pixels,
+            img_w,
+            img_h,
+            uv[0] * img_w as f32 + 0.5,
+            uv[1] * img_h as f32 + 0.5,
+            uv,
+            c,
+        )
     }
 
     pub fn export_data(&self) -> Option<crate::export::ExportData> {
@@ -590,15 +653,76 @@ impl ViewProgram {
         }
     }
 
+    fn eyedropper_key(&self) -> Option<u64> {
+        let img = self.cursor_image_pos?;
+        let image = self.image.as_ref()?;
+        let mut hasher = DefaultHasher::new();
+        (img.x as i64).hash(&mut hasher);
+        (img.y as i64).hash(&mut hasher);
+        image.id.hash(&mut hasher);
+        self.rotation.hash(&mut hasher);
+        hash_modifiers(&self.modifiers).hash(&mut hasher);
+        Some(hasher.finish())
+    }
+
     pub fn cursor_info(&self) -> Option<(u32, u32, Vec2, [u8; 4])> {
+        let key = self.eyedropper_key();
+        if let Some(key) = key
+            && let Ok(guard) = self.eyedropper_cache.lock()
+            && let Some(cache) = guard.as_ref()
+            && cache.key == key
+            && let Some(info) = cache.info
+        {
+            return Some(info);
+        }
+
         let img = self.cursor_image_pos?;
         let (px, py) = (img.x as u32, img.y as u32);
         let uv = img / self.image_size;
-        let rgba = self.sample_pixel(px, py, [uv.x, uv.y])?;
-        Some((px, py, uv, rgba))
+
+        let rgba = if self.has_any_visible_modifier() {
+            self.with_text_rasters(
+                self.image_size.x as u32,
+                self.image_size.y as u32,
+                |layers| self.sample_pixel(layers, px, py, [uv.x, uv.y]),
+            )?
+        } else {
+            let image = self.image.as_ref()?;
+            let idx = (py as usize * image.width as usize + px as usize) * 4;
+            let pixels = image.pixels_snapshot();
+            let p = pixels.get(idx..idx + 4)?;
+            [p[0], p[1], p[2], p[3]]
+        };
+        let info = Some((px, py, uv, rgba));
+
+        if let Some(key) = key
+            && let Ok(mut guard) = self.eyedropper_cache.lock()
+        {
+            match guard.as_mut() {
+                Some(cache) if cache.key == key => cache.info = info,
+                _ => {
+                    *guard = Some(EyedropperCache {
+                        key,
+                        info,
+                        pixels: std::collections::HashMap::new(),
+                    })
+                }
+            }
+        }
+        info
     }
 
     pub fn cursor_pixels(&self, size: u32) -> Option<Vec<u8>> {
+        let key = self.eyedropper_key();
+        if let Some(key) = key
+            && let Ok(guard) = self.eyedropper_cache.lock()
+            && let Some(cache) = guard.as_ref()
+            && cache.key == key
+            && let Some(pixels) = cache.pixels.get(&size)
+        {
+            return Some(pixels.clone());
+        }
+
         let img = self.cursor_image_pos?;
         let (cx, cy) = (img.x as i64, img.y as i64);
         let half = (size / 2) as i64;
@@ -608,34 +732,81 @@ impl ViewProgram {
         if buf.is_empty() {
             return None;
         }
-        let mut pixels = Vec::with_capacity((size * size * 4) as usize);
-        for row in 0..size as i64 {
-            for col in 0..size as i64 {
-                let (x, y) = match self.rotation {
-                    0 => (cx - half + col, cy - half + row),
-                    1 => (cx - half + row, cy + half - col),
-                    2 => (cx + half - col, cy + half - row),
-                    3 => (cx + half - row, cy - half + col),
-                    _ => unreachable!(),
-                };
-                if x < 0 || y < 0 || x >= w || y >= h {
-                    pixels.extend_from_slice(&[0, 0, 0, 0]);
-                    continue;
+
+        let coord = |row: i64, col: i64| -> (i64, i64) {
+            match self.rotation {
+                0 => (cx - half + col, cy - half + row),
+                1 => (cx - half + row, cy + half - col),
+                2 => (cx + half - col, cy + half - row),
+                3 => (cx + half - row, cy - half + col),
+                _ => unreachable!(),
+            }
+        };
+
+        let mut pixels = vec![0u8; (size * size * 4) as usize];
+
+        if !self.has_any_visible_modifier() {
+            for row in 0..size as i64 {
+                for col in 0..size as i64 {
+                    let (x, y) = coord(row, col);
+                    if x < 0 || y < 0 || x >= w || y >= h {
+                        continue;
+                    }
+                    let src = (y as usize * w as usize + x as usize) * 4;
+                    let dst = ((row * size as i64 + col) * 4) as usize;
+                    pixels[dst..dst + 4].copy_from_slice(&buf[src..src + 4]);
                 }
-                let idx = (y as usize * w as usize + x as usize) * 4;
-                let p = &buf[idx..idx + 4];
-                let uv = [x as f32 / w as f32, y as f32 / h as f32];
-                let rgba = cpu::f32_to_pixel(self.apply_modifiers_cpu(
-                    &buf,
-                    w as u32,
-                    h as u32,
-                    uv,
-                    cpu::pixel_to_f32(p),
-                ));
-                pixels.extend_from_slice(&rgba);
+            }
+            self.store_cursor_pixels(key, size, &pixels);
+            return Some(pixels);
+        }
+
+        self.with_text_rasters(image.width, image.height, |text_layers| {
+            for row in 0..size as i64 {
+                for col in 0..size as i64 {
+                    let (x, y) = coord(row, col);
+                    if x < 0 || y < 0 || x >= w || y >= h {
+                        continue;
+                    }
+                    let idx = (y as usize * w as usize + x as usize) * 4;
+                    let p = &buf[idx..idx + 4];
+                    let uv = [x as f32 / w as f32, y as f32 / h as f32];
+                    let rgba = cpu::f32_to_pixel(self.apply_modifiers_cpu(
+                        text_layers,
+                        &buf,
+                        w as u32,
+                        h as u32,
+                        uv,
+                        cpu::pixel_to_f32(p),
+                    ));
+                    let dst = ((row * size as i64 + col) * 4) as usize;
+                    pixels[dst..dst + 4].copy_from_slice(&rgba);
+                }
+            }
+        });
+        self.store_cursor_pixels(key, size, &pixels);
+        Some(pixels)
+    }
+
+    fn store_cursor_pixels(&self, key: Option<u64>, size: u32, pixels: &[u8]) {
+        let Some(key) = key else { return };
+        let Ok(mut guard) = self.eyedropper_cache.lock() else {
+            return;
+        };
+        match guard.as_mut() {
+            Some(cache) if cache.key == key => {
+                cache.pixels.insert(size, pixels.to_vec());
+            }
+            _ => {
+                let mut map = std::collections::HashMap::new();
+                map.insert(size, pixels.to_vec());
+                *guard = Some(EyedropperCache {
+                    key,
+                    info: None,
+                    pixels: map,
+                });
             }
         }
-        Some(pixels)
     }
 
     pub fn release_image_pixels(&self) {
@@ -845,6 +1016,20 @@ pub(crate) fn hash_modifiers(modifiers: &[Modifier]) -> u64 {
     for m in modifiers {
         m.enabled.hash(&mut hasher);
         m.kind.hash_into(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn hash_text_modifiers(modifiers: &[Modifier]) -> u64 {
+    use crate::modifiers::ModifierKind;
+    let mut hasher = DefaultHasher::new();
+    for (i, m) in modifiers.iter().enumerate() {
+        if m.has_visible_effect()
+            && let ModifierKind::Text(t) = &m.kind
+        {
+            i.hash(&mut hasher);
+            t.hash_full(&mut hasher);
+        }
     }
     hasher.finish()
 }

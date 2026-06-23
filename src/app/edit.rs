@@ -3,7 +3,10 @@ use iced::Task;
 use crate::{
     app::Message,
     components::notifications::Notification,
-    modifiers::{Modifier, ModifierKind, ModifierParam, ModifierType, kinds::Crop},
+    modifiers::{
+        Modifier, ModifierKind, ModifierParam, ModifierType,
+        kinds::{Crop, Text},
+    },
     wgpu::view_program::ViewProgram,
 };
 
@@ -54,6 +57,7 @@ pub fn update(state: &mut EditState, program: &mut ViewProgram, msg: EditMsg) ->
         EditMsg::SelectTool(tool) => {
             let was_crop = state.selected_tool == Tool::Crop;
             let is_crop = tool == Tool::Crop;
+            let is_text = tool == Tool::Text;
             state.selected_tool = tool;
             program.crop_tool_active = is_crop;
             if is_crop {
@@ -84,9 +88,26 @@ pub fn update(state: &mut EditState, program: &mut ViewProgram, msg: EditMsg) ->
             } else if was_crop {
                 program.fit();
             }
+            if is_text {
+                if let Some(idx) = program
+                    .modifiers
+                    .iter()
+                    .rposition(|m| matches!(m.kind, ModifierKind::Text(_)))
+                {
+                    state.active = Some(idx);
+                } else {
+                    let idx = program.modifiers.len();
+                    program
+                        .modifiers_mut()
+                        .push(Modifier::new(ModifierKind::Text(Text::default())));
+                    state.active = Some(idx);
+                    program.mark_dirty();
+                }
+            }
         }
         EditMsg::Add(t) => {
             let is_crop = matches!(t, ModifierType::Crop);
+            let is_text = matches!(t, ModifierType::Text);
             let already_has_crop =
                 is_crop && program.modifiers.iter().any(|m| m.kind.as_crop().is_some());
             if already_has_crop {
@@ -111,6 +132,10 @@ pub fn update(state: &mut EditState, program: &mut ViewProgram, msg: EditMsg) ->
             program.modifiers_mut().push(Modifier::new(kind));
             let idx = program.modifiers.len() - 1;
             state.active = Some(idx);
+            if is_text {
+                state.selected_tool = Tool::Text;
+                program.crop_tool_active = false;
+            }
             program.mark_dirty();
         }
         EditMsg::Remove(i) => {
