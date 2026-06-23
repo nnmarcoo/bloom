@@ -6,7 +6,6 @@ use crate::modifiers::kinds::Text;
 
 pub struct FontResources {
     pub font_system: FontSystem,
-    pub swash: SwashCache,
 }
 
 fn font_resources() -> &'static Mutex<FontResources> {
@@ -14,7 +13,6 @@ fn font_resources() -> &'static Mutex<FontResources> {
     RES.get_or_init(|| {
         Mutex::new(FontResources {
             font_system: FontSystem::new(),
-            swash: SwashCache::new(),
         })
     })
 }
@@ -381,11 +379,7 @@ pub fn caret_at_point(text: &Text, local_x: f32, local_y: f32) -> usize {
     ShapedText::shape(text).caret_at_point(local_x, local_y)
 }
 
-pub fn rasterize_text(
-    text: &Text,
-    font_system: &mut FontSystem,
-    swash: &mut SwashCache,
-) -> TextBitmap {
+pub fn rasterize_text(text: &Text, font_system: &mut FontSystem) -> TextBitmap {
     let mut bitmap = TextBitmap {
         glyphs: Vec::new(),
         min_x: 0.0,
@@ -399,12 +393,13 @@ pub fn rasterize_text(
     }
 
     let buffer = shape_buffer(text, font_system);
+    let mut swash = SwashCache::new();
 
     let mut first = true;
     for run in buffer.layout_runs() {
         for glyph in run.glyphs.iter() {
             let physical = glyph.physical((0.0, 0.0), 1.0);
-            let Some(image) = swash.get_image(font_system, physical.cache_key) else {
+            let Some(image) = swash.get_image_uncached(font_system, physical.cache_key) else {
                 continue;
             };
             if image.placement.width == 0 || image.placement.height == 0 {

@@ -11,12 +11,13 @@ use iced::wgpu::{
 };
 
 use crate::{
-    modifiers::{gpu::TileInfo, kinds::Text, text_render, text_render::FontResources},
+    modifiers::{gpu::TileInfo, kinds::Text, text_render},
     wgpu::gpu,
 };
 
 const REFERENCE_SIZE: f32 = 1024.0;
 const MIN_DENSITY: f32 = 1.0;
+const MAX_RASTER_DIM: u32 = 8192;
 
 fn downsample_r8(src: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
     let nw = (w / 2).max(1);
@@ -76,7 +77,6 @@ impl TextLayer {
     pub fn refresh_transform(&mut self, text: &Text) {
         self.x = text.x;
         self.y = text.y;
-        self.size = text.size;
         self.rotation = text.rotation;
         self.opacity = text.opacity;
         self.color = [text.r, text.g, text.b];
@@ -169,15 +169,30 @@ impl TextPass {
         text: &Text,
         display_density: f32,
     ) -> Option<TextLayer> {
-        let raster_size = (text.size * display_density.max(MIN_DENSITY)).clamp(1.0, REFERENCE_SIZE);
-        let mut raster_text = text.clone();
-        raster_text.size = raster_size;
+        let mut raster_size =
+            (text.size * display_density.max(MIN_DENSITY)).clamp(1.0, REFERENCE_SIZE);
 
-        let packed = {
+        let rasterize = |raster_size: f32| {
+            let mut raster_text = text.clone();
+            raster_text.size = raster_size;
             let mut guard = text_render::lock_font_resources();
-            let FontResources { font_system, swash } = &mut *guard;
-            text_render::rasterize_text(&raster_text, font_system, swash).pack_alpha()
-        }?;
+            text_render::rasterize_text(&raster_text, &mut guard.font_system).pack_alpha()
+        };
+
+        let max_dim = device.limits().max_texture_dimension_2d.min(MAX_RASTER_DIM);
+
+        let mut packed = rasterize(raster_size)?;
+
+        let largest = packed.width.max(packed.height);
+        if largest > max_dim {
+            let fit = (max_dim as f32 / largest as f32) * 0.98;
+            raster_size = (raster_size * fit).max(1.0);
+            packed = rasterize(raster_size)?;
+            if packed.width > max_dim || packed.height > max_dim {
+                return None;
+            }
+        }
+
         let bbox_w = packed.bbox_w;
         let bbox_h = packed.bbox_h;
         let tw = packed.width;

@@ -32,16 +32,11 @@ const OUTLINE: Color = Color {
 };
 
 fn clamp_caret(s: &str, caret: usize) -> usize {
-    let caret = caret.min(s.len());
-    if s.is_char_boundary(caret) {
-        caret
-    } else {
-        s[..caret]
-            .char_indices()
-            .next_back()
-            .map(|(i, _)| i)
-            .unwrap_or(0)
+    let mut caret = caret.min(s.len());
+    while caret > 0 && !s.is_char_boundary(caret) {
+        caret -= 1;
     }
+    caret
 }
 
 fn sanitize_paste(s: &str) -> String {
@@ -356,7 +351,7 @@ impl TextOverlay {
     }
 
     fn prev_boundary(s: &str, caret: usize) -> usize {
-        s[..caret.min(s.len())]
+        s[..clamp_caret(s, caret)]
             .char_indices()
             .next_back()
             .map(|(i, _)| i)
@@ -364,7 +359,7 @@ impl TextOverlay {
     }
 
     fn next_boundary(s: &str, caret: usize) -> usize {
-        let caret = caret.min(s.len());
+        let caret = clamp_caret(s, caret);
         s[caret..]
             .char_indices()
             .nth(1)
@@ -373,14 +368,14 @@ impl TextOverlay {
     }
 
     fn line_start(s: &str, caret: usize) -> usize {
-        s[..caret.min(s.len())]
+        s[..clamp_caret(s, caret)]
             .rfind('\n')
             .map(|i| i + 1)
             .unwrap_or(0)
     }
 
     fn line_end(s: &str, caret: usize) -> usize {
-        let caret = caret.min(s.len());
+        let caret = clamp_caret(s, caret);
         s[caret..].find('\n').map(|i| caret + i).unwrap_or(s.len())
     }
 
@@ -418,14 +413,16 @@ impl TextOverlay {
         shell: &mut Shell<'_, Message>,
     ) {
         use keyboard::key::Named;
-        let caret = state.caret;
         let shift = modifiers.shift();
         let ctrl = modifiers.command();
-        let sel = state.sel_range();
         let base = state
             .pending
             .clone()
             .unwrap_or_else(|| self.content().to_string());
+        let caret = clamp_caret(&base, state.caret);
+        let sel = state
+            .sel_range()
+            .map(|(lo, hi)| (clamp_caret(&base, lo), clamp_caret(&base, hi)));
 
         let replace_sel = |state: &mut State, repl: &str, shell: &mut Shell<'_, Message>| -> bool {
             let Some((lo, hi)) = sel else { return false };

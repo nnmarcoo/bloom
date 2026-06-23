@@ -1,8 +1,7 @@
-use cosmic_text::{FontSystem, SwashCache};
+use cosmic_text::FontSystem;
 
 use crate::modifiers::kinds::Text;
 use crate::modifiers::text_render;
-use crate::modifiers::text_render::FontResources;
 
 const REFERENCE_SIZE: f32 = 1024.0;
 
@@ -26,7 +25,6 @@ impl TextRaster {
         full_w: u32,
         full_h: u32,
         font_system: &mut FontSystem,
-        swash: &mut SwashCache,
     ) -> Option<Self> {
         if text.content.is_empty() || text.opacity <= 0.0 {
             return None;
@@ -36,7 +34,7 @@ impl TextRaster {
         let mut raster_text = text.clone();
         raster_text.size = raster_size;
 
-        let bmp = text_render::rasterize_text(&raster_text, font_system, swash);
+        let bmp = text_render::rasterize_text(&raster_text, font_system);
         let packed = bmp.pack_alpha()?;
         let bbox_w = packed.bbox_w;
         let bbox_h = packed.bbox_h;
@@ -105,8 +103,7 @@ mod tests {
 
     fn raster(text: &Text, w: u32, h: u32) -> Option<TextRaster> {
         let mut fs = FontSystem::new();
-        let mut swash = SwashCache::new();
-        TextRaster::build(text, w, h, &mut fs, &mut swash)
+        TextRaster::build(text, w, h, &mut fs)
     }
 
     #[test]
@@ -178,14 +175,13 @@ pub fn build_layers(
     }
 
     let mut guard = text_render::lock_font_resources();
-    let FontResources { font_system, swash } = &mut *guard;
     modifiers
         .iter()
         .map(|m| {
             if m.has_visible_effect()
                 && let ModifierKind::Text(t) = &m.kind
             {
-                TextRaster::build(t, full_w, full_h, font_system, swash)
+                TextRaster::build(t, full_w, full_h, &mut guard.font_system)
             } else {
                 None
             }
