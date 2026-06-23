@@ -594,7 +594,7 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
             ..
         }) = event
         {
-            if !self.active {
+            if !self.active || shell.is_event_captured() {
                 return;
             }
             state.shift = modifiers.shift();
