@@ -28,7 +28,24 @@ fn app_icon() -> Option<window::Icon> {
     None
 }
 
+fn install_panic_logger() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Some(dir) = dirs::data_local_dir() {
+            let dir = dir.join("bloom");
+            let bt = std::backtrace::Backtrace::force_capture();
+            let msg = format!("panic: {info}\nbacktrace:\n{bt}\n");
+            if std::fs::create_dir_all(&dir).is_ok() {
+                let _ = std::fs::write(dir.join("crash.log"), msg);
+            }
+        }
+        default(info);
+    }));
+}
+
 fn main() -> iced::Result {
+    install_panic_logger();
+
     let _ = rayon::ThreadPoolBuilder::new()
         .thread_name(|i| format!("bloom-rayon-{i}"))
         .stack_size(8 * 1024 * 1024)
