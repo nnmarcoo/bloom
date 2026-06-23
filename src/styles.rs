@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use iced::{
     Background, Border, Color, Shadow, Theme, Vector,
-    widget::{button, container, rule, svg},
+    widget::{button, container, rule, svg, text_input},
 };
 
 pub const PAD: f32 = 5.0;
@@ -103,6 +103,27 @@ pub fn menu_container_style(theme: &Theme) -> container::Style {
 
 pub fn tooltip_style(theme: &Theme) -> container::Style {
     menu_container_style(theme)
+}
+
+pub fn text_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let palette = theme.extended_palette();
+    let text_color = palette.background.base.text;
+    let border_color = match status {
+        text_input::Status::Focused { .. } => palette.primary.base.color,
+        _ => palette.background.strong.color,
+    };
+    text_input::Style {
+        background: Background::Color(palette.background.base.color),
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: radius().into(),
+        },
+        icon: text_color,
+        placeholder: text_color.scale_alpha(0.4),
+        value: text_color,
+        selection: palette.primary.base.color.scale_alpha(0.35),
+    }
 }
 
 pub fn menu_item_hover_color(theme: &Theme) -> Color {

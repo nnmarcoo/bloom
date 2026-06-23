@@ -156,7 +156,8 @@ impl ModifierImpl for Text {
             text_input("Type something...", &self.content)
                 .on_input(move |v| EditMsg::Update(index, ModifierParam::TextContent(v)).into())
                 .size(11)
-                .padding([4, 6]),
+                .padding([4, 6])
+                .style(crate::styles::text_input_style),
             font_picker,
             entry_row("X", self.x, -5.0, 5.0, 0.01, 0.005, "", move |v| {
                 EditMsg::Update(index, ModifierParam::TextX(v)).into()
