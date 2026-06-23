@@ -350,27 +350,25 @@ fn build_msdf(face: &ttf_parser::Face, glyph_id: u16) -> Option<GlyphSdf> {
     let glyph_w_units = (bbox.x_max as f64 - bbox.x_min as f64).max(1.0);
     let glyph_h_units = (bbox.y_max as f64 - bbox.y_min as f64).max(1.0);
 
-    let mut px_per_unit = SDF_REFERENCE_PX as f64 / upem;
-    let fit = (max_glyph_px / (glyph_w_units * px_per_unit))
-        .min(max_glyph_px / (glyph_h_units * px_per_unit))
+    let natural_per_unit = SDF_REFERENCE_PX as f64 / upem;
+    let fit = (max_glyph_px / (glyph_w_units * natural_per_unit))
+        .min(max_glyph_px / (glyph_h_units * natural_per_unit))
         .min(1.0);
-    px_per_unit *= fit;
+    let px_per_unit = natural_per_unit * fit;
 
-    let shrinkage = 1.0 / px_per_unit;
-
-    let width = (glyph_w_units / shrinkage + 2.0 * range).ceil() as u32;
-    let height = (glyph_h_units / shrinkage + 2.0 * range).ceil() as u32;
-    if width == 0 || height == 0 || width > SDF_TILE || height > SDF_TILE {
+    let width = (glyph_w_units * px_per_unit + 2.0 * range).ceil() as u32;
+    let height = (glyph_h_units * px_per_unit + 2.0 * range).ceil() as u32;
+    if width > SDF_TILE || height > SDF_TILE {
         return None;
     }
 
     let transformation = nalgebra::convert::<_, Affine2<f64>>(Similarity2::new(
         Vector2::new(
-            range - bbox.x_min as f64 / shrinkage,
-            range - bbox.y_min as f64 / shrinkage,
+            range - bbox.x_min as f64 * px_per_unit,
+            range - bbox.y_min as f64 * px_per_unit,
         ),
         0.0,
-        1.0 / shrinkage,
+        px_per_unit,
     ));
 
     let mut shape = shape;
@@ -389,19 +387,21 @@ fn build_msdf(face: &ttf_parser::Face, glyph_id: u16) -> Option<GlyphSdf> {
     let mut data = vec![0u8; (width * height * 3) as usize];
     for y in 0..height {
         let src_y = height - 1 - y;
-        for x in 0..width {
-            let p = msdf.get_pixel(x, src_y);
-            let di = ((y * width + x) * 3) as usize;
+        let dst_row = (y * width * 3) as usize;
+        let src_row = (src_y * width) as usize;
+        for x in 0..width as usize {
+            let p = &msdf.as_raw()[(src_row + x) * 3..];
+            let di = dst_row + x * 3;
             data[di] = p[0];
             data[di + 1] = p[1];
             data[di + 2] = p[2];
         }
     }
 
-    let natural_per_unit = SDF_REFERENCE_PX as f64 / upem;
-    let quad_w = (width as f64 / px_per_unit * natural_per_unit) as f32;
-    let quad_h = (height as f64 / px_per_unit * natural_per_unit) as f32;
-    let range_natural = (range / px_per_unit * natural_per_unit) as f32;
+    let inv_fit = (1.0 / fit) as f32;
+    let quad_w = width as f32 * inv_fit;
+    let quad_h = height as f32 * inv_fit;
+    let range_natural = range as f32 * inv_fit;
     let left = bbox.x_min as f32 * natural_per_unit as f32 - range_natural;
     let top = -(bbox.y_max as f32 * natural_per_unit as f32) - range_natural;
 
