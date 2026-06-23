@@ -246,6 +246,5 @@ pub mod ids {
     pub const VIBRANCE: u32 = 8;
     pub const COLOR_BALANCE: u32 = 9;
     pub const GRAIN: u32 = 10;
-    // 11 retired: ChromaticAberration is now its own pass, not a ModEntry switch case.
     pub const HALFTONE: u32 = 16;
 }

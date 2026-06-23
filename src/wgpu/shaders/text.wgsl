@@ -49,8 +49,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(u.color, a);
 }
 
-// Fullscreen passthrough: copy the prior segment's content into the output
-// target so the text blend (LoadOp::Load) has the correct background.
 struct CopyOut {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
