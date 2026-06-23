@@ -1,48 +1,31 @@
 use bytemuck::{Pod, Zeroable};
-use std::borrow::Cow;
+use std::collections::HashMap;
 
 use iced::wgpu::{
-    BindGroupLayout, BlendState, Buffer, ColorTargetState, ColorWrites, CommandEncoder, Device,
-    FragmentState, LoadOp, MultisampleState, Operations, PipelineCompilationOptions,
-    PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue, RenderPassColorAttachment,
-    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, Sampler,
-    ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, TexelCopyBufferLayout, Texture,
-    TextureFormat, TextureUsages, TextureView, VertexState,
+    BindGroupLayout, BlendState, Buffer, BufferUsages, ColorTargetState, ColorWrites,
+    CommandEncoder, Device, FragmentState, LoadOp, MultisampleState, Operations,
+    PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue,
+    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
+    Sampler, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, TexelCopyBufferLayout,
+    Texture, TextureFormat, TextureUsages, TextureView, VertexAttribute, VertexBufferLayout,
+    VertexState, VertexStepMode,
 };
+use std::borrow::Cow;
 
 use crate::{
     modifiers::{gpu::TileInfo, kinds::Text, text_render},
     wgpu::gpu,
 };
 
-const REFERENCE_SIZE: f32 = 1024.0;
-const MIN_DENSITY: f32 = 1.0;
-const MAX_RASTER_DIM: u32 = 8192;
+const SDF_TILE: u32 = text_render::SDF_TILE;
+const ATLAS_START: u32 = 2048;
+const PX_RANGE: f32 = text_render::SDF_PX_RANGE;
 
-fn downsample_r8(src: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
-    let nw = (w / 2).max(1);
-    let nh = (h / 2).max(1);
-    let mut dst = vec![0u8; (nw * nh) as usize];
-    for y in 0..nh {
-        for x in 0..nw {
-            let sx = x * 2;
-            let sy = y * 2;
-            let mut sum = 0u32;
-            let mut count = 0u32;
-            for dy in 0..2 {
-                for dx in 0..2 {
-                    let px = sx + dx;
-                    let py = sy + dy;
-                    if px < w && py < h {
-                        sum += src[(py * w + px) as usize] as u32;
-                        count += 1;
-                    }
-                }
-            }
-            dst[(y * nw + x) as usize] = (sum / count.max(1)) as u8;
-        }
-    }
-    (dst, nw, nh)
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct GlyphInstance {
+    rect: [f32; 4],
+    uv: [f32; 4],
 }
 
 #[repr(C)]
@@ -53,21 +36,22 @@ struct TextUniforms {
     pivot: [f32; 2],
     tile_origin: [f32; 2],
     tile_size: [f32; 2],
+    block_min: [f32; 2],
     rotation: f32,
     opacity: f32,
-    color: [f32; 3],
-    _pad: f32,
+    px_range: f32,
+    _pad0: f32,
+    color: [f32; 4],
 }
 
 pub struct TextLayer {
-    _texture: Texture,
-    view: TextureView,
-    bbox_w: f32,
-    bbox_h: f32,
-    raster_size: f32,
+    instances: Buffer,
+    instance_count: u32,
+    block_min: [f32; 2],
+    block_w: f32,
+    block_h: f32,
     x: f32,
     y: f32,
-    size: f32,
     rotation: f32,
     opacity: f32,
     color: [f32; 3],
@@ -83,11 +67,103 @@ impl TextLayer {
     }
 }
 
+struct Atlas {
+    _texture: Texture,
+    view: TextureView,
+    side: u32,
+    cols: u32,
+    next: u32,
+    residency: HashMap<text_render::SdfKey, [f32; 4]>,
+}
+
+impl Atlas {
+    fn new(device: &Device, side: u32) -> Self {
+        let texture = gpu::texture_2d(
+            device,
+            side,
+            side,
+            TextureFormat::Rgba8Unorm,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            Some("text-msdf-atlas"),
+        );
+        let view = texture.create_view(&Default::default());
+        Self {
+            _texture: texture,
+            view,
+            side,
+            cols: side / SDF_TILE,
+            next: 0,
+            residency: HashMap::new(),
+        }
+    }
+
+    fn capacity(&self) -> u32 {
+        self.cols * self.cols
+    }
+
+    fn ensure(
+        &mut self,
+        queue: &Queue,
+        key: text_render::SdfKey,
+        sdf: &text_render::GlyphSdf,
+    ) -> Option<[f32; 4]> {
+        if let Some(uv) = self.residency.get(&key) {
+            return Some(*uv);
+        }
+        if self.next >= self.capacity() || sdf.width > SDF_TILE || sdf.height > SDF_TILE {
+            return None;
+        }
+        let slot = self.next;
+        self.next += 1;
+        let cx = (slot % self.cols) * SDF_TILE;
+        let cy = (slot / self.cols) * SDF_TILE;
+
+        let mut rgba = vec![0u8; (sdf.width * sdf.height * 4) as usize];
+        for (i, px) in sdf.data.chunks_exact(3).enumerate() {
+            rgba[i * 4] = px[0];
+            rgba[i * 4 + 1] = px[1];
+            rgba[i * 4 + 2] = px[2];
+            rgba[i * 4 + 3] = 255;
+        }
+
+        queue.write_texture(
+            iced::wgpu::TexelCopyTextureInfo {
+                texture: &self._texture,
+                mip_level: 0,
+                origin: iced::wgpu::Origin3d { x: cx, y: cy, z: 0 },
+                aspect: iced::wgpu::TextureAspect::All,
+            },
+            &rgba,
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(sdf.width * 4),
+                rows_per_image: Some(sdf.height),
+            },
+            iced::wgpu::Extent3d {
+                width: sdf.width,
+                height: sdf.height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let s = self.side as f32;
+        let uv = [
+            cx as f32 / s,
+            cy as f32 / s,
+            sdf.width as f32 / s,
+            sdf.height as f32 / s,
+        ];
+        self.residency.insert(key, uv);
+        Some(uv)
+    }
+}
+
 pub struct TextPass {
     pipeline: RenderPipeline,
     copy_pipeline: RenderPipeline,
     bgl: BindGroupLayout,
     sampler: Sampler,
+    atlas: Atlas,
 }
 
 impl TextPass {
@@ -95,22 +171,65 @@ impl TextPass {
         let bgl = gpu::standard_bind_group_layout(
             device,
             ShaderStages::VERTEX_FRAGMENT,
-            Some("text-bgl"),
-        );
-        let pipeline = gpu::fullscreen_pipeline(
-            device,
-            include_str!("../shaders/text.wgsl"),
-            Some("text-pipeline"),
-            PrimitiveTopology::TriangleStrip,
-            format,
-            BlendState::ALPHA_BLENDING,
-            &bgl,
+            Some("text-sdf-bgl"),
         );
 
         let shader = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("text-copy-shader"),
-            source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("../shaders/text.wgsl"))),
+            label: Some("text-sdf-shader"),
+            source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("../shaders/text_sdf.wgsl"))),
         });
+        let layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("text-sdf-layout"),
+            bind_group_layouts: &[&bgl],
+            push_constant_ranges: &[],
+        });
+
+        let instance_layout = VertexBufferLayout {
+            array_stride: std::mem::size_of::<GlyphInstance>() as u64,
+            step_mode: VertexStepMode::Instance,
+            attributes: &[
+                VertexAttribute {
+                    format: iced::wgpu::VertexFormat::Float32x4,
+                    offset: 0,
+                    shader_location: 0,
+                },
+                VertexAttribute {
+                    format: iced::wgpu::VertexFormat::Float32x4,
+                    offset: 16,
+                    shader_location: 1,
+                },
+            ],
+        };
+
+        let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("text-sdf-pipeline"),
+            layout: Some(&layout),
+            vertex: VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[instance_layout],
+                compilation_options: PipelineCompilationOptions::default(),
+            },
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            fragment: Some(FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(ColorTargetState {
+                    format,
+                    blend: Some(BlendState::ALPHA_BLENDING),
+                    write_mask: ColorWrites::ALL,
+                })],
+                compilation_options: PipelineCompilationOptions::default(),
+            }),
+            cache: None,
+            multiview: None,
+        });
+
         let copy_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("text-copy-layout"),
             bind_group_layouts: &[&bgl],
@@ -146,7 +265,7 @@ impl TextPass {
         });
 
         let sampler = device.create_sampler(&iced::wgpu::SamplerDescriptor {
-            label: Some("text-sampler"),
+            label: Some("text-sdf-sampler"),
             address_mode_u: iced::wgpu::AddressMode::ClampToEdge,
             address_mode_v: iced::wgpu::AddressMode::ClampToEdge,
             mag_filter: iced::wgpu::FilterMode::Linear,
@@ -154,103 +273,64 @@ impl TextPass {
             mipmap_filter: iced::wgpu::FilterMode::Linear,
             ..Default::default()
         });
+
+        let atlas = Atlas::new(device, ATLAS_START);
+
         Self {
             pipeline,
             copy_pipeline,
             bgl,
             sampler,
+            atlas,
         }
     }
 
     pub fn build_layer(
-        &self,
+        &mut self,
         device: &Device,
         queue: &Queue,
         text: &Text,
-        display_density: f32,
     ) -> Option<TextLayer> {
-        let mut raster_size =
-            (text.size * display_density.max(MIN_DENSITY)).clamp(1.0, REFERENCE_SIZE);
-
-        let rasterize = |raster_size: f32| {
-            let mut raster_text = text.clone();
-            raster_text.size = raster_size;
-            let mut guard = text_render::lock_font_resources();
-            text_render::rasterize_text(&raster_text, &mut guard.font_system).pack_alpha()
-        };
-
-        let max_dim = device.limits().max_texture_dimension_2d.min(MAX_RASTER_DIM);
-
-        let mut packed = rasterize(raster_size)?;
-
-        let largest = packed.width.max(packed.height);
-        if largest > max_dim {
-            let fit = (max_dim as f32 / largest as f32) * 0.98;
-            raster_size = (raster_size * fit).max(1.0);
-            packed = rasterize(raster_size)?;
-            if packed.width > max_dim || packed.height > max_dim {
-                return None;
-            }
+        if text.content.is_empty() || text.opacity <= 0.0 {
+            return None;
         }
 
-        let bbox_w = packed.bbox_w;
-        let bbox_h = packed.bbox_h;
-        let tw = packed.width;
-        let th = packed.height;
-        let buf = packed.alpha;
-
-        let mip_count = gpu::hw_mip_count(tw, th);
-        let texture = gpu::texture_2d_mipmapped(
-            device,
-            tw,
-            th,
-            mip_count,
-            TextureFormat::R8Unorm,
-            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-            Some("text-glyph-texture"),
-        );
-
-        let mut level = buf;
-        let mut lw = tw;
-        let mut lh = th;
-        for mip in 0..mip_count {
-            queue.write_texture(
-                iced::wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: mip,
-                    origin: iced::wgpu::Origin3d::ZERO,
-                    aspect: iced::wgpu::TextureAspect::All,
-                },
-                &level,
-                TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(lw),
-                    rows_per_image: Some(lh),
-                },
-                iced::wgpu::Extent3d {
-                    width: lw,
-                    height: lh,
-                    depth_or_array_layers: 1,
-                },
-            );
-            if mip + 1 < mip_count {
-                let (next, nw, nh) = downsample_r8(&level, lw, lh);
-                level = next;
-                lw = nw;
-                lh = nh;
-            }
+        let shaped = text_render::shape_glyphs(text);
+        if shaped.is_empty() {
+            return None;
         }
-        let view = texture.create_view(&Default::default());
+        let (block_w, block_h) = shaped.bbox();
+
+        let mut instances: Vec<GlyphInstance> = Vec::with_capacity(shaped.glyphs.len());
+        for g in &shaped.glyphs {
+            let Some(uv) = self.atlas.ensure(queue, g.key, &g.sdf) else {
+                continue;
+            };
+            instances.push(GlyphInstance {
+                rect: [g.x, g.y, g.w, g.h],
+                uv,
+            });
+        }
+        if instances.is_empty() {
+            return None;
+        }
+
+        let instances_buf = device.create_buffer(&iced::wgpu::BufferDescriptor {
+            label: Some("text-sdf-instances"),
+            size: (instances.len() * std::mem::size_of::<GlyphInstance>()) as u64,
+            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&instances_buf, 0, bytemuck::cast_slice(&instances));
 
         Some(TextLayer {
-            _texture: texture,
-            view,
-            bbox_w,
-            bbox_h,
-            raster_size,
+            instances: instances_buf,
+            instance_count: instances.len() as u32,
+            block_min: [shaped.min_x, shaped.min_y],
+            block_w,
+            block_h,
             x: text.x,
             y: text.y,
-            size: text.size,
             rotation: text.rotation,
             opacity: text.opacity,
             color: [text.r, text.g, text.b],
@@ -298,17 +378,18 @@ impl TextPass {
             copy.draw(0..4, 0..1);
         }
 
-        let scale = layer.size / layer.raster_size;
         let uniforms = TextUniforms {
             anchor: [layer.x * tile.full_w as f32, layer.y * tile.full_h as f32],
-            block_size: [layer.bbox_w * scale, layer.bbox_h * scale],
+            block_size: [layer.block_w, layer.block_h],
             pivot: [0.5, 0.5],
             tile_origin: [tile.tile_x as f32, tile.tile_y as f32],
             tile_size: [tile.tile_w as f32, tile.tile_h as f32],
+            block_min: layer.block_min,
             rotation: layer.rotation.to_radians(),
             opacity: layer.opacity,
-            color: layer.color,
-            _pad: 0.0,
+            px_range: PX_RANGE,
+            _pad0: 0.0,
+            color: [layer.color[0], layer.color[1], layer.color[2], 1.0],
         };
         gpu::write_uniform(queue, uniform_buffer, &uniforms);
 
@@ -316,13 +397,13 @@ impl TextPass {
             device,
             &self.bgl,
             uniform_buffer,
-            &layer.view,
+            &self.atlas.view,
             &self.sampler,
-            Some("text-bg"),
+            Some("text-sdf-bg"),
         );
 
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-            label: Some("text-pass"),
+            label: Some("text-sdf-pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
                 view: output,
                 resolve_target: None,
@@ -338,10 +419,11 @@ impl TextPass {
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &bg, &[]);
-        pass.draw(0..4, 0..1);
+        pass.set_vertex_buffer(0, layer.instances.slice(..));
+        pass.draw(0..4, 0..layer.instance_count);
     }
 
     pub fn uniform_buffer(&self, device: &Device) -> Buffer {
-        gpu::uniform_buffer::<TextUniforms>(device, Some("text-uniform"))
+        gpu::uniform_buffer::<TextUniforms>(device, Some("text-sdf-uniform"))
     }
 }

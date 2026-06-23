@@ -1,60 +1,70 @@
-use cosmic_text::FontSystem;
+use std::sync::Arc;
 
 use crate::modifiers::kinds::Text;
-use crate::modifiers::text_render;
+use crate::modifiers::text_render::{self, GlyphSdf, SDF_EDGE};
 
-const REFERENCE_SIZE: f32 = 1024.0;
+struct CpuGlyph {
+    sdf: Arc<GlyphSdf>,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+}
 
 pub struct TextRaster {
-    alpha: Vec<u8>,
-    bw: usize,
-    bh: usize,
+    glyphs: Vec<CpuGlyph>,
+    block_min_x: f32,
+    block_min_y: f32,
     anchor_x: f32,
     anchor_y: f32,
     block_w: f32,
     block_h: f32,
     cos: f32,
     sin: f32,
+    aa: f32,
     color: [f32; 3],
     opacity: f32,
 }
 
 impl TextRaster {
-    pub fn build(
-        text: &Text,
-        full_w: u32,
-        full_h: u32,
-        font_system: &mut FontSystem,
-    ) -> Option<Self> {
+    pub fn build(text: &Text, full_w: u32, full_h: u32) -> Option<Self> {
         if text.content.is_empty() || text.opacity <= 0.0 {
             return None;
         }
 
-        let raster_size = text.size.clamp(1.0, REFERENCE_SIZE);
-        let mut raster_text = text.clone();
-        raster_text.size = raster_size;
+        let shaped = text_render::shape_glyphs(text);
+        if shaped.is_empty() {
+            return None;
+        }
 
-        let bmp = text_render::rasterize_text(&raster_text, font_system);
-        let packed = bmp.pack_alpha()?;
-        let bbox_w = packed.bbox_w;
-        let bbox_h = packed.bbox_h;
-        let bw = packed.width as usize;
-        let bh = packed.height as usize;
-        let alpha = packed.alpha;
+        let (block_w, block_h) = shaped.bbox();
+        let glyphs = shaped
+            .glyphs
+            .iter()
+            .map(|g| CpuGlyph {
+                sdf: g.sdf.clone(),
+                x0: g.x,
+                y0: g.y,
+                x1: g.x + g.w,
+                y1: g.y + g.h,
+            })
+            .collect();
 
-        let scale = text.size / raster_size;
         let (sin, cos) = text.rotation.to_radians().sin_cos();
+        let px_per_unit = block_w.max(block_h).max(1.0);
+        let aa = (1.5 / px_per_unit).clamp(1e-4, 0.5);
 
         Some(Self {
-            alpha,
-            bw,
-            bh,
+            glyphs,
+            block_min_x: shaped.min_x,
+            block_min_y: shaped.min_y,
             anchor_x: text.x * full_w as f32,
             anchor_y: text.y * full_h as f32,
-            block_w: bbox_w * scale,
-            block_h: bbox_h * scale,
+            block_w,
+            block_h,
             cos,
             sin,
+            aa,
             color: [text.r, text.g, text.b],
             opacity: text.opacity,
         })
@@ -72,28 +82,93 @@ impl TextRaster {
             return None;
         }
 
-        let a = self.sample_alpha(u, v) * self.opacity;
+        let bx = self.block_min_x + u * self.block_w;
+        let by = self.block_min_y + v * self.block_h;
+
+        let mut coverage = 0.0f32;
+        for g in &self.glyphs {
+            if bx < g.x0 || bx >= g.x1 || by < g.y0 || by >= g.y1 {
+                continue;
+            }
+            let gu = (bx - g.x0) / (g.x1 - g.x0);
+            let gv = (by - g.y0) / (g.y1 - g.y0);
+            let d = sample_sdf(&g.sdf, gu, gv);
+            let c = smoothstep(SDF_EDGE - self.aa, SDF_EDGE + self.aa, d);
+            coverage = coverage.max(c);
+        }
+
+        let a = coverage * self.opacity;
         if a <= 0.0 {
             return None;
         }
         Some([self.color[0], self.color[1], self.color[2], a])
     }
+}
 
-    fn sample_alpha(&self, u: f32, v: f32) -> f32 {
-        let fx = (u * self.bw as f32 - 0.5).clamp(0.0, self.bw as f32 - 1.0);
-        let fy = (v * self.bh as f32 - 0.5).clamp(0.0, self.bh as f32 - 1.0);
-        let x0 = fx.floor() as usize;
-        let y0 = fy.floor() as usize;
-        let x1 = (x0 + 1).min(self.bw - 1);
-        let y1 = (y0 + 1).min(self.bh - 1);
-        let tx = fx - x0 as f32;
-        let ty = fy - y0 as f32;
-
-        let at = |x: usize, y: usize| self.alpha[y * self.bw + x] as f32 / 255.0;
-        let top = at(x0, y0) * (1.0 - tx) + at(x1, y0) * tx;
-        let bot = at(x0, y1) * (1.0 - tx) + at(x1, y1) * tx;
-        top * (1.0 - ty) + bot * ty
+fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+    if e1 <= e0 {
+        return if x < e0 { 0.0 } else { 1.0 };
     }
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn median3(a: f32, b: f32, c: f32) -> f32 {
+    a.max(b).min(a.min(b).max(c))
+}
+
+fn sample_sdf(sdf: &GlyphSdf, u: f32, v: f32) -> f32 {
+    let gw = sdf.width as f32;
+    let gh = sdf.height as f32;
+    let fx = (u * gw - 0.5).clamp(0.0, gw - 1.0);
+    let fy = (v * gh - 0.5).clamp(0.0, gh - 1.0);
+    let x0 = fx.floor() as usize;
+    let y0 = fy.floor() as usize;
+    let x1 = (x0 + 1).min(sdf.width as usize - 1);
+    let y1 = (y0 + 1).min(sdf.height as usize - 1);
+    let tx = fx - x0 as f32;
+    let ty = fy - y0 as f32;
+
+    let w = sdf.width as usize;
+    let at = |x: usize, y: usize| -> f32 {
+        let i = (y * w + x) * 3;
+        median3(
+            sdf.data[i] as f32 / 255.0,
+            sdf.data[i + 1] as f32 / 255.0,
+            sdf.data[i + 2] as f32 / 255.0,
+        )
+    };
+    let top = at(x0, y0) * (1.0 - tx) + at(x1, y0) * tx;
+    let bot = at(x0, y1) * (1.0 - tx) + at(x1, y1) * tx;
+    top * (1.0 - ty) + bot * ty
+}
+
+pub fn build_layers(
+    modifiers: &[crate::modifiers::Modifier],
+    full_w: u32,
+    full_h: u32,
+) -> Vec<Option<TextRaster>> {
+    use crate::modifiers::ModifierKind;
+
+    let needs_text = modifiers
+        .iter()
+        .any(|m| m.has_visible_effect() && matches!(m.kind, ModifierKind::Text(_)));
+    if !needs_text {
+        return Vec::new();
+    }
+
+    modifiers
+        .iter()
+        .map(|m| {
+            if m.has_visible_effect()
+                && let ModifierKind::Text(t) = &m.kind
+            {
+                TextRaster::build(t, full_w, full_h)
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -102,8 +177,7 @@ mod tests {
     use crate::modifiers::kinds::Text;
 
     fn raster(text: &Text, w: u32, h: u32) -> Option<TextRaster> {
-        let mut fs = FontSystem::new();
-        TextRaster::build(text, w, h, &mut fs)
+        TextRaster::build(text, w, h)
     }
 
     #[test]
@@ -124,10 +198,11 @@ mod tests {
         let Some(r) = raster(&text, 400, 400) else {
             return;
         };
-        let center = r.sample(200.0, 200.0);
+        let covered_near_center = (170..230)
+            .any(|y| (140..260).any(|x| r.sample(x as f32, y as f32).is_some_and(|c| c[3] > 0.0)));
         assert!(
-            center.is_some_and(|c| c[3] > 0.0),
-            "expected coverage at block center"
+            covered_near_center,
+            "expected text coverage near block center"
         );
         assert!(
             r.sample(0.0, 0.0).is_none(),
@@ -158,33 +233,4 @@ mod tests {
             assert!(ph <= pf + 1e-4 && ph > 0.0);
         }
     }
-}
-
-pub fn build_layers(
-    modifiers: &[crate::modifiers::Modifier],
-    full_w: u32,
-    full_h: u32,
-) -> Vec<Option<TextRaster>> {
-    use crate::modifiers::ModifierKind;
-
-    let needs_text = modifiers
-        .iter()
-        .any(|m| m.has_visible_effect() && matches!(m.kind, ModifierKind::Text(_)));
-    if !needs_text {
-        return Vec::new();
-    }
-
-    let mut guard = text_render::lock_font_resources();
-    modifiers
-        .iter()
-        .map(|m| {
-            if m.has_visible_effect()
-                && let ModifierKind::Text(t) = &m.kind
-            {
-                TextRaster::build(t, full_w, full_h, &mut guard.font_system)
-            } else {
-                None
-            }
-        })
-        .collect()
 }

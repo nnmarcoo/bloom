@@ -723,10 +723,6 @@ impl App {
             subs.push(every(Duration::from_secs(1)).map(|_| Message::SaveConfig));
         }
 
-        if self.program.text_rebuild_pending() {
-            subs.push(every(Duration::from_millis(16)).map(|_| Message::Noop));
-        }
-
         if !self.notifications.is_empty() {
             let animating = self
                 .notifications

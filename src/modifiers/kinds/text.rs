@@ -72,13 +72,12 @@ impl Default for Text {
 }
 
 impl Text {
-    pub fn raster_hash(&self, density: f32) -> u64 {
+    pub fn raster_hash(&self) -> u64 {
         use std::hash::Hasher;
         let mut hasher = DefaultHasher::new();
         self.content.hash(&mut hasher);
         self.font.hash(&mut hasher);
         hash_f32(self.size, &mut hasher);
-        hash_f32(density, &mut hasher);
         hasher.finish()
     }
 

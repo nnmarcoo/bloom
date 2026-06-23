@@ -107,15 +107,6 @@ enum PlanItem<'a> {
     Step(usize, &'a Modifier),
 }
 
-const TEXT_REBUILD_BUDGET: u32 = 1;
-
-fn text_raster_density(physical_scale: f32) -> f32 {
-    if physical_scale <= 1.0 {
-        return 1.0;
-    }
-    physical_scale.log2().ceil().exp2().clamp(1.0, 8.0)
-}
-
 fn plan_modifiers(modifiers: &[Modifier]) -> Vec<PlanItem<'_>> {
     let mut plan: Vec<PlanItem> = Vec::new();
     let mut current: Vec<&Modifier> = Vec::new();
@@ -151,7 +142,6 @@ pub struct ModifierPipeline {
     text_uniform_pool: Vec<iced::wgpu::Buffer>,
     text_layers: Vec<Option<TextLayer>>,
     text_sigs: Vec<Option<u64>>,
-    text_sig_scratch: Vec<Option<u64>>,
     combined: CombinedPass,
     chromatic_aberration: ChromaticAberrationPass,
     text: TextPass,
@@ -161,8 +151,6 @@ pub struct ModifierPipeline {
     nearest_sampler: Sampler,
 
     format: TextureFormat,
-    last_text_density: f32,
-    text_amortizing: bool,
     pub width: u32,
     pub height: u32,
 }
@@ -214,7 +202,6 @@ impl ModifierPipeline {
             text_uniform_pool: Vec::new(),
             text_layers: Vec::new(),
             text_sigs: Vec::new(),
-            text_sig_scratch: Vec::new(),
             combined: CombinedPass::new(device, format),
             chromatic_aberration: ChromaticAberrationPass::new(device, format),
             text: TextPass::new(device, format),
@@ -223,8 +210,6 @@ impl ModifierPipeline {
             linear_sampler,
             nearest_sampler,
             format,
-            last_text_density: 0.0,
-            text_amortizing: false,
             width,
             height,
         }
@@ -256,7 +241,7 @@ impl ModifierPipeline {
         source: &TiledSource,
         modifiers: &[Modifier],
         dirty: bool,
-    ) -> bool {
+    ) {
         let n_tiles = source.tiles.len();
 
         self.tile_outputs.resize_with(n_tiles, || None);
@@ -277,10 +262,6 @@ impl ModifierPipeline {
         };
         let downscale = proc_scale < 1.0;
 
-        let text_density = text_raster_density(physical_scale);
-        let density_changed = text_density != self.last_text_density;
-        self.last_text_density = text_density;
-
         if self.text_layers.len() != modifiers.len() {
             self.text_layers.clear();
             self.text_layers.resize_with(modifiers.len(), || None);
@@ -288,41 +269,19 @@ impl ModifierPipeline {
             self.text_sigs.resize(modifiers.len(), None);
         }
 
-        let sigs = &mut self.text_sig_scratch;
-        sigs.clear();
-        let mut stale_rebuilds = 0usize;
+        let mut raster_changed = false;
         for (i, m) in modifiers.iter().enumerate() {
             let sig = if m.has_visible_effect()
                 && let ModifierKind::Text(t) = &m.kind
             {
-                Some(t.raster_hash(text_density))
+                Some(t.raster_hash())
             } else {
                 None
             };
+
             let unchanged =
                 self.text_sigs[i] == sig && self.text_layers[i].is_some() == sig.is_some();
-            if !unchanged && self.text_layers[i].is_some() && sig.is_some() {
-                stale_rebuilds += 1;
-            }
-            sigs.push(sig);
-        }
-
-        if density_changed && stale_rebuilds > 1 {
-            self.text_amortizing = true;
-        }
-        let amortize = self.text_amortizing && stale_rebuilds > 1;
-        let mut raster_changed = false;
-        let mut rebuild_budget = TEXT_REBUILD_BUDGET;
-        let mut rebuild_pending = false;
-        for (i, m) in modifiers.iter().enumerate() {
-            let sig = self.text_sig_scratch[i];
-            let unchanged =
-                self.text_sigs[i] == sig && self.text_layers[i].is_some() == sig.is_some();
-            let has_fallback = self.text_layers[i].is_some() && sig.is_some();
-            let defer = !unchanged && amortize && has_fallback && rebuild_budget == 0;
-
-            if unchanged || defer {
-                rebuild_pending |= defer;
+            if unchanged {
                 if let (Some(layer), ModifierKind::Text(t)) = (&mut self.text_layers[i], &m.kind) {
                     layer.refresh_transform(t);
                 }
@@ -330,18 +289,11 @@ impl ModifierPipeline {
             }
 
             self.text_layers[i] = match (sig, &m.kind) {
-                (Some(_), ModifierKind::Text(t)) => {
-                    rebuild_budget = rebuild_budget.saturating_sub(1);
-                    self.text.build_layer(device, queue, t, text_density)
-                }
+                (Some(_), ModifierKind::Text(t)) => self.text.build_layer(device, queue, t),
                 _ => None,
             };
             self.text_sigs[i] = sig;
             raster_changed = true;
-        }
-
-        if !rebuild_pending {
-            self.text_amortizing = false;
         }
 
         if raster_changed && !dirty {
@@ -556,7 +508,5 @@ impl ModifierPipeline {
         if let Some(encoder) = encoder {
             queue.submit([encoder.finish()]);
         }
-
-        rebuild_pending
     }
 }

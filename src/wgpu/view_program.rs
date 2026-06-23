@@ -75,7 +75,6 @@ pub struct ViewProgram {
     pub crop_tool_active: bool,
     dirty: Arc<std::sync::atomic::AtomicBool>,
     pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
-    text_rebuild_pending: Arc<std::sync::atomic::AtomicBool>,
     text_raster_cache: Arc<std::sync::Mutex<Option<TextRasterCache>>>,
     eyedropper_cache: Arc<std::sync::Mutex<Option<EyedropperCache>>>,
 }
@@ -117,7 +116,6 @@ impl Default for ViewProgram {
             crop_tool_active: false,
             dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pre_clear_gpu: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            text_rebuild_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             text_raster_cache: Arc::new(std::sync::Mutex::new(None)),
             eyedropper_cache: Arc::new(std::sync::Mutex::new(None)),
         }
@@ -127,11 +125,6 @@ impl Default for ViewProgram {
 impl ViewProgram {
     pub fn mark_dirty(&self) {
         self.dirty.store(true, std::sync::atomic::Ordering::Release);
-    }
-
-    pub fn text_rebuild_pending(&self) -> bool {
-        self.text_rebuild_pending
-            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     pub fn modifiers_mut(&mut self) -> &mut Vec<Modifier> {
@@ -852,7 +845,6 @@ impl Program<Message> for ViewProgram {
             modifiers: self.modifiers.clone(),
             dirty: self.dirty.swap(false, std::sync::atomic::Ordering::AcqRel),
             pre_clear_gpu: Arc::clone(&self.pre_clear_gpu),
-            text_rebuild_pending: Arc::clone(&self.text_rebuild_pending),
         }
     }
 

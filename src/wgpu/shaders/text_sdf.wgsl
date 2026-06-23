@@ -1,13 +1,20 @@
 struct TextUniforms {
-    anchor: vec2<f32>,       // full-image pixels: where the block pivot lands
-    block_size: vec2<f32>,   // display pixels (w, h)
-    pivot: vec2<f32>,        // 0..1 within block aligned to anchor (0.5,0.5 = center)
-    tile_origin: vec2<f32>,  // this tile's offset in full-image pixels
-    tile_size: vec2<f32>,    // this tile's size in full-image pixels
+    anchor: vec2<f32>,
+    block_size: vec2<f32>,
+    pivot: vec2<f32>,
+    tile_origin: vec2<f32>,
+    tile_size: vec2<f32>,
+    block_min: vec2<f32>,
     rotation: f32,
     opacity: f32,
-    color: vec3<f32>,
-    _pad: f32,
+    px_range: f32,
+    _pad0: f32,
+    color: vec4<f32>,
+}
+
+struct Instance {
+    @location(0) rect: vec4<f32>,
+    @location(1) uv: vec4<f32>,
 }
 
 struct VertexOutput {
@@ -16,18 +23,20 @@ struct VertexOutput {
 };
 
 @group(0) @binding(0) var<uniform> u: TextUniforms;
-@group(0) @binding(1) var t_glyph: texture_2d<f32>;
-@group(0) @binding(2) var s_glyph: sampler;
+@group(0) @binding(1) var t_atlas: texture_2d<f32>;
+@group(0) @binding(2) var s_atlas: sampler;
 
 @vertex
-fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
+fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VertexOutput {
     var corners = array<vec2<f32>, 4>(
         vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 0.0),
         vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 1.0)
     );
     let corner = corners[vi];
 
-    let local = (corner - u.pivot) * u.block_size;
+    let glyph_px = inst.rect.xy + corner * inst.rect.zw;
+    let local = (glyph_px - u.block_min) - u.pivot * u.block_size;
+
     let cs = cos(u.rotation);
     let sn = sin(u.rotation);
     let rot = vec2<f32>(local.x * cs - local.y * sn, local.x * sn + local.y * cs);
@@ -39,14 +48,21 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 
     var out: VertexOutput;
     out.position = vec4<f32>(ndc, 0.0, 1.0);
-    out.uv = corner;
+    out.uv = inst.uv.xy + corner * inst.uv.zw;
     return out;
+}
+
+fn median3(a: f32, b: f32, c: f32) -> f32 {
+    return max(min(a, b), min(max(a, b), c));
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let a = textureSample(t_glyph, s_glyph, in.uv).r * u.opacity;
-    return vec4<f32>(u.color, a);
+    let s = textureSample(t_atlas, s_atlas, in.uv);
+    let d = median3(s.r, s.g, s.b);
+    let screen_px = max(fwidth(d), 1e-5);
+    let coverage = clamp((d - 0.5) / screen_px + 0.5, 0.0, 1.0);
+    return vec4<f32>(u.color.rgb, coverage * u.opacity);
 }
 
 struct CopyOut {
@@ -68,5 +84,5 @@ fn vs_copy(@builtin(vertex_index) vi: u32) -> CopyOut {
 
 @fragment
 fn fs_copy(in: CopyOut) -> @location(0) vec4<f32> {
-    return textureSample(t_glyph, s_glyph, in.uv);
+    return textureSample(t_atlas, s_atlas, in.uv);
 }

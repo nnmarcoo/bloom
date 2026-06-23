@@ -1,8 +1,16 @@
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache, SwashContent};
+use cosmic_text::fontdb;
+use cosmic_text::{Attrs, Buffer, CacheKeyFlags, Family, FontSystem, Metrics, Shaping};
 
 use crate::modifiers::kinds::Text;
+
+pub const SDF_TILE: u32 = 64;
+pub const SDF_RANGE: f64 = 6.0;
+pub const SDF_REFERENCE_PX: f32 = 52.0;
+pub const SDF_EDGE: f32 = 0.5;
+pub const SDF_PX_RANGE: f32 = SDF_RANGE as f32;
 
 pub struct FontResources {
     pub font_system: FontSystem,
@@ -38,88 +46,6 @@ pub fn font_families() -> &'static [String] {
         let guard = lock_font_resources();
         enumerate_families(&guard.font_system)
     })
-}
-
-pub struct GlyphQuad {
-    pub dst_x: f32,
-    pub dst_y: f32,
-    pub width: f32,
-    pub height: f32,
-    pub alpha: Vec<u8>,
-}
-
-pub struct TextBitmap {
-    pub glyphs: Vec<GlyphQuad>,
-    pub min_x: f32,
-    pub min_y: f32,
-    pub max_x: f32,
-    pub max_y: f32,
-}
-
-pub struct PackedAlpha {
-    pub alpha: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
-    pub bbox_w: f32,
-    pub bbox_h: f32,
-}
-
-impl TextBitmap {
-    pub fn is_empty(&self) -> bool {
-        self.glyphs.is_empty()
-    }
-
-    pub fn pack_alpha(&self) -> Option<PackedAlpha> {
-        if self.is_empty() {
-            return None;
-        }
-        let bbox_w = (self.max_x - self.min_x).ceil().max(1.0);
-        let bbox_h = (self.max_y - self.min_y).ceil().max(1.0);
-        let w = bbox_w as u32;
-        let h = bbox_h as u32;
-        let mut buf = vec![0u8; (w as usize) * (h as usize)];
-
-        for g in &self.glyphs {
-            let ox = (g.dst_x - self.min_x).round() as i32;
-            let oy = (g.dst_y - self.min_y).round() as i32;
-            let gw = g.width.round() as i32;
-            let gh = g.height.round() as i32;
-            for row in 0..gh {
-                let py = oy + row;
-                if py < 0 || py >= h as i32 {
-                    continue;
-                }
-                for col in 0..gw {
-                    let px = ox + col;
-                    if px < 0 || px >= w as i32 {
-                        continue;
-                    }
-                    let src = (row as usize) * (gw as usize) + col as usize;
-                    let Some(&a) = g.alpha.get(src) else { continue };
-                    if a == 0 {
-                        continue;
-                    }
-                    let dst = (py as usize) * (w as usize) + px as usize;
-                    let prev = buf[dst];
-                    buf[dst] = src_over_u8(a, prev);
-                }
-            }
-        }
-
-        Some(PackedAlpha {
-            alpha: buf,
-            width: w,
-            height: h,
-            bbox_w,
-            bbox_h,
-        })
-    }
-}
-
-fn src_over_u8(src: u8, dst: u8) -> u8 {
-    let s = src as u32;
-    let d = dst as u32;
-    (s + d * (255 - s) / 255).min(255) as u8
 }
 
 fn shape_buffer(text: &Text, font_system: &mut FontSystem) -> Buffer {
@@ -379,74 +305,302 @@ pub fn caret_at_point(text: &Text, local_x: f32, local_y: f32) -> usize {
     ShapedText::shape(text).caret_at_point(local_x, local_y)
 }
 
-pub fn rasterize_text(text: &Text, font_system: &mut FontSystem) -> TextBitmap {
-    let mut bitmap = TextBitmap {
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SdfKey {
+    font_id: fontdb::ID,
+    glyph_id: u16,
+    weight: fontdb::Weight,
+    flags: CacheKeyFlags,
+}
+
+pub struct GlyphSdf {
+    pub data: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub quad_w: f32,
+    pub quad_h: f32,
+    pub left: f32,
+    pub top: f32,
+}
+
+fn sdf_cache() -> &'static Mutex<HashMap<SdfKey, Arc<GlyphSdf>>> {
+    static CACHE: OnceLock<Mutex<HashMap<SdfKey, Arc<GlyphSdf>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn lock_sdf_cache() -> MutexGuard<'static, HashMap<SdfKey, Arc<GlyphSdf>>> {
+    sdf_cache().lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn build_msdf(face: &ttf_parser::Face, glyph_id: u16) -> Option<GlyphSdf> {
+    use fdsm::generate::generate_msdf;
+    use fdsm::render::correct_sign_msdf;
+    use fdsm::shape::Shape;
+    use fdsm::transform::Transform;
+    use nalgebra::{Affine2, Similarity2, Vector2};
+    use ttf_parser::GlyphId;
+
+    let upem = face.units_per_em() as f64;
+    let range = SDF_RANGE;
+    let max_glyph_px = (SDF_TILE as f64 - 2.0 * range - 2.0).max(1.0);
+
+    let shape = fdsm_ttf_parser::load_shape_from_face(face, GlyphId(glyph_id))?;
+    let bbox = face.glyph_bounding_box(GlyphId(glyph_id))?;
+
+    let glyph_w_units = (bbox.x_max as f64 - bbox.x_min as f64).max(1.0);
+    let glyph_h_units = (bbox.y_max as f64 - bbox.y_min as f64).max(1.0);
+
+    let mut px_per_unit = SDF_REFERENCE_PX as f64 / upem;
+    let fit = (max_glyph_px / (glyph_w_units * px_per_unit))
+        .min(max_glyph_px / (glyph_h_units * px_per_unit))
+        .min(1.0);
+    px_per_unit *= fit;
+
+    let shrinkage = 1.0 / px_per_unit;
+
+    let width = (glyph_w_units / shrinkage + 2.0 * range).ceil() as u32;
+    let height = (glyph_h_units / shrinkage + 2.0 * range).ceil() as u32;
+    if width == 0 || height == 0 || width > SDF_TILE || height > SDF_TILE {
+        return None;
+    }
+
+    let transformation = nalgebra::convert::<_, Affine2<f64>>(Similarity2::new(
+        Vector2::new(
+            range - bbox.x_min as f64 / shrinkage,
+            range - bbox.y_min as f64 / shrinkage,
+        ),
+        0.0,
+        1.0 / shrinkage,
+    ));
+
+    let mut shape = shape;
+    Transform::transform(&mut shape, &transformation);
+    let colored = Shape::edge_coloring_simple(shape, 0.03, 6_948_572_109_135_u64);
+    let prepared = colored.prepare();
+
+    let mut msdf = image::RgbImage::new(width, height);
+    generate_msdf(&prepared, range, &mut msdf);
+    correct_sign_msdf(
+        &mut msdf,
+        &prepared,
+        fdsm::bezier::scanline::FillRule::Nonzero,
+    );
+
+    let mut data = vec![0u8; (width * height * 3) as usize];
+    for y in 0..height {
+        let src_y = height - 1 - y;
+        for x in 0..width {
+            let p = msdf.get_pixel(x, src_y);
+            let di = ((y * width + x) * 3) as usize;
+            data[di] = p[0];
+            data[di + 1] = p[1];
+            data[di + 2] = p[2];
+        }
+    }
+
+    let natural_per_unit = SDF_REFERENCE_PX as f64 / upem;
+    let quad_w = (width as f64 / px_per_unit * natural_per_unit) as f32;
+    let quad_h = (height as f64 / px_per_unit * natural_per_unit) as f32;
+    let range_natural = (range / px_per_unit * natural_per_unit) as f32;
+    let left = bbox.x_min as f32 * natural_per_unit as f32 - range_natural;
+    let top = -(bbox.y_max as f32 * natural_per_unit as f32) - range_natural;
+
+    Some(GlyphSdf {
+        data,
+        width,
+        height,
+        quad_w,
+        quad_h,
+        left,
+        top,
+    })
+}
+
+fn ensure_glyph_sdf(key: SdfKey, font_system: &mut FontSystem) -> Option<Arc<GlyphSdf>> {
+    if let Some(existing) = lock_sdf_cache().get(&key) {
+        return Some(existing.clone());
+    }
+
+    let built = font_system
+        .db_mut()
+        .with_face_data(key.font_id, |data, index| {
+            let face = ttf_parser::Face::parse(data, index).ok()?;
+            build_msdf(&face, key.glyph_id)
+        })??;
+
+    let sdf = Arc::new(built);
+    lock_sdf_cache().insert(key, sdf.clone());
+    Some(sdf)
+}
+
+pub struct PlacedGlyph {
+    pub key: SdfKey,
+    pub sdf: Arc<GlyphSdf>,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+pub struct ShapedGlyphs {
+    pub glyphs: Vec<PlacedGlyph>,
+    pub min_x: f32,
+    pub min_y: f32,
+    pub max_x: f32,
+    pub max_y: f32,
+}
+
+impl ShapedGlyphs {
+    pub fn is_empty(&self) -> bool {
+        self.glyphs.is_empty()
+    }
+
+    pub fn bbox(&self) -> (f32, f32) {
+        if self.glyphs.is_empty() {
+            return (0.0, 0.0);
+        }
+        (
+            (self.max_x - self.min_x).max(1.0),
+            (self.max_y - self.min_y).max(1.0),
+        )
+    }
+}
+
+pub fn shape_glyphs(text: &Text) -> ShapedGlyphs {
+    let mut shaped = ShapedGlyphs {
         glyphs: Vec::new(),
         min_x: 0.0,
         min_y: 0.0,
         max_x: 0.0,
         max_y: 0.0,
     };
-
     if text.content.is_empty() {
-        return bitmap;
+        return shaped;
     }
 
+    let mut guard = lock_font_resources();
+    let FontResources { font_system } = &mut *guard;
     let buffer = shape_buffer(text, font_system);
-    let mut swash = SwashCache::new();
 
+    let ref_scale = text.size / SDF_REFERENCE_PX;
     let mut first = true;
     for run in buffer.layout_runs() {
         for glyph in run.glyphs.iter() {
             let physical = glyph.physical((0.0, 0.0), 1.0);
-            let Some(image) = swash.get_image_uncached(font_system, physical.cache_key) else {
+            let key = SdfKey {
+                font_id: physical.cache_key.font_id,
+                glyph_id: physical.cache_key.glyph_id,
+                weight: glyph.font_weight,
+                flags: glyph.cache_key_flags,
+            };
+            let Some(sdf) = ensure_glyph_sdf(key, font_system) else {
                 continue;
             };
-            if image.placement.width == 0 || image.placement.height == 0 {
-                continue;
-            }
 
-            let gx = physical.x as f32 + image.placement.left as f32;
-            let gy = run.line_y + physical.y as f32 - image.placement.top as f32;
-            let gw = image.placement.width as f32;
-            let gh = image.placement.height as f32;
-
-            let alpha = match image.content {
-                SwashContent::Mask => image.data.clone(),
-                SwashContent::SubpixelMask => image
-                    .data
-                    .chunks_exact(3)
-                    .map(|px| (((px[0] as u16) + (px[1] as u16) + (px[2] as u16)) / 3) as u8)
-                    .collect::<Vec<u8>>(),
-                SwashContent::Color => image
-                    .data
-                    .chunks_exact(4)
-                    .map(|px| px[3])
-                    .collect::<Vec<u8>>(),
-            };
+            let x = physical.x as f32 + sdf.left * ref_scale;
+            let y = run.line_y + physical.y as f32 + sdf.top * ref_scale;
+            let w = sdf.quad_w * ref_scale;
+            let h = sdf.quad_h * ref_scale;
 
             if first {
-                bitmap.min_x = gx;
-                bitmap.min_y = gy;
-                bitmap.max_x = gx + gw;
-                bitmap.max_y = gy + gh;
+                shaped.min_x = x;
+                shaped.min_y = y;
+                shaped.max_x = x + w;
+                shaped.max_y = y + h;
                 first = false;
             } else {
-                bitmap.min_x = bitmap.min_x.min(gx);
-                bitmap.min_y = bitmap.min_y.min(gy);
-                bitmap.max_x = bitmap.max_x.max(gx + gw);
-                bitmap.max_y = bitmap.max_y.max(gy + gh);
+                shaped.min_x = shaped.min_x.min(x);
+                shaped.min_y = shaped.min_y.min(y);
+                shaped.max_x = shaped.max_x.max(x + w);
+                shaped.max_y = shaped.max_y.max(y + h);
             }
 
-            bitmap.glyphs.push(GlyphQuad {
-                dst_x: gx,
-                dst_y: gy,
-                width: gw,
-                height: gh,
-                alpha,
+            shaped.glyphs.push(PlacedGlyph {
+                key,
+                sdf,
+                x,
+                y,
+                w,
+                h,
             });
         }
     }
 
-    bitmap
+    shaped
+}
+
+#[cfg(test)]
+mod sdf_tests {
+    use super::*;
+
+    #[test]
+    fn wide_glyphs_not_dropped() {
+        for s in ["W", "m", "M", "@", "%", "—", "WWW", "iiiii"] {
+            let text = Text {
+                content: s.to_string(),
+                size: 52.0,
+                ..Text::default()
+            };
+            let shaped = shape_glyphs(&text);
+            let want = s.chars().count();
+            let got = shaped.glyphs.len();
+            assert_eq!(
+                got, want,
+                "glyph(s) dropped for {s:?}: got {got} want {want}"
+            );
+            for g in &shaped.glyphs {
+                assert!(g.sdf.width <= SDF_TILE && g.sdf.height <= SDF_TILE);
+            }
+        }
+    }
+
+    #[test]
+    fn msdf_glyph_has_field() {
+        let text = Text {
+            content: "R".to_string(),
+            size: 52.0,
+            ..Text::default()
+        };
+        let shaped = shape_glyphs(&text);
+        if shaped.is_empty() {
+            return;
+        }
+        let g = &shaped.glyphs[0];
+        assert_eq!(g.sdf.data.len(), (g.sdf.width * g.sdf.height * 3) as usize);
+        let has_inside = g
+            .sdf
+            .data
+            .chunks_exact(3)
+            .any(|p| median3(p[0], p[1], p[2]) > 128);
+        let has_outside = g
+            .sdf
+            .data
+            .chunks_exact(3)
+            .any(|p| median3(p[0], p[1], p[2]) < 128);
+        assert!(has_inside && has_outside, "msdf must span the edge");
+    }
+
+    fn median3(a: u8, b: u8, c: u8) -> u8 {
+        a.max(b).min(a.min(b).max(c))
+    }
+
+    #[test]
+    fn shape_glyphs_caches_glyphs() {
+        let text = Text {
+            content: "AA".to_string(),
+            size: 48.0,
+            ..Text::default()
+        };
+        let first = shape_glyphs(&text);
+        if first.is_empty() {
+            return;
+        }
+        let before = lock_sdf_cache().len();
+        let _second = shape_glyphs(&text);
+        let after = lock_sdf_cache().len();
+        assert_eq!(
+            before, after,
+            "re-shaping identical text adds no new glyphs"
+        );
+    }
 }
