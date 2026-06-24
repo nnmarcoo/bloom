@@ -74,6 +74,7 @@ struct State {
     selection: Option<usize>,
     pending: Option<String>,
     shift: bool,
+    typing: bool,
 }
 
 impl State {
@@ -572,6 +573,7 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
             state.caret = self.content().len();
             state.selection = None;
             state.pending = None;
+            state.typing = false;
         }
         if state.pending.as_deref() == Some(self.content()) {
             state.pending = None;
@@ -594,7 +596,14 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
             ..
         }) = event
         {
-            if !self.active || shell.is_event_captured() {
+            if !self.active || !state.typing || shell.is_event_captured() {
+                return;
+            }
+            if let keyboard::Key::Named(keyboard::key::Named::Escape) = key {
+                state.typing = false;
+                state.selection = None;
+                shell.capture_event();
+                shell.request_redraw();
                 return;
             }
             state.shift = modifiers.shift();
@@ -610,8 +619,12 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
 
         match mouse_event {
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
-                let Some(local) = local else { return };
+                let Some(local) = local else {
+                    state.typing = false;
+                    return;
+                };
                 let Some(grab) = self.hit(local) else {
+                    state.typing = false;
                     if let Some(other_idx) = self.other_hit(local) {
                         shell.publish(EditMsg::SetActive(other_idx).into());
                         shell.capture_event();
@@ -622,6 +635,9 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
                     }
                     return;
                 };
+                if matches!(grab, Grab::Text | Grab::Move) {
+                    state.typing = true;
+                }
                 let text_anchor = if grab == Grab::Text
                     && let Some(anchor) = self.anchor_screen()
                 {

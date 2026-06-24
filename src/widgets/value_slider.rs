@@ -1,19 +1,18 @@
 use iced::advanced::layout;
 use iced::advanced::renderer::{self, Quad};
-use iced::advanced::text::{self, Paragraph, Text};
 use iced::advanced::widget::tree::{self, Tree};
 use iced::advanced::{self, Clipboard, Layout, Shell, Widget};
-use iced::alignment::{Horizontal, Vertical};
 use iced::gradient::Linear;
 use iced::keyboard::key::Named;
 use iced::keyboard::{self, Key};
 use iced::mouse;
 use iced::{
-    Background, Border, Color, Element, Event, Font, Gradient, Length, Pixels, Point, Radians,
-    Rectangle, Renderer, Size,
+    Background, Border, Color, Element, Event, Gradient, Length, Radians, Rectangle, Renderer,
+    Size, Theme,
 };
 
 use crate::styles::radius;
+use crate::widgets::field_editor::{self, Op};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Fmt {
@@ -45,13 +44,17 @@ impl Fmt {
     }
 
     fn render(&self, value: f32) -> String {
-        let mut s = if self.signed {
+        let mut s = self.render_bare(value);
+        s.push_str(self.suffix);
+        s
+    }
+
+    fn render_bare(&self, value: f32) -> String {
+        if self.signed {
             format!("{:+.*}", self.decimals as usize, value)
         } else {
             format!("{:.*}", self.decimals as usize, value)
-        };
-        s.push_str(self.suffix);
-        s
+        }
     }
 }
 
@@ -207,7 +210,7 @@ enum Mode {
     },
     Editing {
         buffer: String,
-        fresh: bool,
+        needs_focus: bool,
     },
 }
 
@@ -219,9 +222,16 @@ impl Mode {
     fn is_dragging(&self) -> bool {
         matches!(self, Self::Dragging { .. })
     }
+
+    fn buffer(&self) -> &str {
+        match self {
+            Self::Editing { buffer, .. } => buffer,
+            _ => "",
+        }
+    }
 }
 
-impl<Message> Widget<Message, iced::Theme, Renderer> for ValueSlider<Message>
+impl<Message> Widget<Message, Theme, Renderer> for ValueSlider<Message>
 where
     Message: Clone,
 {
@@ -233,6 +243,15 @@ where
         tree::State::new(State::default())
     }
 
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(field_editor::input("", self.text_size))]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        let buffer = tree.state.downcast_ref::<State>().mode.buffer().to_owned();
+        tree.diff_children(&[field_editor::input(&buffer, self.text_size)]);
+    }
+
     fn size(&self) -> Size<Length> {
         Size {
             width: Length::Fill,
@@ -242,11 +261,15 @@ where
 
     fn layout(
         &mut self,
-        _tree: &mut Tree,
-        _renderer: &Renderer,
+        tree: &mut Tree,
+        renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        layout::atomic(limits, Length::Fill, self.height)
+        let node = layout::atomic(limits, Length::Fill, self.height);
+        let size = node.bounds().size();
+        let buffer = tree.state.downcast_ref::<State>().mode.buffer().to_owned();
+        let editor = field_editor::layout(tree, renderer, &buffer, self.text_size, size);
+        layout::Node::with_children(size, vec![editor])
     }
 
     fn update(
@@ -255,38 +278,43 @@ where
         event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
-        _renderer: &Renderer,
-        _clipboard: &mut dyn Clipboard,
+        renderer: &Renderer,
+        clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
-        _viewport: &Rectangle,
+        viewport: &Rectangle,
     ) {
-        let state = tree.state.downcast_mut::<State>();
         let bounds = layout.bounds();
 
-        match event {
-            Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
-                state.shift = modifiers.shift();
-            }
+        if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
+            tree.state.downcast_mut::<State>().shift = modifiers.shift();
+        }
 
+        if tree.state.downcast_ref::<State>().mode.is_editing() {
+            self.update_editing(
+                tree, event, layout, cursor, renderer, clipboard, shell, viewport,
+            );
+            return;
+        }
+
+        let state = tree.state.downcast_mut::<State>();
+
+        match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                if cursor.is_over(bounds) {
-                    if !state.mode.is_editing()
-                        && let Some(pos) = cursor.position()
-                    {
-                        state.mode = Mode::Pending { origin_x: pos.x };
-                        shell.capture_event();
-                    }
-                } else if state.mode.is_editing() {
-                    self.commit(state, shell);
+                if cursor.is_over(bounds)
+                    && let Some(pos) = cursor.position()
+                {
+                    state.mode = Mode::Pending { origin_x: pos.x };
+                    shell.capture_event();
                 }
             }
 
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => match state.mode {
                 Mode::Pending { .. } => {
                     state.mode = Mode::Editing {
-                        buffer: self.fmt.render(self.value),
-                        fresh: true,
+                        buffer: self.fmt.render_bare(self.value),
+                        needs_focus: true,
                     };
+                    shell.invalidate_layout();
                     shell.request_redraw();
                     shell.capture_event();
                 }
@@ -336,9 +364,7 @@ where
                 }
             }
 
-            Event::Mouse(mouse::Event::WheelScrolled { delta })
-                if cursor.is_over(bounds) && !state.mode.is_editing() =>
-            {
+            Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
                 let lines = match delta {
                     mouse::ScrollDelta::Lines { y, .. } => *y,
                     mouse::ScrollDelta::Pixels { y, .. } => *y / 16.0,
@@ -352,49 +378,6 @@ where
                 shell.capture_event();
             }
 
-            Event::Keyboard(keyboard::Event::KeyPressed { key, text, .. })
-                if state.mode.is_editing() =>
-            {
-                match key {
-                    Key::Named(Named::Enter) => {
-                        self.commit(state, shell);
-                        shell.capture_event();
-                    }
-                    Key::Named(Named::Escape) => {
-                        state.mode = Mode::Idle;
-                        shell.capture_event();
-                    }
-                    Key::Named(Named::Backspace) => {
-                        if let Mode::Editing { buffer, fresh } = &mut state.mode {
-                            if *fresh {
-                                buffer.clear();
-                                *fresh = false;
-                            } else {
-                                buffer.pop();
-                            }
-                            self.publish_buffer(buffer, shell);
-                        }
-                        shell.capture_event();
-                    }
-                    _ => {
-                        if let Some(ch) = text.as_ref().and_then(|s| s.chars().next())
-                            && let Mode::Editing { buffer, fresh } = &mut state.mode
-                            && self.accepts_char(ch, buffer)
-                        {
-                            if *fresh {
-                                buffer.clear();
-                                *fresh = false;
-                            }
-                            if buffer.len() < 8 {
-                                buffer.push(ch);
-                            }
-                            self.publish_buffer(buffer, shell);
-                            shell.capture_event();
-                        }
-                    }
-                }
-            }
-
             _ => {}
         }
     }
@@ -403,14 +386,13 @@ where
         &self,
         tree: &Tree,
         renderer: &mut Renderer,
-        theme: &iced::Theme,
-        _style: &renderer::Style,
+        theme: &Theme,
+        style: &renderer::Style,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
-        _viewport: &Rectangle,
+        viewport: &Rectangle,
     ) {
         use advanced::Renderer as _;
-        use advanced::text::Renderer as _;
 
         let state = tree.state.downcast_ref::<State>();
         let bounds = layout.bounds();
@@ -436,137 +418,104 @@ where
             Background::Color(palette.background.weak.color),
         );
 
-        if !editing {
-            match self.track {
-                Track::Fill => {
-                    let fill_w = (bounds.width * self.fraction()).round();
-                    if fill_w > 0.0 {
-                        renderer.fill_quad(
-                            Quad {
-                                bounds: Rectangle {
-                                    width: fill_w,
-                                    ..bounds
-                                },
-                                border: Border {
-                                    radius: radius().into(),
-                                    ..Border::default()
-                                },
-                                ..Quad::default()
-                            },
-                            Background::Color(if active {
-                                palette.primary.base.color.scale_alpha(0.45)
-                            } else {
-                                palette.primary.base.color.scale_alpha(0.30)
-                            }),
-                        );
-                    }
-                }
-                Track::Gradient(stops) => {
-                    let mut linear = Linear::new(Radians(std::f32::consts::FRAC_PI_2));
-                    for (offset, color) in stops {
-                        linear = linear.add_stop(*offset, *color);
-                    }
+        if editing {
+            field_editor::draw(
+                tree,
+                renderer,
+                theme,
+                style,
+                layout,
+                cursor,
+                viewport,
+                state.mode.buffer(),
+                self.text_size,
+            );
+            return;
+        }
+
+        match self.track {
+            Track::Fill => {
+                let fill_w = (bounds.width * self.fraction()).round();
+                if fill_w > 0.0 {
                     renderer.fill_quad(
                         Quad {
-                            bounds,
+                            bounds: Rectangle {
+                                width: fill_w,
+                                ..bounds
+                            },
                             border: Border {
                                 radius: radius().into(),
                                 ..Border::default()
                             },
                             ..Quad::default()
                         },
-                        Background::Gradient(Gradient::Linear(linear)),
-                    );
-
-                    let marker_x = (bounds.x + bounds.width * self.fraction())
-                        .min(bounds.x + bounds.width - 2.0)
-                        .max(bounds.x + 2.0);
-                    renderer.fill_quad(
-                        Quad {
-                            bounds: Rectangle {
-                                x: marker_x - 2.0,
-                                y: bounds.y,
-                                width: 4.0,
-                                height: bounds.height,
-                            },
-                            border: Border {
-                                radius: 1.0.into(),
-                                ..Border::default()
-                            },
-                            ..Quad::default()
-                        },
-                        Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.5)),
-                    );
-                    renderer.fill_quad(
-                        Quad {
-                            bounds: Rectangle {
-                                x: marker_x - 1.0,
-                                y: bounds.y + 1.0,
-                                width: 2.0,
-                                height: bounds.height - 2.0,
-                            },
-                            ..Quad::default()
-                        },
-                        Background::Color(Color::WHITE),
-                    );
-
-                    let label = self.fmt.render(self.value);
-                    let pill_w = label.chars().count() as f32 * self.text_size * 0.62 + 8.0;
-                    let pill_h = self.text_size + 4.0;
-                    renderer.fill_quad(
-                        Quad {
-                            bounds: Rectangle {
-                                x: (bounds.center_x() - pill_w / 2.0).round(),
-                                y: (bounds.center_y() - pill_h / 2.0).round(),
-                                width: pill_w,
-                                height: pill_h,
-                            },
-                            border: Border {
-                                radius: 3.0.into(),
-                                ..Border::default()
-                            },
-                            ..Quad::default()
-                        },
-                        Background::Color(palette.background.base.color.scale_alpha(0.7)),
+                        Background::Color(if active {
+                            palette.primary.base.color.scale_alpha(0.45)
+                        } else {
+                            palette.primary.base.color.scale_alpha(0.30)
+                        }),
                     );
                 }
             }
-        }
+            Track::Gradient(stops) => {
+                let mut linear = Linear::new(Radians(std::f32::consts::FRAC_PI_2));
+                for (offset, color) in stops {
+                    linear = linear.add_stop(*offset, *color);
+                }
+                renderer.fill_quad(
+                    Quad {
+                        bounds,
+                        border: Border {
+                            radius: radius().into(),
+                            ..Border::default()
+                        },
+                        ..Quad::default()
+                    },
+                    Background::Gradient(Gradient::Linear(linear)),
+                );
 
-        let display = match &state.mode {
-            Mode::Editing { buffer, .. } => buffer.clone(),
-            _ => self.fmt.render(self.value),
-        };
-        let text_color = palette.background.base.text;
-
-        let show_selection = matches!(state.mode, Mode::Editing { fresh: true, .. });
-        let show_caret = matches!(state.mode, Mode::Editing { fresh: false, .. });
-
-        let caret_x = if show_caret || show_selection {
-            let para = <Renderer as advanced::text::Renderer>::Paragraph::with_text(Text {
-                content: display.as_str(),
-                bounds: Size::new(f32::INFINITY, f32::INFINITY),
-                size: Pixels(self.text_size),
-                line_height: text::LineHeight::default(),
-                font: Font::DEFAULT,
-                align_x: Horizontal::Left.into(),
-                align_y: Vertical::Top,
-                shaping: text::Shaping::Basic,
-                wrapping: text::Wrapping::None,
-            });
-            let text_width = para.min_bounds().width;
-
-            if show_selection {
-                let sel_h = self.text_size + 4.0;
-                let sel_x = (bounds.center_x() - text_width / 2.0 - 2.0).round();
-                let sel_y = (bounds.center_y() - sel_h / 2.0).round();
+                let marker_x = (bounds.x + bounds.width * self.fraction())
+                    .min(bounds.x + bounds.width - 2.0)
+                    .max(bounds.x + 2.0);
                 renderer.fill_quad(
                     Quad {
                         bounds: Rectangle {
-                            x: sel_x,
-                            y: sel_y,
-                            width: text_width + 4.0,
-                            height: sel_h,
+                            x: marker_x - 2.0,
+                            y: bounds.y,
+                            width: 4.0,
+                            height: bounds.height,
+                        },
+                        border: Border {
+                            radius: 1.0.into(),
+                            ..Border::default()
+                        },
+                        ..Quad::default()
+                    },
+                    Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.5)),
+                );
+                renderer.fill_quad(
+                    Quad {
+                        bounds: Rectangle {
+                            x: marker_x - 1.0,
+                            y: bounds.y + 1.0,
+                            width: 2.0,
+                            height: bounds.height - 2.0,
+                        },
+                        ..Quad::default()
+                    },
+                    Background::Color(Color::WHITE),
+                );
+
+                let label = self.fmt.render(self.value);
+                let pill_w = label.chars().count() as f32 * self.text_size * 0.62 + 8.0;
+                let pill_h = self.text_size + 4.0;
+                renderer.fill_quad(
+                    Quad {
+                        bounds: Rectangle {
+                            x: (bounds.center_x() - pill_w / 2.0).round(),
+                            y: (bounds.center_y() - pill_h / 2.0).round(),
+                            width: pill_w,
+                            height: pill_h,
                         },
                         border: Border {
                             radius: 3.0.into(),
@@ -574,53 +523,19 @@ where
                         },
                         ..Quad::default()
                     },
-                    Background::Color(palette.primary.base.color.scale_alpha(0.35)),
+                    Background::Color(palette.background.base.color.scale_alpha(0.7)),
                 );
-                None
-            } else {
-                Some(if text_width > 0.0 {
-                    (bounds.center_x() + text_width / 2.0 + 2.0).round()
-                } else {
-                    bounds.center_x().round()
-                })
             }
-        } else {
-            None
-        };
-
-        renderer.fill_text(
-            Text {
-                content: display,
-                bounds: Size::new(bounds.width, bounds.height),
-                size: Pixels(self.text_size),
-                line_height: text::LineHeight::default(),
-                font: Font::DEFAULT,
-                align_x: Horizontal::Center.into(),
-                align_y: Vertical::Center,
-                shaping: text::Shaping::Basic,
-                wrapping: text::Wrapping::None,
-            },
-            Point::new(bounds.center_x(), bounds.center_y()),
-            text_color,
-            bounds,
-        );
-
-        if let Some(caret_x) = caret_x {
-            let caret_h = self.text_size + 2.0;
-            let caret_y = (bounds.center_y() - caret_h / 2.0).round();
-            renderer.fill_quad(
-                Quad {
-                    bounds: Rectangle {
-                        x: caret_x,
-                        y: caret_y,
-                        width: 1.5,
-                        height: caret_h,
-                    },
-                    ..Quad::default()
-                },
-                Background::Color(text_color),
-            );
         }
+
+        let display = self.fmt.render(self.value);
+        field_editor::draw_centered_text(
+            renderer,
+            &display,
+            bounds,
+            self.text_size,
+            palette.background.base.text,
+        );
     }
 
     fn mouse_interaction(
@@ -645,14 +560,86 @@ where
 }
 
 impl<Message: Clone> ValueSlider<Message> {
-    fn accepts_char(&self, ch: char, buffer: &str) -> bool {
-        if ch.is_ascii_digit() {
-            return true;
+    #[allow(clippy::too_many_arguments)]
+    fn update_editing(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        let Some(editor_layout) = layout.children().next() else {
+            return;
+        };
+
+        if let Mode::Editing {
+            buffer,
+            needs_focus,
+        } = &mut tree.state.downcast_mut::<State>().mode
+            && *needs_focus
+        {
+            *needs_focus = false;
+            let buffer = buffer.clone();
+            field_editor::focus_and_select(tree, renderer, editor_layout, &buffer, self.text_size);
+            shell.request_redraw();
         }
-        match ch {
-            '.' => self.allows_decimal() && !buffer.contains('.'),
-            '-' => self.allows_minus() && buffer.is_empty(),
-            _ => false,
+
+        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event
+            && !cursor.is_over(layout.bounds())
+        {
+            self.commit(tree, shell);
+            return;
+        }
+
+        if let Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Named(Named::Escape),
+            ..
+        }) = event
+        {
+            tree.state.downcast_mut::<State>().mode = Mode::Idle;
+            shell.invalidate_layout();
+            shell.request_redraw();
+            shell.capture_event();
+            return;
+        }
+
+        let buffer = tree.state.downcast_ref::<State>().mode.buffer().to_owned();
+        let ops = field_editor::forward(
+            tree,
+            event,
+            editor_layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+            &buffer,
+            self.text_size,
+        );
+
+        for op in ops {
+            match op {
+                Op::Input(s) => {
+                    let filtered = field_editor::filter_number(
+                        &s,
+                        self.allows_decimal(),
+                        self.allows_minus(),
+                        8,
+                    );
+                    if let Mode::Editing { buffer, .. } =
+                        &mut tree.state.downcast_mut::<State>().mode
+                    {
+                        *buffer = filtered.clone();
+                    }
+                    self.publish_buffer(&filtered, shell);
+                    shell.request_redraw();
+                }
+                Op::Submit => self.commit(tree, shell),
+            }
         }
     }
 
@@ -668,16 +655,17 @@ impl<Message: Clone> ValueSlider<Message> {
         }
     }
 
-    fn commit(&self, state: &mut State, shell: &mut Shell<'_, Message>) {
-        if let Mode::Editing { buffer, .. } = &state.mode {
-            self.publish_buffer(buffer, shell);
-        }
-        state.mode = Mode::Idle;
+    fn commit(&self, tree: &mut Tree, shell: &mut Shell<'_, Message>) {
+        let buffer = tree.state.downcast_ref::<State>().mode.buffer().to_owned();
+        self.publish_buffer(&buffer, shell);
+        tree.state.downcast_mut::<State>().mode = Mode::Idle;
         self.publish_end(shell);
+        shell.invalidate_layout();
+        shell.request_redraw();
     }
 }
 
-impl<'a, Message> From<ValueSlider<Message>> for Element<'a, Message, iced::Theme, Renderer>
+impl<'a, Message> From<ValueSlider<Message>> for Element<'a, Message, Theme, Renderer>
 where
     Message: Clone + 'a,
 {

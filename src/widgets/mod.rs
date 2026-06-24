@@ -1,6 +1,7 @@
 pub mod angle_dial;
 pub mod color_swatch;
 pub mod crop_overlay;
+pub mod field_editor;
 pub mod font_picker;
 pub mod histogram;
 pub mod hover_row;
