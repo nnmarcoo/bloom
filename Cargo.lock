@@ -618,7 +618,6 @@ dependencies = [
  "libheif-rs",
  "nalgebra",
  "png 0.17.16",
- "psd",
  "rawler",
  "rayon",
  "resvg",
@@ -635,6 +634,8 @@ dependencies = [
  "xcf-rs",
  "zip",
  "zstd",
+ "zune-core 0.5.1",
+ "zune-psd",
 ]
 
 [[package]]
@@ -4523,15 +4524,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "psd"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a25f9b8cfffd65d911baf31a033239f7a0facb755faa2481575b70db5dc9195"
-dependencies = [
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "pxfm"
 version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7376,6 +7368,15 @@ name = "zune-jpeg"
 version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
+dependencies = [
+ "zune-core 0.5.1",
+]
+
+[[package]]
+name = "zune-psd"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a518b7a7bee76246a6c783d795c56204cd9184ce0e2e4483717f1b9438c902c"
 dependencies = [
  "zune-core 0.5.1",
 ]
