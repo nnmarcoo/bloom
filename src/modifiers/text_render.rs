@@ -595,12 +595,18 @@ mod sdf_tests {
         if first.is_empty() {
             return;
         }
-        let before = lock_sdf_cache().len();
-        let _second = shape_glyphs(&text);
-        let after = lock_sdf_cache().len();
+        let second = shape_glyphs(&text);
         assert_eq!(
-            before, after,
-            "re-shaping identical text adds no new glyphs"
+            first.glyphs.len(),
+            second.glyphs.len(),
+            "re-shaping identical text yields the same glyphs"
         );
+        let cache = lock_sdf_cache();
+        for g in &second.glyphs {
+            assert!(
+                cache.contains_key(&g.key),
+                "shaped glyph should be present in the SDF cache"
+            );
+        }
     }
 }

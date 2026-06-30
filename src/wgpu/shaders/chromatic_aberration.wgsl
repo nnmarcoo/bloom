@@ -1,12 +1,10 @@
 struct CaUniforms {
     amount: f32,
-    tile_origin_x: f32,
-    tile_origin_y: f32,
-    tile_size_x: f32,
-    tile_size_y: f32,
     _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
+    proc_origin: vec2<f32>,
+    proc_size: vec2<f32>,
+    src_origin: vec2<f32>,
+    src_size: vec2<f32>,
 }
 
 struct VertexOutput {
@@ -32,18 +30,17 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let c = textureSample(t_image, s_image, in.uv);
+    let full_uv = u.proc_origin + in.uv * u.proc_size;
+    let src_uv = (full_uv - u.src_origin) / u.src_size;
+    let c = textureSample(t_image, s_image, src_uv);
 
-    let tile_origin = vec2<f32>(u.tile_origin_x, u.tile_origin_y);
-    let tile_size = vec2<f32>(u.tile_size_x, u.tile_size_y);
-    let full_uv = in.uv * tile_size + tile_origin;
     let offset = full_uv - vec2<f32>(0.5);
     let r_full = clamp(vec2<f32>(0.5) + offset * (1.0 + u.amount), vec2<f32>(0.0), vec2<f32>(1.0));
     let b_full = clamp(vec2<f32>(0.5) + offset * (1.0 - u.amount), vec2<f32>(0.0), vec2<f32>(1.0));
-    let r_tile = clamp((r_full - tile_origin) / tile_size, vec2<f32>(0.0), vec2<f32>(1.0));
-    let b_tile = clamp((b_full - tile_origin) / tile_size, vec2<f32>(0.0), vec2<f32>(1.0));
+    let r_src = clamp((r_full - u.src_origin) / u.src_size, vec2<f32>(0.0), vec2<f32>(1.0));
+    let b_src = clamp((b_full - u.src_origin) / u.src_size, vec2<f32>(0.0), vec2<f32>(1.0));
 
-    let cr = textureSample(t_image, s_image, r_tile);
-    let cb = textureSample(t_image, s_image, b_tile);
+    let cr = textureSample(t_image, s_image, r_src);
+    let cb = textureSample(t_image, s_image, b_src);
     return clamp(vec4<f32>(cr.r, c.g, cb.b, c.a), vec4<f32>(0.0), vec4<f32>(1.0));
 }

@@ -29,7 +29,7 @@ use crate::{
 
 #[derive(Copy, Clone, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
-pub struct Uniforms {
+pub struct DisplayUniforms {
     pub transform: Mat4,
     pub crop_uv: [f32; 4],
 }
@@ -39,6 +39,30 @@ pub(crate) fn tile_ndc_culled(rect: Option<(Vec2, Vec2)>) -> bool {
         rect,
         Some((min, max)) if max.x < -1.0 || min.x > 1.0 || max.y < -1.0 || min.y > 1.0
     )
+}
+
+fn roi_from_ndc_clip((ndc_min, ndc_max): (Vec2, Vec2), rect: [f32; 4]) -> Option<[f32; 4]> {
+    let [left, top, right, bottom] = rect;
+    let nw = ndc_max.x - ndc_min.x;
+    let nh = ndc_max.y - ndc_min.y;
+    if nw <= 0.0 || nh <= 0.0 {
+        return None;
+    }
+    let fx0 = ((-1.0 - ndc_min.x) / nw).clamp(0.0, 1.0);
+    let fx1 = ((1.0 - ndc_min.x) / nw).clamp(0.0, 1.0);
+    let fy_from_top0 = ((ndc_max.y - 1.0) / nh).clamp(0.0, 1.0);
+    let fy_from_top1 = ((ndc_max.y + 1.0) / nh).clamp(0.0, 1.0);
+    if fx1 <= fx0 || fy_from_top1 <= fy_from_top0 {
+        return None;
+    }
+    let l = left + (right - left) * fx0;
+    let r = left + (right - left) * fx1;
+    let t = top + (bottom - top) * fy_from_top0;
+    let b = top + (bottom - top) * fy_from_top1;
+    if r - l < 1.0 || b - t < 1.0 {
+        return None;
+    }
+    Some([l, t, r, b])
 }
 
 fn ndc_rect_of_transform(transform: &Mat4) -> (Vec2, Vec2) {
@@ -71,8 +95,12 @@ pub struct ViewPipeline {
     scale_factor: f32,
     last_checker_uniforms: Option<CheckerboardUniforms>,
     pub mipmap_zoom_out: bool,
+    last_view: Option<DisplayUniforms>,
+    view_changed_at: std::time::Instant,
     format: TextureFormat,
 }
+
+const VIEW_SETTLE: std::time::Duration = std::time::Duration::from_millis(120);
 
 impl ViewPipeline {
     pub fn clear_source(&mut self, device: &Device) {
@@ -141,11 +169,16 @@ impl ViewPipeline {
         queue: &Queue,
         scale: f32,
         scale_factor: f32,
-        uniforms: &Uniforms,
+        uniforms: &DisplayUniforms,
         viewport: Vec2,
         pan_ndc: Vec2,
         rotation: u8,
     ) {
+        if self.last_view != Some(*uniforms) {
+            self.last_view = Some(*uniforms);
+            self.view_changed_at = std::time::Instant::now();
+        }
+
         self.scale_factor = scale_factor;
         let physical_scale = scale * scale_factor;
 
@@ -236,19 +269,33 @@ impl ViewPipeline {
                 * Mat4::from_translation(vec3(tile_offset.x, tile_offset.y, 0.0))
                 * Mat4::from_scale(vec3(tile_aspect.x, tile_aspect.y, 1.0));
 
-            if tile.last_transform != Some(transform) || tile.last_crop_uv != Some(uniforms.crop_uv)
+            let ndc = ndc_rect_of_transform(&transform);
+            let roi = if rotation == 0 {
+                roi_from_ndc_clip(ndc, [isec_left, isec_top, isec_right, isec_bottom])
+            } else {
+                None
+            };
+
+            if tile.last_transform != Some(transform)
+                || tile.last_crop_uv != Some(uniforms.crop_uv)
+                || tile.proc_rect_px != roi
             {
                 queue.write_buffer(
                     &tile.uniform_buffer,
                     0,
-                    bytes_of(&Uniforms {
+                    bytes_of(&DisplayUniforms {
                         transform,
                         crop_uv: per_tile_crop_uv,
                     }),
                 );
-                tile.last_ndc_rect = Some(ndc_rect_of_transform(&transform));
+                tile.last_ndc_rect = Some(ndc);
                 tile.last_transform = Some(transform);
                 tile.last_crop_uv = Some(uniforms.crop_uv);
+
+                tile.proc_rect_px = roi;
+                tile.proc_rect_uv =
+                    roi.map(|[l, t, r, b]| [l / full_w, t / full_h, r / full_w, b / full_h]);
+                tile.isec_px = roi.map(|_| [isec_left, isec_top, isec_right, isec_bottom]);
             }
         }
     }
@@ -262,6 +309,19 @@ impl ViewPipeline {
 
     pub fn update_pixel_grid(&self, queue: &Queue, uniforms: &PixelGridUniforms) {
         self.pixel_grid.update(queue, uniforms);
+    }
+
+    fn interacting(&self) -> bool {
+        self.view_changed_at.elapsed() < VIEW_SETTLE
+    }
+
+    pub fn reprocess_pending(&self) -> bool {
+        if self.interacting() {
+            return true;
+        }
+        self.modifier_pipeline
+            .as_ref()
+            .is_some_and(|mp| mp.reprocess_pending())
     }
 
     pub fn prepare_modifiers(
@@ -284,6 +344,17 @@ impl ViewPipeline {
 
         if !modifiers.iter().any(|m| m.has_visible_effect()) {
             self.modifier_pipeline = None;
+            return;
+        }
+
+        let has_expensive = modifiers
+            .iter()
+            .any(|m| m.has_visible_effect() && !m.kind.input_request().is_pointwise());
+        if has_expensive
+            && self.interacting()
+            && let Some(mp) = self.modifier_pipeline.as_mut()
+        {
+            mp.refresh_display_transforms(device, queue, source);
             return;
         }
 
@@ -337,7 +408,7 @@ impl ViewPipeline {
 
         if let Some(source) = &self.source {
             let zoomed_out = source.physical_scale < 1.0 - 1e-6;
-            if let Some(mp) = &self.modifier_pipeline {
+            if let Some(mp) = self.modifier_pipeline.as_ref() {
                 let nearest = !smooth_zoom_in && !zoomed_out;
                 for (i, tile) in source.tiles.iter().enumerate() {
                     if tile_ndc_culled(tile.last_ndc_rect) {
@@ -475,7 +546,7 @@ impl Pipeline for ViewPipeline {
         );
         let placeholder_view = placeholder_texture.create_view(&Default::default());
         let placeholder_uniform =
-            gpu::uniform_buffer::<Uniforms>(device, Some("placeholder-uniform"));
+            gpu::uniform_buffer::<DisplayUniforms>(device, Some("placeholder-uniform"));
         let placeholder_bind_group = display.create_bind_group(
             device,
             &placeholder_uniform,
@@ -504,6 +575,8 @@ impl Pipeline for ViewPipeline {
             pending_source_dirty: false,
             scale_factor: 1.0,
             last_checker_uniforms: None,
+            last_view: None,
+            view_changed_at: std::time::Instant::now() - VIEW_SETTLE * 2,
             format,
         }
     }

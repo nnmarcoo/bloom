@@ -11,9 +11,37 @@ use crate::modifiers::kinds::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InputClass {
-    Pointwise,
-    NonPointwise,
+pub enum Axis {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum InputRequest {
+    SamplePoint,
+    Neighborhood { radius_px: f32 },
+    ScanLines { axis: Axis },
+    FullFrame,
+}
+
+impl InputRequest {
+    pub fn is_pointwise(&self) -> bool {
+        matches!(self, InputRequest::SamplePoint)
+    }
+
+    pub fn neighborhood_radius(&self) -> Option<f32> {
+        match self {
+            InputRequest::Neighborhood { radius_px } => Some(*radius_px),
+            _ => None,
+        }
+    }
+
+    pub fn scan_axis(&self) -> Option<Axis> {
+        match self {
+            InputRequest::ScanLines { axis } => Some(*axis),
+            _ => None,
+        }
+    }
 }
 
 pub trait ModifierImpl {
@@ -23,8 +51,8 @@ pub trait ModifierImpl {
         true
     }
 
-    fn input_class(&self) -> InputClass {
-        InputClass::Pointwise
+    fn input_request(&self) -> InputRequest {
+        InputRequest::SamplePoint
     }
 
     fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>);
@@ -139,8 +167,8 @@ impl ModifierKind {
         self.as_impl().has_effect()
     }
 
-    pub fn input_class(&self) -> InputClass {
-        self.as_impl().input_class()
+    pub fn input_request(&self) -> InputRequest {
+        self.as_impl().input_request()
     }
 
     pub fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>) {

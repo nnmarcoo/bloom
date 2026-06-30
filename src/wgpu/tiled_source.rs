@@ -9,7 +9,7 @@ use crate::wgpu::{
     gpu,
     media::image_data::{ImageData, ImageId},
     passes::display::DisplayPass,
-    view_pipeline::Uniforms,
+    view_pipeline::DisplayUniforms,
 };
 
 pub struct Tile {
@@ -22,6 +22,9 @@ pub struct Tile {
     pub last_ndc_rect: Option<(Vec2, Vec2)>,
     pub last_transform: Option<Mat4>,
     pub last_crop_uv: Option<[f32; 4]>,
+    pub proc_rect_uv: Option<[f32; 4]>,
+    pub proc_rect_px: Option<[f32; 4]>,
+    pub isec_px: Option<[f32; 4]>,
     pub x: u32,
     pub y: u32,
     pub width: u32,
@@ -182,9 +185,12 @@ impl TiledSource {
                     if mipmap_zoom_out {
                         TextureUsages::TEXTURE_BINDING
                             | TextureUsages::COPY_DST
+                            | TextureUsages::COPY_SRC
                             | TextureUsages::RENDER_ATTACHMENT
                     } else {
-                        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST
+                        TextureUsages::TEXTURE_BINDING
+                            | TextureUsages::COPY_DST
+                            | TextureUsages::COPY_SRC
                     },
                     Some(&format!("{label}:source")),
                 );
@@ -215,7 +221,7 @@ impl TiledSource {
 
                 let source_view = source_texture.create_view(&Default::default());
 
-                let uniform_buffer = gpu::uniform_buffer::<Uniforms>(
+                let uniform_buffer = gpu::uniform_buffer::<DisplayUniforms>(
                     device,
                     Some(&format!("{label}:display-uniform")),
                 );
@@ -255,6 +261,9 @@ impl TiledSource {
                     last_ndc_rect: None,
                     last_transform: None,
                     last_crop_uv: None,
+                    proc_rect_uv: None,
+                    proc_rect_px: None,
+                    isec_px: None,
                     x: tx,
                     y: ty,
                     width: tw,

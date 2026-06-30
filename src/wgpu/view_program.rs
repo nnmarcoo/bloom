@@ -20,7 +20,7 @@ use crate::{
         media::image_data::ImageData,
         passes::{checkerboard::CheckerboardUniforms, pixel_grid::PixelGridUniforms},
         scale::Scale,
-        view_pipeline::Uniforms,
+        view_pipeline::DisplayUniforms,
         view_primitive::ViewPrimitive,
     },
 };
@@ -75,11 +75,21 @@ pub struct ViewProgram {
     pub crop_tool_active: bool,
     dirty: Arc<std::sync::atomic::AtomicBool>,
     pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
+    reprocess_pending: Arc<std::sync::atomic::AtomicBool>,
     text_raster_cache: Arc<std::sync::Mutex<Option<TextRasterCache>>>,
     eyedropper_cache: Arc<std::sync::Mutex<Option<EyedropperCache>>>,
+    staged_cache: Arc<std::sync::Mutex<Option<StagedCache>>>,
 }
 
 type TextRasterCache = (u64, u32, u32, Vec<Option<TextRaster>>);
+
+struct StagedCache {
+    key: u64,
+    w: u32,
+    pixels: Vec<u8>,
+}
+
+const STAGED_EYEDROPPER_MAX_PX: u64 = 8_000_000;
 
 struct EyedropperCache {
     key: u64,
@@ -116,8 +126,10 @@ impl Default for ViewProgram {
             crop_tool_active: false,
             dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pre_clear_gpu: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            reprocess_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             text_raster_cache: Arc::new(std::sync::Mutex::new(None)),
             eyedropper_cache: Arc::new(std::sync::Mutex::new(None)),
+            staged_cache: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 }
@@ -125,6 +137,11 @@ impl Default for ViewProgram {
 impl ViewProgram {
     pub fn mark_dirty(&self) {
         self.dirty.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    pub fn reprocess_pending(&self) -> bool {
+        self.reprocess_pending
+            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     pub fn modifiers_mut(&mut self) -> &mut Vec<Modifier> {
@@ -554,17 +571,57 @@ impl ViewProgram {
         uv: [f32; 2],
     ) -> Option<[u8; 4]> {
         let image = self.image.as_ref()?;
-        let idx = (py as usize * image.width as usize + px as usize) * 4;
+        let w = image.width;
+        let h = image.height;
+
+        if (w as u64) * (h as u64) <= STAGED_EYEDROPPER_MAX_PX {
+            if let Some(c) = self.staged_pixel(text_layers, image, px, py) {
+                return Some(c);
+            }
+        }
+
+        let idx = (py as usize * w as usize + px as usize) * 4;
         let pixels = image.pixels_snapshot();
         let p = pixels.get(idx..idx + 4)?;
         Some(cpu::f32_to_pixel(self.apply_modifiers_cpu(
             text_layers,
             &pixels,
-            image.width,
-            image.height,
+            w,
+            h,
             uv,
             cpu::pixel_to_f32(p),
         )))
+    }
+
+    fn staged_pixel(
+        &self,
+        text_layers: &[Option<TextRaster>],
+        image: &ImageData,
+        px: u32,
+        py: u32,
+    ) -> Option<[u8; 4]> {
+        let (w, h) = (image.width, image.height);
+        let key = {
+            let mut hasher = DefaultHasher::new();
+            image.id.hash(&mut hasher);
+            hash_modifiers(&self.modifiers).hash(&mut hasher);
+            hasher.finish()
+        };
+        let mut guard = self.staged_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let stale = guard.as_ref().map(|c| c.key != key).unwrap_or(true);
+        if stale {
+            let pixels = image.pixels_snapshot();
+            let staged = cpu::render_full(&self.modifiers, text_layers, &pixels, w, h);
+            *guard = Some(StagedCache {
+                key,
+                w,
+                pixels: staged,
+            });
+        }
+        let cache = guard.as_ref()?;
+        let idx = (py as usize * cache.w as usize + px as usize) * 4;
+        let p = cache.pixels.get(idx..idx + 4)?;
+        Some([p[0], p[1], p[2], p[3]])
     }
 
     pub fn color_at_window(&self, window_pos: Vec2) -> Option<[u8; 4]> {
@@ -828,7 +885,7 @@ impl Program<Message> for ViewProgram {
         let pan_ndc = self.offset / viewport;
 
         ViewPrimitive {
-            uniforms: Uniforms {
+            uniforms: DisplayUniforms {
                 transform: self.build_transform(viewport),
                 crop_uv: self.active_crop().unwrap_or([0.0, 0.0, 1.0, 1.0]),
             },
@@ -845,6 +902,7 @@ impl Program<Message> for ViewProgram {
             modifiers: self.modifiers.clone(),
             dirty: self.dirty.swap(false, std::sync::atomic::Ordering::AcqRel),
             pre_clear_gpu: Arc::clone(&self.pre_clear_gpu),
+            reprocess_pending: Arc::clone(&self.reprocess_pending),
         }
     }
 

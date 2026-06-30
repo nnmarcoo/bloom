@@ -1,4 +1,4 @@
-struct Uniforms {
+struct DisplayUniforms {
     transform: mat4x4<f32>,
     crop_uv: vec4<f32>,
 };
@@ -8,7 +8,7 @@ struct VertexOutput {
     @location(0) uv: vec2<f32>,
 };
 
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(0) var<uniform> u: DisplayUniforms;
 @group(0) @binding(1) var t_image: texture_2d<f32>;
 @group(0) @binding(2) var s_image: sampler;
 
@@ -19,7 +19,7 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
         vec2<f32>(-1.0,  1.0), vec2<f32>(1.0,  1.0)
     );
 
-    let clip_pos = (uniforms.transform * vec4<f32>(quad[vi], 0.0, 1.0)).xy;
+    let clip_pos = (u.transform * vec4<f32>(quad[vi], 0.0, 1.0)).xy;
 
     var out: VertexOutput;
     out.position = vec4<f32>(clip_pos, 0.0, 1.0);
@@ -29,6 +29,6 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let uv = uniforms.crop_uv.xy + in.uv * (uniforms.crop_uv.zw - uniforms.crop_uv.xy);
+    let uv = u.crop_uv.xy + in.uv * (u.crop_uv.zw - u.crop_uv.xy);
     return textureSample(t_image, s_image, uv);
 }

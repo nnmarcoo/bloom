@@ -54,17 +54,17 @@ impl ModifierImpl for Grain {
         }
     }
 
-    fn pack(&self, tile: &TileInfo) -> Option<ModEntry> {
+    fn pack(&self, _tile: &TileInfo) -> Option<ModEntry> {
         Some(make_entry(
             ids::GRAIN,
             &[
                 self.amount,
                 self.size,
                 self.seed,
-                tile.tile_x as f32,
-                tile.tile_y as f32,
-                tile.tile_w as f32,
-                tile.tile_h as f32,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
                 self.color,
                 self.response,
             ],

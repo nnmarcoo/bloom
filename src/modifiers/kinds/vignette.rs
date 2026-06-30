@@ -46,18 +46,10 @@ impl ModifierImpl for Vignette {
         }
     }
 
-    fn pack(&self, tile: &TileInfo) -> Option<ModEntry> {
+    fn pack(&self, _tile: &TileInfo) -> Option<ModEntry> {
         Some(make_entry(
             ids::VIGNETTE,
-            &[
-                self.strength,
-                self.size,
-                self.softness,
-                tile.tile_x as f32 / tile.full_w as f32,
-                tile.tile_y as f32 / tile.full_h as f32,
-                tile.tile_w as f32 / tile.full_w as f32,
-                tile.tile_h as f32 / tile.full_h as f32,
-            ],
+            &[self.strength, self.size, self.softness],
         ))
     }
 
