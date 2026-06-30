@@ -35,13 +35,6 @@ impl InputRequest {
             _ => None,
         }
     }
-
-    pub fn scan_axis(&self) -> Option<Axis> {
-        match self {
-            InputRequest::ScanLines { axis } => Some(*axis),
-            _ => None,
-        }
-    }
 }
 
 pub trait ModifierImpl {
