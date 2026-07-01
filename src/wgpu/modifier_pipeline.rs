@@ -122,6 +122,15 @@ enum SortTarget {
     Output,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SortDiagKey {
+    w: u32,
+    h: u32,
+    row_words: u32,
+    dx: i32,
+    dy: i32,
+}
+
 const TILE_BUDGET: usize = 2;
 
 struct Scheduler {
@@ -212,7 +221,8 @@ struct Neighbors {
 }
 
 use crate::modifiers::gpu::UvRect;
-use crate::modifiers::pixel_sort::SortAxis;
+use crate::modifiers::pixel_sort::{SortAxis, SortMode};
+use crate::wgpu::passes::pixel_sort::build_diagonal_index;
 
 struct ProcRect {
     px: [f32; 4],
@@ -448,7 +458,9 @@ pub struct ModifierPipeline {
     blur_uniform_pool: Vec<iced::wgpu::Buffer>,
     text_uniform_pool: Vec<iced::wgpu::Buffer>,
     pixel_sort_uniform_pool: Vec<iced::wgpu::Buffer>,
+    pixel_sort_diag_uniform_pool: Vec<iced::wgpu::Buffer>,
     sort_buffers: Option<(iced::wgpu::Buffer, iced::wgpu::Buffer)>,
+    sort_diag_index: Option<(SortDiagKey, iced::wgpu::Buffer, iced::wgpu::Buffer, u32)>,
     sort_band_cursor: u32,
     sort_progress_sig: u64,
     text_layers: Vec<Option<TextLayer>>,
@@ -523,7 +535,9 @@ impl ModifierPipeline {
             blur_uniform_pool: Vec::new(),
             text_uniform_pool: Vec::new(),
             pixel_sort_uniform_pool: Vec::new(),
+            pixel_sort_diag_uniform_pool: Vec::new(),
             sort_buffers: None,
+            sort_diag_index: None,
             sort_band_cursor: 0,
             sort_progress_sig: 0,
             text_layers: Vec::new(),
@@ -2127,6 +2141,47 @@ impl ModifierPipeline {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn ensure_diag_index(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        w: u32,
+        h: u32,
+        row_words: u32,
+        dx: i32,
+        dy: i32,
+    ) {
+        let key = SortDiagKey {
+            w,
+            h,
+            row_words,
+            dx,
+            dy,
+        };
+        if self
+            .sort_diag_index
+            .as_ref()
+            .is_some_and(|(k, ..)| *k == key)
+        {
+            return;
+        }
+        let di = build_diagonal_index(w, h, row_words, dx, dy);
+        let index = gpu::storage_buffer(
+            device,
+            (di.index.len().max(1) * 4) as u64,
+            Some("pixel-sort-diag-index"),
+        );
+        let offset = gpu::storage_buffer(
+            device,
+            (di.offset.len().max(1) * 4) as u64,
+            Some("pixel-sort-diag-offset"),
+        );
+        queue.write_buffer(&index, 0, bytemuck::cast_slice(&di.index));
+        queue.write_buffer(&offset, 0, bytemuck::cast_slice(&di.offset));
+        self.sort_diag_index = Some((key, index, offset, di.n_lines));
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn sort_target(
         &mut self,
         device: &Device,
@@ -2141,6 +2196,11 @@ impl ModifierPipeline {
         let row_bytes = (w * 4).div_ceil(256) * 256;
         let row_words = row_bytes / 4;
         let bytes = (row_bytes * h) as u64;
+
+        let mode = SortMode::from_angle(angle);
+        if let SortMode::Diagonal { dx, dy } = mode {
+            self.ensure_diag_index(device, queue, w, h, row_words, dx, dy);
+        }
 
         let need_new = self
             .sort_buffers
@@ -2180,14 +2240,29 @@ impl ModifierPipeline {
             },
             extent,
         );
-        if self.pixel_sort_uniform_pool.is_empty() {
-            self.pixel_sort_uniform_pool
-                .push(self.pixel_sort.uniform_buffer(device));
+        match mode {
+            SortMode::Diagonal { .. } => {
+                let (_, index, offset, n_lines) = self.sort_diag_index.as_ref().unwrap();
+                if self.pixel_sort_diag_uniform_pool.is_empty() {
+                    self.pixel_sort_diag_uniform_pool
+                        .push(self.pixel_sort.diag_uniform_buffer(device));
+                }
+                let uniform = &self.pixel_sort_diag_uniform_pool[0];
+                self.pixel_sort.record_diagonal(
+                    device, queue, &mut enc, uniform, src, dst, index, offset, *n_lines, threshold,
+                );
+            }
+            SortMode::Cardinal(_) => {
+                if self.pixel_sort_uniform_pool.is_empty() {
+                    self.pixel_sort_uniform_pool
+                        .push(self.pixel_sort.uniform_buffer(device));
+                }
+                let uniform = &self.pixel_sort_uniform_pool[0];
+                self.pixel_sort.record(
+                    device, queue, &mut enc, uniform, src, dst, w, h, row_words, threshold, angle,
+                );
+            }
         }
-        let uniform = &self.pixel_sort_uniform_pool[0];
-        self.pixel_sort.record(
-            device, queue, &mut enc, uniform, src, dst, w, h, row_words, threshold, angle,
-        );
         enc.copy_buffer_to_texture(
             iced::wgpu::TexelCopyBufferInfo {
                 buffer: dst,

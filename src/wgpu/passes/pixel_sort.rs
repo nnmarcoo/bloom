@@ -5,7 +5,7 @@ use iced::wgpu::{
     ComputePassDescriptor, ComputePipeline, Device, Queue, ShaderStages,
 };
 
-use crate::modifiers::pixel_sort::{SortAxis, key_cutoff};
+use crate::modifiers::pixel_sort::{SortAxis, diagonal_lines, key_cutoff};
 use crate::wgpu::gpu;
 
 #[repr(C)]
@@ -21,9 +21,53 @@ struct PixelSortUniforms {
     _pad2: u32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct PixelSortDiagUniforms {
+    n_lines: u32,
+    cutoff: u32,
+    _pad0: u32,
+    _pad1: u32,
+}
+
+pub struct DiagonalIndex {
+    pub index: Vec<u32>,
+    pub offset: Vec<u32>,
+    pub n_lines: u32,
+}
+
+pub fn build_diagonal_index(
+    width: u32,
+    height: u32,
+    row_words: u32,
+    dx: i32,
+    dy: i32,
+) -> DiagonalIndex {
+    let lines = diagonal_lines(width as usize, height as usize, dx, dy);
+    let w = width as usize;
+    let mut index = Vec::with_capacity(w * height as usize);
+    let mut offset = Vec::with_capacity(lines.len() * 2);
+    for line in &lines {
+        offset.push(index.len() as u32);
+        offset.push(line.len() as u32);
+        for &tight in line {
+            let x = (tight % w) as u32;
+            let y = (tight / w) as u32;
+            index.push(y * row_words + x);
+        }
+    }
+    DiagonalIndex {
+        index,
+        offset,
+        n_lines: lines.len() as u32,
+    }
+}
+
 pub struct PixelSortCompute {
     pipeline: ComputePipeline,
     bgl: BindGroupLayout,
+    diag_pipeline: ComputePipeline,
+    diag_bgl: BindGroupLayout,
 }
 
 impl PixelSortCompute {
@@ -70,7 +114,50 @@ impl PixelSortCompute {
             Some("pixel-sort-pipeline"),
             &bgl,
         );
-        Self { pipeline, bgl }
+
+        let storage_entry = |binding: u32, read_only: bool| BindGroupLayoutEntry {
+            binding,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let diag_bgl = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("pixel-sort-diag-bgl"),
+            entries: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                storage_entry(1, true),
+                storage_entry(2, false),
+                storage_entry(3, true),
+                storage_entry(4, true),
+            ],
+        });
+        let diag_pipeline = gpu::compute_pipeline(
+            device,
+            include_str!("../shaders/pixel_sort_diagonal.wgsl"),
+            "main",
+            Some("pixel-sort-diag-pipeline"),
+            &diag_bgl,
+        );
+
+        Self {
+            pipeline,
+            bgl,
+            diag_pipeline,
+            diag_bgl,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -135,15 +222,78 @@ impl PixelSortCompute {
         pass.dispatch_workgroups(n_lines.div_ceil(64), 1, 1);
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_diagonal(
+        &self,
+        device: &Device,
+        queue: &Queue,
+        encoder: &mut CommandEncoder,
+        uniform: &Buffer,
+        src: &Buffer,
+        dst: &Buffer,
+        index: &Buffer,
+        offset: &Buffer,
+        n_lines: u32,
+        threshold: f32,
+    ) {
+        gpu::write_uniform(
+            queue,
+            uniform,
+            &PixelSortDiagUniforms {
+                n_lines,
+                cutoff: key_cutoff(threshold) as u32,
+                _pad0: 0,
+                _pad1: 0,
+            },
+        );
+        let bg = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("pixel-sort-diag-bg"),
+            layout: &self.diag_bgl,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: uniform.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: src.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: dst.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: index.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: offset.as_entire_binding(),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+            label: Some("pixel-sort-diag-pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.diag_pipeline);
+        pass.set_bind_group(0, &bg, &[]);
+        pass.dispatch_workgroups(n_lines.div_ceil(64), 1, 1);
+    }
+
     pub fn uniform_buffer(&self, device: &Device) -> Buffer {
         gpu::uniform_buffer::<PixelSortUniforms>(device, Some("pixel-sort-uniform"))
+    }
+
+    pub fn diag_uniform_buffer(&self, device: &Device) -> Buffer {
+        gpu::uniform_buffer::<PixelSortDiagUniforms>(device, Some("pixel-sort-diag-uniform"))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modifiers::pixel_sort::pixel_sort_cpu;
+    use crate::modifiers::pixel_sort::{SortMode, pixel_sort_cpu};
 
     use iced::wgpu::{
         CommandEncoderDescriptor, DeviceDescriptor, Instance, PowerPreference,
@@ -514,6 +664,108 @@ mod tests {
                     mismatches, 0,
                     "GPU != CPU pixel sort at angle {angle} threshold {threshold}: {mismatches} bytes differ"
                 );
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn gpu_pixel_sort_diagonal(
+        device: &Device,
+        queue: &Queue,
+        src: &[u8],
+        w: u32,
+        h: u32,
+        threshold: f32,
+        dx: i32,
+        dy: i32,
+        row_words: u32,
+    ) -> Vec<u8> {
+        let words = pack(src);
+        let rw = row_words as usize;
+        let mut padded = vec![0u32; rw * h as usize];
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                padded[y * rw + x] = words[y * w as usize + x];
+            }
+        }
+        let bytes = (padded.len() * 4) as u64;
+        let src_buf = gpu::storage_buffer(device, bytes, Some("psd-src"));
+        let dst_buf = gpu::storage_buffer(device, bytes, Some("psd-dst"));
+        let read = gpu::readback_buffer(device, bytes, Some("psd-read"));
+        queue.write_buffer(&src_buf, 0, bytemuck::cast_slice(&padded));
+
+        let di = build_diagonal_index(w, h, row_words, dx, dy);
+        let idx_buf = gpu::storage_buffer(device, (di.index.len() * 4) as u64, Some("psd-idx"));
+        let off_buf = gpu::storage_buffer(device, (di.offset.len() * 4) as u64, Some("psd-off"));
+        queue.write_buffer(&idx_buf, 0, bytemuck::cast_slice(&di.index));
+        queue.write_buffer(&off_buf, 0, bytemuck::cast_slice(&di.offset));
+
+        let pass = PixelSortCompute::new(device);
+        let uniform = pass.diag_uniform_buffer(device);
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor { label: None });
+        pass.record_diagonal(
+            device,
+            queue,
+            &mut encoder,
+            &uniform,
+            &src_buf,
+            &dst_buf,
+            &idx_buf,
+            &off_buf,
+            di.n_lines,
+            threshold,
+        );
+        encoder.copy_buffer_to_buffer(&dst_buf, 0, &read, 0, bytes);
+        queue.submit([encoder.finish()]);
+
+        let raw = gpu::read_buffer_blocking(device, &read);
+        let out_words: Vec<u32> = bytemuck::cast_slice(&raw).to_vec();
+        let mut tight = vec![0u32; w as usize * h as usize];
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                tight[y * w as usize + x] = out_words[y * rw + x];
+            }
+        }
+        unpack(&tight)
+    }
+
+    #[test]
+    fn gpu_diagonal_pixel_sort_matches_cpu_reference() {
+        let Some((device, queue)) = try_device() else {
+            eprintln!("gpu_diagonal_pixel_sort_matches_cpu_reference: no GPU adapter, skipping");
+            return;
+        };
+
+        let (w, h) = (53usize, 29usize);
+        let mut src = vec![0u8; w * h * 4];
+        let mut s: u32 = 0x1234_5678;
+        for b in src.iter_mut() {
+            s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+            *b = (s >> 24) as u8;
+        }
+        for p in src.chunks_exact_mut(4) {
+            p[3] = 255;
+        }
+
+        let tight = w as u32;
+        let padded = (w as u32 * 4).div_ceil(256) * 256 / 4;
+        for &angle in &[45.0f32, 315.0, 26.565, 63.435, 71.565, 135.0] {
+            let (dx, dy) = match SortMode::from_angle(angle) {
+                SortMode::Diagonal { dx, dy } => (dx, dy),
+                other => panic!("angle {angle} did not map to a diagonal: {other:?}"),
+            };
+            for &threshold in &[0.0f32, 0.25, 0.5, 0.75] {
+                let cpu = pixel_sort_cpu(&src, w, h, threshold, angle);
+                for &row_words in &[tight, padded] {
+                    let gpu = gpu_pixel_sort_diagonal(
+                        &device, &queue, &src, w as u32, h as u32, threshold, dx, dy, row_words,
+                    );
+                    let mismatches = cpu.iter().zip(&gpu).filter(|(a, b)| a != b).count();
+                    assert_eq!(
+                        mismatches, 0,
+                        "GPU != CPU diagonal at angle {angle} ({dx},{dy}) threshold {threshold} row_words {row_words}: {mismatches} bytes"
+                    );
+                }
             }
         }
     }
