@@ -7,5 +7,6 @@ pub mod text_render;
 mod types;
 
 pub use types::{
-    Axis, InputRequest, Modifier, ModifierImpl, ModifierKind, ModifierParam, ModifierType, ids,
+    Axis, EffectClass, InputRequest, Modifier, ModifierImpl, ModifierKind, ModifierParam,
+    ModifierType, ids,
 };

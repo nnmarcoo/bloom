@@ -7,7 +7,7 @@ use iced::wgpu::{
 
 use crate::{
     modifiers::{
-        Modifier, ModifierKind,
+        Axis, EffectClass, Modifier, ModifierKind,
         gpu::{ModUniforms, TileInfo, build_segment_uniforms},
     },
     wgpu::{
@@ -411,7 +411,7 @@ fn plan_modifiers(modifiers: &[Modifier]) -> Vec<PlanItem<'_>> {
         if !m.has_visible_effect() {
             continue;
         }
-        if !m.kind.input_request().is_pointwise() {
+        if !m.kind.effect_class().is_pointwise() {
             if !current.is_empty() {
                 plan.push(PlanItem::Fused(std::mem::take(&mut current)));
             }
@@ -643,9 +643,9 @@ impl ModifierPipeline {
         let plan_vec = plan_modifiers(modifiers);
         let has_blur = plan_vec
             .iter()
-            .any(|p| matches!(p, PlanItem::Step(_, m) if m.kind.input_request().neighborhood_radius().is_some()));
+            .any(|p| matches!(p, PlanItem::Step(_, m) if m.kind.effect_class().separable_apron().is_some()));
         let has_pixel_sort = plan_vec.iter().any(
-            |p| matches!(p, PlanItem::Step(_, m) if matches!(m.kind, ModifierKind::PixelSort(_))),
+            |p| matches!(p, PlanItem::Step(_, m) if m.kind.effect_class().is_compute_scanline()),
         );
 
         if n_tiles > 1 && (has_blur || has_pixel_sort) {
@@ -769,7 +769,7 @@ impl ModifierPipeline {
                 let plan = plan.get_or_insert_with(|| plan_modifiers(modifiers));
                 let n_items = plan.len();
                 let plan_has_blur = plan.iter().any(|p| {
-                    matches!(p, PlanItem::Step(_, m) if m.kind.input_request().neighborhood_radius().is_some())
+                    matches!(p, PlanItem::Step(_, m) if m.kind.effect_class().separable_apron().is_some())
                 });
                 if n_items > 1 || plan_has_blur {
                     self.ensure_scratch(device, eff_w, eff_h);
@@ -820,9 +820,9 @@ impl ModifierPipeline {
                             self.combined.run(enc, &bg, out);
                         }
                         PlanItem::Step(idx, m)
-                            if m.kind.input_request().neighborhood_radius().is_some() =>
+                            if m.kind.effect_class().separable_apron().is_some() =>
                         {
-                            let radius = m.kind.input_request().neighborhood_radius().unwrap();
+                            let radius = m.kind.effect_class().separable_apron().unwrap();
                             {
                                 while self.blur_uniform_pool.len() < blur_pool_used + 2 {
                                     self.blur_uniform_pool
@@ -1169,7 +1169,7 @@ impl ModifierPipeline {
         let mut apron_px: f32 = 0.0;
         for item in plan {
             if let PlanItem::Step(_, m) = item
-                && let Some(radius) = m.kind.input_request().neighborhood_radius()
+                && let Some(radius) = m.kind.effect_class().separable_apron()
             {
                 apron_px = apron_px.max(radius);
             }
@@ -1178,7 +1178,7 @@ impl ModifierPipeline {
         let blur_is_sole_step = plan.len() == 1
             && matches!(
                 plan.first(),
-                Some(PlanItem::Step(_, m)) if m.kind.input_request().neighborhood_radius().is_some()
+                Some(PlanItem::Step(_, m)) if m.kind.effect_class().separable_apron().is_some()
             );
 
         let roi_active = !downscale
@@ -1382,7 +1382,7 @@ impl ModifierPipeline {
 
         for (k, item) in plan.iter().enumerate() {
             let last = k == plan_steps - 1;
-            let is_blur = matches!(item, PlanItem::Step(_, m) if m.kind.input_request().neighborhood_radius().is_some());
+            let is_blur = matches!(item, PlanItem::Step(_, m) if m.kind.effect_class().separable_apron().is_some());
             if !is_blur {
                 for &ti in &blur_set {
                     let tile = &source.tiles[ti];
@@ -1432,7 +1432,7 @@ impl ModifierPipeline {
             }
 
             if let PlanItem::Step(_, m) = item
-                && let Some(radius) = m.kind.input_request().neighborhood_radius()
+                && let Some(radius) = m.kind.effect_class().separable_apron()
             {
                 let deferred = self.run_separable_step(
                     device,
@@ -1503,11 +1503,11 @@ impl ModifierPipeline {
         let mut has_v = false;
         for p in plan {
             if let PlanItem::Step(_, m) = p
-                && let ModifierKind::PixelSort(ps) = &m.kind
+                && let EffectClass::ComputeScanline { axis } = m.kind.effect_class()
             {
-                match SortAxis::from_angle(ps.angle) {
-                    SortAxis::Vertical { .. } => has_v = true,
-                    SortAxis::Horizontal { .. } => has_h = true,
+                match axis {
+                    Axis::Vertical => has_v = true,
+                    Axis::Horizontal => has_h = true,
                 }
             }
         }
@@ -1526,7 +1526,7 @@ impl ModifierPipeline {
 
         let plan_has_blur = plan
             .iter()
-            .any(|p| matches!(p, PlanItem::Step(_, m) if m.kind.input_request().neighborhood_radius().is_some()));
+            .any(|p| matches!(p, PlanItem::Step(_, m) if m.kind.effect_class().separable_apron().is_some()));
 
         let mut in_set = vec![false; n_tiles];
         for &v in &visible {
@@ -1642,7 +1642,7 @@ impl ModifierPipeline {
         }
 
         let last_sort_k = plan.iter().enumerate().rev().find_map(|(k, p)| {
-            matches!(p, PlanItem::Step(_, m) if matches!(m.kind, ModifierKind::PixelSort(_)))
+            matches!(p, PlanItem::Step(_, m) if m.kind.effect_class().is_compute_scanline())
                 .then_some(k)
         });
 
@@ -1708,9 +1708,9 @@ impl ModifierPipeline {
 
             for (k, item) in plan.iter().enumerate() {
                 let last = k == plan_steps - 1;
-                let is_sort = matches!(item, PlanItem::Step(_, m) if matches!(m.kind, ModifierKind::PixelSort(_)));
+                let is_sort = matches!(item, PlanItem::Step(_, m) if m.kind.effect_class().is_compute_scanline());
                 let blur_radius = match item {
-                    PlanItem::Step(_, m) => m.kind.input_request().neighborhood_radius(),
+                    PlanItem::Step(_, m) => m.kind.effect_class().separable_apron(),
                     _ => None,
                 };
 

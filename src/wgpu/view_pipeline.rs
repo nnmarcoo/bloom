@@ -349,7 +349,7 @@ impl ViewPipeline {
 
         let has_expensive = modifiers
             .iter()
-            .any(|m| m.has_visible_effect() && !m.kind.input_request().is_pointwise());
+            .any(|m| m.has_visible_effect() && !m.kind.effect_class().is_pointwise());
         if has_expensive
             && self.interacting()
             && let Some(mp) = self.modifier_pipeline.as_mut()

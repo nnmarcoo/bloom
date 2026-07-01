@@ -343,7 +343,7 @@ fn apply_prior(
                     c = blend_over(c, src);
                 }
             }
-            kind if !kind.input_request().is_pointwise() => {}
+            kind if !kind.effect_class().is_pointwise() => {}
             kind => {
                 c = kind.apply_cpu(img_w, img_h, uv, c);
             }
