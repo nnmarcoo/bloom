@@ -1,3 +1,5 @@
+use rayon::prelude::*;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SortAxis {
     Horizontal { reverse: bool },
@@ -108,53 +110,59 @@ pub fn key_cutoff(threshold: f32) -> u8 {
     (threshold * 255.0 + 0.5).clamp(0.0, 255.0) as u8
 }
 
-fn sort_line(pixels: &mut [u8], idx: &[usize], cutoff: u8, reverse: bool) {
-    let n = idx.len();
+type Rgba = [u8; 4];
+
+fn counting_sort_run(run: &mut [Rgba], reverse: bool, sorted: &mut Vec<Rgba>) {
+    let mut count = [0u32; 256];
+    for px in run.iter() {
+        count[key_of(px) as usize] += 1;
+    }
+    let mut offset = [0u32; 256];
+    let mut acc = 0u32;
+    for b in 0..256 {
+        offset[b] = acc;
+        acc += count[b];
+    }
+
+    let n = run.len() as u32;
+    sorted.clear();
+    sorted.resize(run.len(), Rgba::default());
+    for px in run.iter() {
+        let k = key_of(px) as usize;
+        let dst = offset[k];
+        offset[k] += 1;
+        let rank = if reverse { n - 1 - dst } else { dst };
+        sorted[rank as usize] = *px;
+    }
+    run.copy_from_slice(sorted);
+}
+
+fn sort_row(row: &mut [Rgba], cutoff: u8, reverse: bool, sorted: &mut Vec<Rgba>) {
+    let n = row.len();
     let mut i = 0;
     while i < n {
-        if key_of(&pixels[idx[i] * 4..idx[i] * 4 + 4]) <= cutoff {
+        if key_of(&row[i]) <= cutoff {
             i += 1;
             continue;
         }
         let start = i;
-        while i < n && key_of(&pixels[idx[i] * 4..idx[i] * 4 + 4]) > cutoff {
+        while i < n && key_of(&row[i]) > cutoff {
             i += 1;
         }
-        let run = &idx[start..i];
-        let mut count = [0u32; 256];
-        let keys: Vec<u8> = run
-            .iter()
-            .map(|&p| key_of(&pixels[p * 4..p * 4 + 4]))
-            .collect();
-        for &k in &keys {
-            count[k as usize] += 1;
-        }
-        let mut offset = [0u32; 256];
-        let mut acc = 0u32;
-        for b in 0..256 {
-            offset[b] = acc;
-            acc += count[b];
-        }
-        let snapshot: Vec<[u8; 4]> = run
-            .iter()
-            .map(|&p| {
-                let s = &pixels[p * 4..p * 4 + 4];
-                [s[0], s[1], s[2], s[3]]
-            })
-            .collect();
-        let run_len = run.len() as u32;
-        for (j, &k) in keys.iter().enumerate() {
-            let dst_rank = offset[k as usize];
-            offset[k as usize] += 1;
-            let rank = if reverse {
-                run_len - 1 - dst_rank
-            } else {
-                dst_rank
-            };
-            let slot = run[rank as usize];
-            pixels[slot * 4..slot * 4 + 4].copy_from_slice(&snapshot[j]);
-        }
+        counting_sort_run(&mut row[start..i], reverse, sorted);
     }
+}
+
+fn transpose(src: &[Rgba], width: usize, height: usize) -> Vec<Rgba> {
+    let mut out = vec![Rgba::default(); src.len()];
+    out.par_chunks_mut(height)
+        .enumerate()
+        .for_each(|(x, col)| {
+            for (y, dst) in col.iter_mut().enumerate() {
+                *dst = src[y * width + x];
+            }
+        });
+    out
 }
 
 pub fn pixel_sort_cpu(
@@ -165,23 +173,38 @@ pub fn pixel_sort_cpu(
     angle: f32,
 ) -> Vec<u8> {
     let mut out = src.to_vec();
+    if width == 0 || height == 0 {
+        return out;
+    }
     let cutoff = key_cutoff(threshold);
     match SortMode::from_angle(angle) {
         SortMode::Cardinal(SortAxis::Horizontal { reverse }) => {
-            for y in 0..height {
-                let idx: Vec<usize> = (0..width).map(|x| y * width + x).collect();
-                sort_line(&mut out, &idx, cutoff, reverse);
-            }
+            let px: &mut [Rgba] = bytemuck::cast_slice_mut(&mut out);
+            px.par_chunks_mut(width).for_each_init(Vec::new, |scratch, row| {
+                sort_row(row, cutoff, reverse, scratch);
+            });
         }
         SortMode::Cardinal(SortAxis::Vertical { reverse }) => {
-            for x in 0..width {
-                let idx: Vec<usize> = (0..height).map(|y| y * width + x).collect();
-                sort_line(&mut out, &idx, cutoff, reverse);
-            }
+            let px: &[Rgba] = bytemuck::cast_slice(&out);
+            let mut t = transpose(px, width, height);
+            t.par_chunks_mut(height).for_each_init(Vec::new, |scratch, col| {
+                sort_row(col, cutoff, reverse, scratch);
+            });
+            let back = transpose(&t, height, width);
+            out.copy_from_slice(bytemuck::cast_slice(&back));
         }
         SortMode::Diagonal { dx, dy } => {
-            for idx in diagonal_lines(width, height, dx, dy) {
-                sort_line(&mut out, &idx, cutoff, false);
+            let lines = diagonal_lines(width, height, dx, dy);
+            let px: &mut [Rgba] = bytemuck::cast_slice_mut(&mut out);
+            let mut gather: Vec<Rgba> = Vec::new();
+            let mut scratch: Vec<Rgba> = Vec::new();
+            for idx in &lines {
+                gather.clear();
+                gather.extend(idx.iter().map(|&i| px[i]));
+                sort_row(&mut gather, cutoff, false, &mut scratch);
+                for (&i, &p) in idx.iter().zip(gather.iter()) {
+                    px[i] = p;
+                }
             }
         }
     }
@@ -226,6 +249,27 @@ mod tests {
         let out = pixel_sort_cpu(&src, 4, 1, 0.0, 180.0);
         let vals: Vec<u8> = (0..4).map(|x| out[x * 4]).collect();
         assert_eq!(vals, vec![200, 150, 100, 50]);
+    }
+
+    #[test]
+    fn horizontal_sorts_each_row_independently() {
+        let g = |v: u8| [v, v, v, 255u8];
+        let mut src = Vec::new();
+        for v in [200u8, 50, 150, 100, 10, 240, 30, 120] {
+            src.extend_from_slice(&g(v));
+        }
+        let out = pixel_sort_cpu(&src, 4, 2, 0.0, 0.0);
+        let row0: Vec<u8> = (0..4).map(|x| out[x * 4]).collect();
+        let row1: Vec<u8> = (4..8).map(|x| out[x * 4]).collect();
+        assert_eq!(row0, vec![50, 100, 150, 200]);
+        assert_eq!(row1, vec![10, 30, 120, 240]);
+    }
+
+    #[test]
+    fn empty_dimensions_return_input_unchanged() {
+        let src = vec![1u8, 2, 3, 4];
+        assert_eq!(pixel_sort_cpu(&src, 0, 0, 0.0, 0.0), src);
+        assert_eq!(pixel_sort_cpu(&[], 0, 5, 0.0, 90.0), Vec::<u8>::new());
     }
 
     #[test]
@@ -327,6 +371,99 @@ mod tests {
                 10,
                 "off-diagonal pixel {off} must be unchanged"
             );
+        }
+    }
+
+    fn reference_sort(src: &[u8], w: usize, h: usize, cutoff: u8, vertical: bool, reverse: bool) -> Vec<u8> {
+        let mut out = src.to_vec();
+        let line = |k: usize| -> Vec<usize> {
+            if vertical {
+                (0..h).map(|y| y * w + k).collect()
+            } else {
+                (0..w).map(|x| k * w + x).collect()
+            }
+        };
+        let count = if vertical { w } else { h };
+        for k in 0..count {
+            let idx = line(k);
+            let n = idx.len();
+            let mut i = 0;
+            while i < n {
+                let key = |p: usize| key_of(&out[idx[p] * 4..idx[p] * 4 + 4]);
+                if key(i) <= cutoff {
+                    i += 1;
+                    continue;
+                }
+                let start = i;
+                while i < n && key(i) > cutoff {
+                    i += 1;
+                }
+                let run: Vec<[u8; 4]> = (start..i)
+                    .map(|p| {
+                        let s = &out[idx[p] * 4..idx[p] * 4 + 4];
+                        [s[0], s[1], s[2], s[3]]
+                    })
+                    .collect();
+                let mut keyed: Vec<(u8, [u8; 4])> =
+                    run.iter().map(|&px| (key_of(&px), px)).collect();
+                keyed.sort_by_key(|&(k, _)| k);
+                for (off, (_, px)) in keyed.into_iter().enumerate() {
+                    let rank = if reverse { (i - start) - 1 - off } else { off };
+                    let slot = idx[start + rank];
+                    out[slot * 4..slot * 4 + 4].copy_from_slice(&px);
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn matches_reference_on_random_images() {
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut rng = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 33) as u8
+        };
+        for &(w, h) in &[(1usize, 1usize), (7, 5), (5, 7), (16, 16), (31, 17)] {
+            let src: Vec<u8> = (0..w * h * 4).map(|_| rng()).collect();
+            for &thr in &[0.0f32, 0.3, 0.6] {
+                let cutoff = key_cutoff(thr);
+                for &(angle, vertical, reverse) in
+                    &[(0.0f32, false, false), (180.0, false, true), (90.0, true, false), (270.0, true, true)]
+                {
+                    let got = pixel_sort_cpu(&src, w, h, thr, angle);
+                    let want = reference_sort(&src, w, h, cutoff, vertical, reverse);
+                    assert_eq!(
+                        got, want,
+                        "mismatch at {w}x{h} thr={thr} angle={angle}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "timing benchmark; run with --release --ignored"]
+    fn bench_large_image() {
+        use std::time::Instant;
+        let (w, h) = (4000usize, 3000usize);
+        let mut state = 1u64;
+        let mut rng = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 33) as u8
+        };
+        let src: Vec<u8> = (0..w * h * 4).map(|_| rng()).collect();
+
+        for &(label, angle) in &[("horizontal", 0.0f32), ("vertical", 90.0), ("diagonal", 45.0)] {
+            let t = Instant::now();
+            let out = pixel_sort_cpu(&src, w, h, 0.3, angle);
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            std::hint::black_box(&out);
+            println!("{label:>11}: {ms:.1} ms  ({w}x{h})");
         }
     }
 }
