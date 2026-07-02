@@ -174,6 +174,13 @@ fn process_vram_budget(device: &Device) -> u64 {
         .clamp(PROCESS_VRAM_BUDGET_MIN, PROCESS_VRAM_BUDGET_MAX)
 }
 
+fn sort_buffer_limit(device: &Device) -> u64 {
+    let limits = device.limits();
+    limits
+        .max_buffer_size
+        .min(limits.max_storage_buffer_binding_size as u64)
+}
+
 fn fit_process_scale(
     unit_w: u32,
     unit_h: u32,
@@ -1509,7 +1516,7 @@ impl ModifierPipeline {
             proc_scale,
         );
         if has_diag {
-            let max_bytes = device.limits().max_buffer_size;
+            let max_bytes = sort_buffer_limit(device);
             while scale > 1.0 / 4096.0 {
                 let sw = scaled(source.full_width, scale).max(1) as u64;
                 let sh = scaled(source.full_height, scale).max(1) as u64;
@@ -1988,7 +1995,7 @@ impl ModifierPipeline {
         budgeted: bool,
         scale: f32,
     ) -> bool {
-        let budget = device.limits().max_buffer_size.min(PIXEL_SORT_BUF_BUDGET);
+        let budget = sort_buffer_limit(device).min(PIXEL_SORT_BUF_BUDGET);
         let line_len = if vertical {
             scaled(source.full_height, scale)
         } else {
@@ -2171,7 +2178,7 @@ impl ModifierPipeline {
         let row_bytes = (full_sw * 4).div_ceil(256) * 256;
         let row_words = row_bytes / 4;
         let bytes = row_bytes as u64 * full_sh as u64;
-        if bytes > device.limits().max_buffer_size {
+        if bytes > sort_buffer_limit(device) {
             return;
         }
         self.ensure_sort_buffers(device, bytes);
@@ -2307,7 +2314,7 @@ impl ModifierPipeline {
         let row_bytes = (w * 4).div_ceil(256) * 256;
         let row_words = row_bytes / 4;
         let bytes = row_bytes as u64 * h as u64;
-        if bytes > device.limits().max_buffer_size {
+        if bytes > sort_buffer_limit(device) {
             return;
         }
         self.ensure_sort_buffers(device, bytes);
@@ -2366,7 +2373,7 @@ impl ModifierPipeline {
         angle: f32,
         vertical: bool,
     ) {
-        let budget = device.limits().max_buffer_size.min(PIXEL_SORT_BUF_BUDGET);
+        let budget = sort_buffer_limit(device).min(PIXEL_SORT_BUF_BUDGET);
         let cross = if vertical { w } else { h };
         let line_px = if vertical { h as u64 } else { w as u64 };
         let band = (budget / (line_px * 4).max(1))
