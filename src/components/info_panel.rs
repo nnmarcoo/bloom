@@ -16,7 +16,8 @@ use crate::gallery::Gallery;
 use crate::styles::{
     INFO_CHANNEL_COL_WIDTH, INFO_HEADER_LABEL_SIZE, INFO_HISTOGRAM_HEIGHT, INFO_PANEL_WIDTH,
     INFO_ROW_FONT_SIZE, INFO_SECTION_GAP, INFO_SECTION_SPACING, PAD, RULE_HEIGHT, bar_style,
-    color_swatch_style, info_section_header_style, panel_divider_style, svg_color_style,
+    color_swatch_style, info_section_header_style, muted_text, panel_divider_style,
+    svg_color_style,
 };
 use crate::ui::{format_duration, with_tooltip_delay};
 use crate::wgpu::view_program::{Histogram as HistogramData, ViewProgram};
@@ -238,7 +239,7 @@ pub fn view<'a>(
     #[cfg(feature = "av")] video: Option<VideoPanel<'a>>,
 ) -> Element<'a, Message> {
     let palette = theme.extended_palette();
-    let muted = palette.background.base.text.scale_alpha(0.5);
+    let muted = muted_text(theme);
 
     let header_color = palette.background.base.text;
 

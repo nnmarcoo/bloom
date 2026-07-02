@@ -130,6 +130,15 @@ pub fn menu_item_hover_color(theme: &Theme) -> Color {
     theme.extended_palette().background.strong.color
 }
 
+pub fn muted_text(theme: &Theme) -> Color {
+    theme
+        .extended_palette()
+        .background
+        .base
+        .text
+        .scale_alpha(0.5)
+}
+
 pub fn menu_separator_style(theme: &Theme) -> container::Style {
     let palette = theme.extended_palette();
     container::Style {

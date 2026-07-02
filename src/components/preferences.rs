@@ -11,15 +11,15 @@ use iced::widget::tooltip::Position;
 use iced::widget::{
     Space, button, column, container, pick_list, row, rule, scrollable, text, toggler,
 };
-use iced::{Element, Font, Length, Theme};
+use iced::{Color, Element, Font, Length, Theme};
 
 use crate::app::Message;
 use crate::config::{Config, PIXEL_PREVIEW_SIZE_OPTIONS, UI_SCALE_MAX, UI_SCALE_MIN};
 use crate::keybinds::{Action, KeyBinding, KeyCategory, Keymap};
 use crate::styles::{
-    BAR_HEIGHT, PAD, PREF_CONTENT_MAX_WIDTH, PREF_SIDEBAR_WIDTH, RULE_HEIGHT, bar_style,
-    capturing_chip_style, key_chip_style, panel_divider_style, plain_icon_button_style,
-    pref_nav_button_style, pref_section_rule_style, set_radius,
+    BAR_HEIGHT, BUTTON_SIZE, PAD, PREF_CONTENT_MAX_WIDTH, PREF_SIDEBAR_WIDTH, RULE_HEIGHT,
+    bar_style, capturing_chip_style, key_chip_style, muted_text, panel_divider_style,
+    plain_icon_button_style, pref_nav_button_style, pref_section_rule_style, set_radius,
 };
 use crate::ui::{svg_button_plain, with_tooltip};
 use crate::widgets::hover_row::HoverRow;
@@ -39,10 +39,18 @@ pub enum PrefSection {
     Keybindings,
 }
 
+#[derive(Debug, Clone)]
+pub struct KeybindConflict {
+    pub winner: Action,
+    pub losers: Vec<Action>,
+    pub binding: KeyBinding,
+}
+
 #[derive(Default)]
 pub struct PreferenceState {
     pub capturing: Option<Action>,
     pub section: PrefSection,
+    pub conflict: Option<KeybindConflict>,
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +113,11 @@ pub fn capture_key(
     if code == key::Code::Escape {
         return Some(PreferenceMessage::CancelCapture);
     }
+    if code == key::Code::Backspace
+        && !(modifiers.control() || modifiers.shift() || modifiers.alt())
+    {
+        return Some(PreferenceMessage::ClearKeybinding(action));
+    }
     Some(PreferenceMessage::SetKeybinding(
         action,
         KeyBinding {
@@ -121,6 +134,7 @@ pub fn update(
     pending: &mut Config,
     preference_state: &mut PreferenceState,
 ) -> PreferenceOutcome {
+    preference_state.conflict = None;
     match msg {
         PreferenceMessage::SelectSection(s) => {
             preference_state.section = s;
@@ -188,12 +202,20 @@ pub fn update(
             PreferenceOutcome::Open
         }
         PreferenceMessage::SetKeybinding(action, kb) => {
-            pending.keymap.set(action, kb);
+            let losers = pending.keymap.set(action, kb);
+            if !losers.is_empty() {
+                preference_state.conflict = Some(KeybindConflict {
+                    winner: action,
+                    losers,
+                    binding: kb,
+                });
+            }
             preference_state.capturing = None;
             PreferenceOutcome::Open
         }
         PreferenceMessage::ClearKeybinding(action) => {
             pending.keymap.remove(&action);
+            preference_state.capturing = None;
             PreferenceOutcome::Open
         }
         PreferenceMessage::ResetAppearance => {
@@ -241,24 +263,19 @@ pub fn update(
 fn label_block<'a>(
     title: impl text::IntoFragment<'a>,
     description: impl text::IntoFragment<'a>,
+    note: Option<(String, Color)>,
     theme: &Theme,
 ) -> Element<'a, Message> {
-    let muted = theme
-        .extended_palette()
-        .background
-        .base
-        .text
-        .scale_alpha(0.5);
-    container(
-        column![
-            text(title).size(13),
-            text(description).size(11).color(muted),
-        ]
-        .spacing(PAD / 2.0),
-    )
-    .clip(true)
-    .width(Length::Fill)
-    .into()
+    let muted = muted_text(theme);
+    let mut col = column![
+        text(title).size(13),
+        text(description).size(11).color(muted),
+    ]
+    .spacing(PAD / 2.0);
+    if let Some((note, color)) = note {
+        col = col.push(text(note).size(11).color(color));
+    }
+    container(col).clip(true).width(Length::Fill).into()
 }
 
 fn setting<'a>(
@@ -268,20 +285,23 @@ fn setting<'a>(
     theme: &Theme,
 ) -> Element<'a, Message> {
     HoverRow::new(
-        row![label_block(label, description, theme), control]
+        row![label_block(label, description, None, theme), control]
             .align_y(Vertical::Center)
             .spacing(PAD * 2.0),
     )
     .into()
 }
 
+const CLEAR_SLOT: f32 = BUTTON_SIZE + PAD * 2.0;
+
 fn keybind_row<'a>(
     action: Action,
     keymap: &Keymap,
-    capturing: Option<Action>,
+    state: &PreferenceState,
     theme: &Theme,
 ) -> Element<'a, Message> {
-    let is_capturing = capturing == Some(action);
+    let is_capturing = state.capturing == Some(action);
+    let binding = keymap.binding_for(&action);
 
     let chip: Element<'a, Message> = if is_capturing {
         button(text("Press a key…").size(11))
@@ -290,10 +310,7 @@ fn keybind_row<'a>(
             .padding([4.0, 8.0])
             .into()
     } else {
-        let label = keymap
-            .binding_for(&action)
-            .map(|kb| kb.display())
-            .unwrap_or_else(|| "—".into());
+        let label = binding.map(|kb| kb.display()).unwrap_or_else(|| "—".into());
         button(text(label).size(11))
             .style(key_chip_style)
             .on_press(Message::Preference(PreferenceMessage::StartCapture(action)))
@@ -301,29 +318,56 @@ fn keybind_row<'a>(
             .into()
     };
 
-    let control: Element<'a, Message> = if keymap.binding_for(&action).is_some() && !is_capturing {
-        row![
-            chip,
+    let note = if is_capturing {
+        let hint = if binding.is_some() {
+            "Backspace removes the binding, Esc cancels"
+        } else {
+            "Esc cancels"
+        };
+        Some((hint.into(), muted_text(theme)))
+    } else {
+        state
+            .conflict
+            .as_ref()
+            .filter(|c| c.winner == action)
+            .map(|c| {
+                let losers = c
+                    .losers
+                    .iter()
+                    .map(|l| l.label_with_detail())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let restore = if c.losers.iter().any(|l| !l.is_visible()) {
+                    " (restore with Reset)"
+                } else {
+                    ""
+                };
+                (
+                    format!("{} was unbound from {losers}{restore}", c.binding.display()),
+                    theme.extended_palette().warning.base.color,
+                )
+            })
+    };
+
+    let clear: Option<Element<'a, Message>> = (binding.is_some() && !is_capturing).then(|| {
+        with_tooltip(
             svg_button_plain(
                 include_bytes!("../../assets/icons/close.svg"),
                 Message::Preference(PreferenceMessage::ClearKeybinding(action)),
             ),
-        ]
-        .spacing(PAD)
-        .align_y(Vertical::Center)
-        .into()
-    } else {
-        chip
-    };
+            "Remove keybinding",
+            Position::Top,
+        )
+    });
 
-    HoverRow::new(
-        row![
-            label_block(action.label_with_detail(), action.description(), theme),
-            control,
-        ]
-        .align_y(Vertical::Center)
-        .spacing(PAD * 2.0),
-    )
+    HoverRow::new(label_block(
+        action.label_with_detail(),
+        action.description(),
+        note,
+        theme,
+    ))
+    .trailing(chip)
+    .hover_slot(CLEAR_SLOT, clear)
     .into()
 }
 
@@ -591,7 +635,7 @@ fn rendering_pane<'a>(pending: &'a Config, theme: &Theme) -> Element<'a, Message
 
 fn keybindings_pane<'a>(
     pending: &'a Config,
-    capturing: Option<Action>,
+    state: &PreferenceState,
     theme: &Theme,
 ) -> Element<'a, Message> {
     let mut col = column![].spacing(PAD * 5.0).width(Length::Fill);
@@ -601,7 +645,7 @@ fn keybindings_pane<'a>(
         let rows: Vec<Element<'a, Message>> = Action::all_visible()
             .iter()
             .filter(|a| a.category() == category)
-            .map(|&action| keybind_row(action, &pending.keymap, capturing, theme))
+            .map(|&action| keybind_row(action, &pending.keymap, state, theme))
             .collect();
         if rows.is_empty() {
             continue;
@@ -653,7 +697,7 @@ pub fn view<'a>(
     let pane = match active {
         PrefSection::Appearance => appearance_pane(pending, theme),
         PrefSection::Rendering => rendering_pane(pending, theme),
-        PrefSection::Keybindings => keybindings_pane(pending, preference_state.capturing, theme),
+        PrefSection::Keybindings => keybindings_pane(pending, preference_state, theme),
     };
 
     let content = scrollable(

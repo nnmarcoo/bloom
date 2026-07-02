@@ -136,6 +136,10 @@ impl Action {
         }
     }
 
+    pub fn is_visible(&self) -> bool {
+        Self::all_visible().contains(self)
+    }
+
     pub fn all_visible() -> &'static [Action] {
         &[
             Action::Next,
@@ -398,9 +402,18 @@ impl Keymap {
         self.bindings.get(action)
     }
 
-    pub fn set(&mut self, action: Action, binding: KeyBinding) {
-        self.bindings.retain(|a, b| *b != binding || *a == action);
+    pub fn set(&mut self, action: Action, binding: KeyBinding) -> Vec<Action> {
+        let mut displaced = Vec::new();
+        self.bindings.retain(|a, b| {
+            if *b == binding && *a != action {
+                displaced.push(*a);
+                false
+            } else {
+                true
+            }
+        });
         self.bindings.insert(action, binding);
+        displaced
     }
 
     pub fn remove(&mut self, action: &Action) {
