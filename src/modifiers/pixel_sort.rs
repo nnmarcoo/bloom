@@ -57,44 +57,43 @@ fn angle_diff(a: f32, b: f32) -> f32 {
     d.min(std::f32::consts::TAU - d)
 }
 
-pub fn diagonal_lines(width: usize, height: usize, dx: i32, dy: i32) -> Vec<Vec<usize>> {
-    if width == 0 || height == 0 {
-        return Vec::new();
-    }
+pub fn reduced_step(dx: i32, dy: i32) -> (i32, i32) {
     let g = gcd(dx.unsigned_abs(), dy.unsigned_abs()).max(1) as i32;
-    let (dx, dy) = (dx / g, dy / g);
+    (dx / g, dy / g)
+}
 
+fn for_each_diagonal_line(
+    width: usize,
+    height: usize,
+    dx: i32,
+    dy: i32,
+    mut f: impl FnMut(&[usize]),
+) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    let (dx, dy) = reduced_step(dx, dy);
+    if dx == 0 && dy == 0 {
+        return;
+    }
     let (w, h) = (width as i32, height as i32);
-    let corners = [0, dy * (w - 1), -dx * (h - 1), dy * (w - 1) - dx * (h - 1)];
-    let cross_min = *corners.iter().min().unwrap();
-    let cross_max = *corners.iter().max().unwrap();
-    let span = (cross_max - cross_min + 1) as usize;
-
-    let mut bucket_of = vec![usize::MAX; span];
-    let mut lines: Vec<Vec<usize>> = Vec::new();
-    for y in 0..height {
-        for x in 0..width {
-            let slot = (dy * x as i32 - dx * y as i32 - cross_min) as usize;
-            let bucket = match bucket_of[slot] {
-                usize::MAX => {
-                    let b = lines.len();
-                    bucket_of[slot] = b;
-                    lines.push(Vec::new());
-                    b
-                }
-                b => b,
-            };
-            lines[bucket].push(y * width + x);
+    let in_bounds = |x: i32, y: i32| x >= 0 && x < w && y >= 0 && y < h;
+    let mut line: Vec<usize> = Vec::new();
+    for y0 in 0..h {
+        for x0 in 0..w {
+            if in_bounds(x0 - dx, y0 - dy) {
+                continue;
+            }
+            line.clear();
+            let (mut x, mut y) = (x0, y0);
+            while in_bounds(x, y) {
+                line.push((y * w + x) as usize);
+                x += dx;
+                y += dy;
+            }
+            f(&line);
         }
     }
-
-    for line in &mut lines {
-        line.sort_by_key(|&idx| {
-            let (x, y) = ((idx % width) as i32, (idx / width) as i32);
-            dx * x + dy * y
-        });
-    }
-    lines
 }
 
 fn gcd(a: u32, b: u32) -> u32 {
@@ -155,13 +154,11 @@ fn sort_row(row: &mut [Rgba], cutoff: u8, reverse: bool, sorted: &mut Vec<Rgba>)
 
 fn transpose(src: &[Rgba], width: usize, height: usize) -> Vec<Rgba> {
     let mut out = vec![Rgba::default(); src.len()];
-    out.par_chunks_mut(height)
-        .enumerate()
-        .for_each(|(x, col)| {
-            for (y, dst) in col.iter_mut().enumerate() {
-                *dst = src[y * width + x];
-            }
-        });
+    out.par_chunks_mut(height).enumerate().for_each(|(x, col)| {
+        for (y, dst) in col.iter_mut().enumerate() {
+            *dst = src[y * width + x];
+        }
+    });
     out
 }
 
@@ -180,32 +177,33 @@ pub fn pixel_sort_cpu(
     match SortMode::from_angle(angle) {
         SortMode::Cardinal(SortAxis::Horizontal { reverse }) => {
             let px: &mut [Rgba] = bytemuck::cast_slice_mut(&mut out);
-            px.par_chunks_mut(width).for_each_init(Vec::new, |scratch, row| {
-                sort_row(row, cutoff, reverse, scratch);
-            });
+            px.par_chunks_mut(width)
+                .for_each_init(Vec::new, |scratch, row| {
+                    sort_row(row, cutoff, reverse, scratch);
+                });
         }
         SortMode::Cardinal(SortAxis::Vertical { reverse }) => {
             let px: &[Rgba] = bytemuck::cast_slice(&out);
             let mut t = transpose(px, width, height);
-            t.par_chunks_mut(height).for_each_init(Vec::new, |scratch, col| {
-                sort_row(col, cutoff, reverse, scratch);
-            });
+            t.par_chunks_mut(height)
+                .for_each_init(Vec::new, |scratch, col| {
+                    sort_row(col, cutoff, reverse, scratch);
+                });
             let back = transpose(&t, height, width);
             out.copy_from_slice(bytemuck::cast_slice(&back));
         }
         SortMode::Diagonal { dx, dy } => {
-            let lines = diagonal_lines(width, height, dx, dy);
             let px: &mut [Rgba] = bytemuck::cast_slice_mut(&mut out);
             let mut gather: Vec<Rgba> = Vec::new();
             let mut scratch: Vec<Rgba> = Vec::new();
-            for idx in &lines {
+            for_each_diagonal_line(width, height, dx, dy, |idx| {
                 gather.clear();
                 gather.extend(idx.iter().map(|&i| px[i]));
                 sort_row(&mut gather, cutoff, false, &mut scratch);
                 for (&i, &p) in idx.iter().zip(gather.iter()) {
                     px[i] = p;
                 }
-            }
+            });
         }
     }
     out
@@ -282,6 +280,12 @@ mod tests {
         let out = pixel_sort_cpu(&src, 1, 3, 0.0, 90.0);
         let vals: Vec<u8> = (0..3).map(|y| out[y * 4]).collect();
         assert_eq!(vals, vec![50, 100, 150]);
+    }
+
+    fn diagonal_lines(width: usize, height: usize, dx: i32, dy: i32) -> Vec<Vec<usize>> {
+        let mut lines = Vec::new();
+        for_each_diagonal_line(width, height, dx, dy, |l| lines.push(l.to_vec()));
+        lines
     }
 
     fn assert_partition(width: usize, height: usize, dx: i32, dy: i32) {
@@ -374,7 +378,14 @@ mod tests {
         }
     }
 
-    fn reference_sort(src: &[u8], w: usize, h: usize, cutoff: u8, vertical: bool, reverse: bool) -> Vec<u8> {
+    fn reference_sort(
+        src: &[u8],
+        w: usize,
+        h: usize,
+        cutoff: u8,
+        vertical: bool,
+        reverse: bool,
+    ) -> Vec<u8> {
         let mut out = src.to_vec();
         let line = |k: usize| -> Vec<usize> {
             if vertical {
@@ -430,15 +441,15 @@ mod tests {
             let src: Vec<u8> = (0..w * h * 4).map(|_| rng()).collect();
             for &thr in &[0.0f32, 0.3, 0.6] {
                 let cutoff = key_cutoff(thr);
-                for &(angle, vertical, reverse) in
-                    &[(0.0f32, false, false), (180.0, false, true), (90.0, true, false), (270.0, true, true)]
-                {
+                for &(angle, vertical, reverse) in &[
+                    (0.0f32, false, false),
+                    (180.0, false, true),
+                    (90.0, true, false),
+                    (270.0, true, true),
+                ] {
                     let got = pixel_sort_cpu(&src, w, h, thr, angle);
                     let want = reference_sort(&src, w, h, cutoff, vertical, reverse);
-                    assert_eq!(
-                        got, want,
-                        "mismatch at {w}x{h} thr={thr} angle={angle}"
-                    );
+                    assert_eq!(got, want, "mismatch at {w}x{h} thr={thr} angle={angle}");
                 }
             }
         }
@@ -458,7 +469,11 @@ mod tests {
         };
         let src: Vec<u8> = (0..w * h * 4).map(|_| rng()).collect();
 
-        for &(label, angle) in &[("horizontal", 0.0f32), ("vertical", 90.0), ("diagonal", 45.0)] {
+        for &(label, angle) in &[
+            ("horizontal", 0.0f32),
+            ("vertical", 90.0),
+            ("diagonal", 45.0),
+        ] {
             let t = Instant::now();
             let out = pixel_sort_cpu(&src, w, h, 0.3, angle);
             let ms = t.elapsed().as_secs_f64() * 1000.0;

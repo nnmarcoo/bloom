@@ -7,7 +7,7 @@ use iced::wgpu::{
 
 use crate::{
     modifiers::{
-        Axis, EffectClass, Modifier, ModifierKind,
+        Modifier, ModifierKind,
         gpu::{ModUniforms, TileInfo, build_segment_uniforms},
     },
     wgpu::{
@@ -122,15 +122,6 @@ enum SortTarget {
     Output,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct SortDiagKey {
-    w: u32,
-    h: u32,
-    row_words: u32,
-    dx: i32,
-    dy: i32,
-}
-
 const TILE_BUDGET: usize = 2;
 
 struct Scheduler {
@@ -222,7 +213,6 @@ struct Neighbors {
 
 use crate::modifiers::gpu::UvRect;
 use crate::modifiers::pixel_sort::{SortAxis, SortMode};
-use crate::wgpu::passes::pixel_sort::build_diagonal_index;
 
 struct ProcRect {
     px: [f32; 4],
@@ -460,7 +450,6 @@ pub struct ModifierPipeline {
     pixel_sort_uniform_pool: Vec<iced::wgpu::Buffer>,
     pixel_sort_diag_uniform_pool: Vec<iced::wgpu::Buffer>,
     sort_buffers: Option<(iced::wgpu::Buffer, iced::wgpu::Buffer)>,
-    sort_diag_index: Option<(SortDiagKey, iced::wgpu::Buffer, iced::wgpu::Buffer, u32)>,
     sort_band_cursor: u32,
     sort_progress_sig: u64,
     text_layers: Vec<Option<TextLayer>>,
@@ -537,7 +526,6 @@ impl ModifierPipeline {
             pixel_sort_uniform_pool: Vec::new(),
             pixel_sort_diag_uniform_pool: Vec::new(),
             sort_buffers: None,
-            sort_diag_index: None,
             sort_band_cursor: 0,
             sort_progress_sig: 0,
             text_layers: Vec::new(),
@@ -1496,7 +1484,23 @@ impl ModifierPipeline {
         self.bank_b.resize_with(n_tiles, || None);
         self.blur_hmid.resize_with(n_tiles, || None);
 
-        let scale = fit_process_scale(
+        let mut has_h = false;
+        let mut has_v = false;
+        let mut has_diag = false;
+        for p in plan {
+            if let PlanItem::Step(_, m) = p
+                && let ModifierKind::PixelSort(ps) = &m.kind
+                && m.kind.effect_class().is_compute_scanline()
+            {
+                match SortMode::from_angle(ps.angle) {
+                    SortMode::Cardinal(SortAxis::Horizontal { .. }) => has_h = true,
+                    SortMode::Cardinal(SortAxis::Vertical { .. }) => has_v = true,
+                    SortMode::Diagonal { .. } => has_diag = true,
+                }
+            }
+        }
+
+        let mut scale = fit_process_scale(
             source.full_width,
             source.full_height,
             1,
@@ -1504,6 +1508,18 @@ impl ModifierPipeline {
             process_vram_budget(device),
             proc_scale,
         );
+        if has_diag {
+            let max_bytes = device.limits().max_buffer_size;
+            while scale > 1.0 / 4096.0 {
+                let sw = scaled(source.full_width, scale).max(1) as u64;
+                let sh = scaled(source.full_height, scale).max(1) as u64;
+                if (sw * 4).div_ceil(256) * 256 * sh <= max_bytes {
+                    break;
+                }
+                scale *= 0.5;
+            }
+        }
+        let scale = scale;
         let stile = |ti: usize, source: &TiledSource| -> (u32, u32, u32, u32) {
             let t = &source.tiles[ti];
             let sx0 = scaled(t.x, scale);
@@ -1512,19 +1528,6 @@ impl ModifierPipeline {
             let sy1 = scaled(t.y + t.height, scale);
             (sx0, sy0, (sx1 - sx0).max(1), (sy1 - sy0).max(1))
         };
-
-        let mut has_h = false;
-        let mut has_v = false;
-        for p in plan {
-            if let PlanItem::Step(_, m) = p
-                && let EffectClass::ComputeScanline { axis } = m.kind.effect_class()
-            {
-                match axis {
-                    Axis::Vertical => has_v = true,
-                    Axis::Horizontal => has_h = true,
-                }
-            }
-        }
 
         let visible: Vec<usize> = (0..n_tiles)
             .filter(|&ti| !tile_ndc_culled(source.tiles[ti].last_ndc_rect))
@@ -1542,7 +1545,7 @@ impl ModifierPipeline {
             .iter()
             .any(|p| matches!(p, PlanItem::Step(_, m) if m.kind.effect_class().separable_apron().is_some()));
 
-        let mut in_set = vec![false; n_tiles];
+        let mut in_set = vec![has_diag; n_tiles];
         for &v in &visible {
             let (vx, vy) = (source.tiles[v].x, source.tiles[v].y);
             for (ti, slot) in in_set.iter_mut().enumerate() {
@@ -1792,24 +1795,42 @@ impl ModifierPipeline {
                 } else if let PlanItem::Step(_, m) = item
                     && let ModifierKind::PixelSort(ps) = &m.kind
                 {
-                    let step_vertical =
-                        matches!(SortAxis::from_angle(ps.angle), SortAxis::Vertical { .. });
-                    let groups = pixel_sort_groups(source, &proc_set, step_vertical);
                     queue.submit([encoder.finish()]);
                     let budgeted = Some(k) == last_sort_k;
-                    let done = self.sort_cross_tile(
-                        device,
-                        queue,
-                        source,
-                        &groups,
-                        last,
-                        prev_in_a,
-                        step_vertical,
-                        ps.threshold,
-                        ps.angle,
-                        budgeted,
-                        scale,
-                    );
+                    let done = match SortMode::from_angle(ps.angle) {
+                        SortMode::Diagonal { dx, dy } => {
+                            self.sort_diag_full(
+                                device,
+                                queue,
+                                source,
+                                &proc_set,
+                                last,
+                                prev_in_a,
+                                ps.threshold,
+                                dx,
+                                dy,
+                                scale,
+                            );
+                            true
+                        }
+                        SortMode::Cardinal(axis) => {
+                            let step_vertical = matches!(axis, SortAxis::Vertical { .. });
+                            let groups = pixel_sort_groups(source, &proc_set, step_vertical);
+                            self.sort_cross_tile(
+                                device,
+                                queue,
+                                source,
+                                &groups,
+                                last,
+                                prev_in_a,
+                                step_vertical,
+                                ps.threshold,
+                                ps.angle,
+                                budgeted,
+                                scale,
+                            )
+                        }
+                    };
                     if budgeted {
                         sort_complete = done;
                     }
@@ -2027,16 +2048,7 @@ impl ModifierPipeline {
                 let row_bytes = (sort_w * 4).div_ceil(256) * 256;
                 let row_words = row_bytes / 4;
                 let bytes = (row_bytes * sort_h) as u64;
-                let need_new = self
-                    .sort_buffers
-                    .as_ref()
-                    .is_none_or(|(s, _)| s.size() < bytes);
-                if need_new {
-                    self.sort_buffers = Some((
-                        gpu::storage_buffer(device, bytes, Some("pixel-sort-src")),
-                        gpu::storage_buffer(device, bytes, Some("pixel-sort-dst")),
-                    ));
-                }
+                self.ensure_sort_buffers(device, bytes);
                 if self.pixel_sort_uniform_pool.is_empty() {
                     self.pixel_sort_uniform_pool
                         .push(self.pixel_sort.uniform_buffer(device));
@@ -2141,44 +2153,117 @@ impl ModifierPipeline {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn ensure_diag_index(
+    fn sort_diag_full(
         &mut self,
         device: &Device,
         queue: &Queue,
-        w: u32,
-        h: u32,
-        row_words: u32,
+        source: &TiledSource,
+        proc_set: &[usize],
+        last: bool,
+        prev_in_a: bool,
+        threshold: f32,
         dx: i32,
         dy: i32,
+        scale: f32,
     ) {
-        let key = SortDiagKey {
-            w,
-            h,
-            row_words,
-            dx,
-            dy,
-        };
-        if self
-            .sort_diag_index
-            .as_ref()
-            .is_some_and(|(k, ..)| *k == key)
-        {
+        let full_sw = scaled(source.full_width, scale).max(1);
+        let full_sh = scaled(source.full_height, scale).max(1);
+        let row_bytes = (full_sw * 4).div_ceil(256) * 256;
+        let row_words = row_bytes / 4;
+        let bytes = row_bytes as u64 * full_sh as u64;
+        if bytes > device.limits().max_buffer_size {
             return;
         }
-        let di = build_diagonal_index(w, h, row_words, dx, dy);
-        let index = gpu::storage_buffer(
-            device,
-            (di.index.len().max(1) * 4) as u64,
-            Some("pixel-sort-diag-index"),
+        self.ensure_sort_buffers(device, bytes);
+        if self.pixel_sort_diag_uniform_pool.is_empty() {
+            self.pixel_sort_diag_uniform_pool
+                .push(self.pixel_sort.diag_uniform_buffer(device));
+        }
+
+        let stile = |ti: usize| -> (u32, u32, u32, u32) {
+            let t = &source.tiles[ti];
+            let sx0 = scaled(t.x, scale);
+            let sy0 = scaled(t.y, scale);
+            (
+                sx0,
+                sy0,
+                (scaled(t.x + t.width, scale) - sx0).max(1),
+                (scaled(t.y + t.height, scale) - sy0).max(1),
+            )
+        };
+        let tile_layout = |sx0: u32, sy0: u32, sh: u32| iced::wgpu::TexelCopyBufferLayout {
+            offset: sy0 as u64 * row_bytes as u64 + sx0 as u64 * 4,
+            bytes_per_row: Some(row_bytes),
+            rows_per_image: Some(sh),
+        };
+
+        let mut enc = device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
+            label: Some("pixel-sort-diag-full"),
+        });
+        let (src_buf, dst_buf) = self.sort_buffers.as_ref().unwrap();
+        let uniform = &self.pixel_sort_diag_uniform_pool[0];
+
+        for &ti in proc_set {
+            let (sx0, sy0, sw, sh) = stile(ti);
+            let tex = self.sort_in_tex(ti, prev_in_a);
+            enc.copy_texture_to_buffer(
+                tex_copy_info(tex, iced::wgpu::Origin3d::ZERO),
+                iced::wgpu::TexelCopyBufferInfo {
+                    buffer: src_buf,
+                    layout: tile_layout(sx0, sy0, sh),
+                },
+                iced::wgpu::Extent3d {
+                    width: sw,
+                    height: sh,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
+        self.pixel_sort.record_diagonal(
+            device, queue, &mut enc, uniform, src_buf, dst_buf, full_sw, full_sh, row_words,
+            threshold, dx, dy,
         );
-        let offset = gpu::storage_buffer(
-            device,
-            (di.offset.len().max(1) * 4) as u64,
-            Some("pixel-sort-diag-offset"),
-        );
-        queue.write_buffer(&index, 0, bytemuck::cast_slice(&di.index));
-        queue.write_buffer(&offset, 0, bytemuck::cast_slice(&di.offset));
-        self.sort_diag_index = Some((key, index, offset, di.n_lines));
+
+        for &ti in proc_set {
+            let (sx0, sy0, sw, sh) = stile(ti);
+            let tex = self.sort_out_tex(ti, last, prev_in_a);
+            enc.copy_buffer_to_texture(
+                iced::wgpu::TexelCopyBufferInfo {
+                    buffer: dst_buf,
+                    layout: tile_layout(sx0, sy0, sh),
+                },
+                tex_copy_info(tex, iced::wgpu::Origin3d::ZERO),
+                iced::wgpu::Extent3d {
+                    width: sw,
+                    height: sh,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
+        queue.submit([enc.finish()]);
+    }
+
+    fn ensure_sort_buffers(&mut self, device: &Device, bytes: u64) {
+        let need_new = self
+            .sort_buffers
+            .as_ref()
+            .is_none_or(|(s, _)| s.size() < bytes);
+        if need_new {
+            self.sort_buffers = Some((
+                gpu::storage_buffer(device, bytes, Some("pixel-sort-src")),
+                gpu::storage_buffer(device, bytes, Some("pixel-sort-dst")),
+            ));
+        }
+    }
+
+    fn target_tex(&self, ti: usize, target: SortTarget) -> &Texture {
+        match target {
+            SortTarget::ScratchA => &self.scratch_a.as_ref().unwrap()._tex,
+            SortTarget::ScratchB => &self.scratch_b.as_ref().unwrap()._tex,
+            SortTarget::Output => &self.tile_outputs[ti].as_ref().unwrap()._tex,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2193,32 +2278,46 @@ impl ModifierPipeline {
         threshold: f32,
         angle: f32,
     ) {
+        match SortMode::from_angle(angle) {
+            SortMode::Diagonal { dx, dy } => {
+                self.sort_target_diagonal(device, queue, ti, target, w, h, threshold, dx, dy);
+            }
+            SortMode::Cardinal(axis) => {
+                let vertical = matches!(axis, SortAxis::Vertical { .. });
+                self.sort_target_cardinal(
+                    device, queue, ti, target, w, h, threshold, angle, vertical,
+                );
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn sort_target_diagonal(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        ti: usize,
+        target: SortTarget,
+        w: u32,
+        h: u32,
+        threshold: f32,
+        dx: i32,
+        dy: i32,
+    ) {
         let row_bytes = (w * 4).div_ceil(256) * 256;
         let row_words = row_bytes / 4;
-        let bytes = (row_bytes * h) as u64;
-
-        let mode = SortMode::from_angle(angle);
-        if let SortMode::Diagonal { dx, dy } = mode {
-            self.ensure_diag_index(device, queue, w, h, row_words, dx, dy);
+        let bytes = row_bytes as u64 * h as u64;
+        if bytes > device.limits().max_buffer_size {
+            return;
         }
-
-        let need_new = self
-            .sort_buffers
-            .as_ref()
-            .is_none_or(|(s, _)| s.size() < bytes);
-        if need_new {
-            self.sort_buffers = Some((
-                gpu::storage_buffer(device, bytes, Some("pixel-sort-src")),
-                gpu::storage_buffer(device, bytes, Some("pixel-sort-dst")),
-            ));
+        self.ensure_sort_buffers(device, bytes);
+        if self.pixel_sort_diag_uniform_pool.is_empty() {
+            self.pixel_sort_diag_uniform_pool
+                .push(self.pixel_sort.diag_uniform_buffer(device));
         }
         let (src, dst) = self.sort_buffers.as_ref().unwrap();
-
-        let tex = match target {
-            SortTarget::ScratchA => &self.scratch_a.as_ref().unwrap()._tex,
-            SortTarget::ScratchB => &self.scratch_b.as_ref().unwrap()._tex,
-            SortTarget::Output => &self.tile_outputs[ti].as_ref().unwrap()._tex,
-        };
+        let uniform = &self.pixel_sort_diag_uniform_pool[0];
+        let tex = self.target_tex(ti, target);
         let mut enc = device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
             label: Some("pixel-sort-bridge"),
         });
@@ -2240,29 +2339,9 @@ impl ModifierPipeline {
             },
             extent,
         );
-        match mode {
-            SortMode::Diagonal { .. } => {
-                let (_, index, offset, n_lines) = self.sort_diag_index.as_ref().unwrap();
-                if self.pixel_sort_diag_uniform_pool.is_empty() {
-                    self.pixel_sort_diag_uniform_pool
-                        .push(self.pixel_sort.diag_uniform_buffer(device));
-                }
-                let uniform = &self.pixel_sort_diag_uniform_pool[0];
-                self.pixel_sort.record_diagonal(
-                    device, queue, &mut enc, uniform, src, dst, index, offset, *n_lines, threshold,
-                );
-            }
-            SortMode::Cardinal(_) => {
-                if self.pixel_sort_uniform_pool.is_empty() {
-                    self.pixel_sort_uniform_pool
-                        .push(self.pixel_sort.uniform_buffer(device));
-                }
-                let uniform = &self.pixel_sort_uniform_pool[0];
-                self.pixel_sort.record(
-                    device, queue, &mut enc, uniform, src, dst, w, h, row_words, threshold, angle,
-                );
-            }
-        }
+        self.pixel_sort.record_diagonal(
+            device, queue, &mut enc, uniform, src, dst, w, h, row_words, threshold, dx, dy,
+        );
         enc.copy_buffer_to_texture(
             iced::wgpu::TexelCopyBufferInfo {
                 buffer: dst,
@@ -2272,6 +2351,86 @@ impl ModifierPipeline {
             extent,
         );
         queue.submit([enc.finish()]);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn sort_target_cardinal(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        ti: usize,
+        target: SortTarget,
+        w: u32,
+        h: u32,
+        threshold: f32,
+        angle: f32,
+        vertical: bool,
+    ) {
+        let budget = device.limits().max_buffer_size.min(PIXEL_SORT_BUF_BUDGET);
+        let cross = if vertical { w } else { h };
+        let line_px = if vertical { h as u64 } else { w as u64 };
+        let band = (budget / (line_px * 4).max(1))
+            .saturating_sub(64)
+            .clamp(1, cross as u64) as u32;
+
+        let (max_sw, max_sh) = if vertical { (band, h) } else { (w, band) };
+        let max_bytes = (((max_sw * 4).div_ceil(256) * 256) as u64) * max_sh as u64;
+        self.ensure_sort_buffers(device, max_bytes);
+        if self.pixel_sort_uniform_pool.is_empty() {
+            self.pixel_sort_uniform_pool
+                .push(self.pixel_sort.uniform_buffer(device));
+        }
+
+        let mut c0 = 0u32;
+        while c0 < cross {
+            let c1 = (c0 + band).min(cross);
+            let band_n = c1 - c0;
+            let (sw, sh) = if vertical { (band_n, h) } else { (w, band_n) };
+            let row_bytes = (sw * 4).div_ceil(256) * 256;
+            let row_words = row_bytes / 4;
+            let origin = if vertical {
+                iced::wgpu::Origin3d { x: c0, y: 0, z: 0 }
+            } else {
+                iced::wgpu::Origin3d { x: 0, y: c0, z: 0 }
+            };
+            let copy_layout = iced::wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(row_bytes),
+                rows_per_image: Some(sh),
+            };
+            let extent = iced::wgpu::Extent3d {
+                width: sw,
+                height: sh,
+                depth_or_array_layers: 1,
+            };
+            let (src, dst) = self.sort_buffers.as_ref().unwrap();
+            let uniform = &self.pixel_sort_uniform_pool[0];
+            let tex = self.target_tex(ti, target);
+            let mut enc = device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
+                label: Some("pixel-sort-bridge"),
+            });
+            enc.copy_texture_to_buffer(
+                tex_copy_info(tex, origin),
+                iced::wgpu::TexelCopyBufferInfo {
+                    buffer: src,
+                    layout: copy_layout,
+                },
+                extent,
+            );
+            self.pixel_sort.record(
+                device, queue, &mut enc, uniform, src, dst, sw, sh, row_words, threshold, angle,
+            );
+            enc.copy_buffer_to_texture(
+                iced::wgpu::TexelCopyBufferInfo {
+                    buffer: dst,
+                    layout: copy_layout,
+                },
+                tex_copy_info(tex, origin),
+                extent,
+            );
+            queue.submit([enc.finish()]);
+            c0 = c1;
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
