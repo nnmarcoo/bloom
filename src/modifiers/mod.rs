@@ -1,10 +1,11 @@
 pub mod cpu;
 pub mod gpu;
 pub mod kinds;
+pub mod pixel_sort;
 pub mod text_raster;
 pub mod text_render;
 mod types;
 
 pub use types::{
-    InputClass, Modifier, ModifierImpl, ModifierKind, ModifierParam, ModifierType, ids,
+    Axis, InputRequest, Modifier, ModifierImpl, ModifierKind, ModifierParam, ModifierType, ids,
 };

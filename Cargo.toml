@@ -51,7 +51,8 @@ rgb = "0.8.53"
 image-webp = "0.2.4"
 jxl-oxide = "0.12.5"
 jpeg2k = { version = "0.10.1", default-features = false, features = ["threads", "file-io", "openjpeg-sys"] }
-psd = "0.3.5"
+zune-psd = "0.5.1"
+zune-core = "0.5.1"
 icns = "0.4.0"
 dicom-object = "0.9.0"
 dicom-pixeldata = { version = "0.9.0", features = ["image", "openjpeg-sys"] }
@@ -105,6 +106,9 @@ av = ["dep:ffmpeg-next", "dep:cpal", "dep:ringbuf", "dep:crossbeam-channel"]
 winres = "0.1"
 
 [profile.release]
+# Small binary, but a panic in a third-party decoder aborts the app instead of
+# becoming a graceful load error. Fix: patch/replace the decoder, or drop abort
+# + catch_unwind in load_media.
 panic = "abort"
 codegen-units = 1
 lto = true

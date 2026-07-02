@@ -48,3 +48,6 @@ jobs:
 
       - name: clippy
         run: cargo clippy --features heif,av -- -D warnings
+
+      - name: test
+        run: cargo test --features heif,av

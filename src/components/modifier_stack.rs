@@ -209,6 +209,17 @@ fn add_row<'a>() -> Element<'a, Message> {
                 )
                 .side(SubMenuSide::Left),
                 sub_menu(
+                    "Blur",
+                    styled_menu(
+                        column![menu_item(
+                            "Gaussian Blur",
+                            EditMsg::Add(ModifierType::GaussianBlur).into()
+                        ),],
+                        160
+                    )
+                )
+                .side(SubMenuSide::Left),
+                sub_menu(
                     "Stylize",
                     styled_menu(
                         column![
@@ -221,6 +232,17 @@ fn add_row<'a>() -> Element<'a, Message> {
                             menu_item("Threshold", EditMsg::Add(ModifierType::Threshold).into()),
                         ],
                         200
+                    )
+                )
+                .side(SubMenuSide::Left),
+                sub_menu(
+                    "Glitch",
+                    styled_menu(
+                        column![menu_item(
+                            "Pixel Sort",
+                            EditMsg::Add(ModifierType::PixelSort).into()
+                        ),],
+                        160
                     )
                 )
                 .side(SubMenuSide::Left),

@@ -5,10 +5,9 @@ use iced::Element;
 use iced::widget::column;
 
 use crate::app::{EditMsg, Message};
-use crate::modifiers::{ModifierImpl, ModifierParam};
-use crate::widgets::value_slider::Fmt;
+use crate::modifiers::{InputRequest, ModifierImpl, ModifierParam};
 
-use super::{finish, hash_f32, value_row};
+use super::{finish, hash_f32, number_row};
 
 #[derive(Debug, Clone)]
 pub struct GaussianBlur {
@@ -27,7 +26,13 @@ impl ModifierImpl for GaussianBlur {
     }
 
     fn has_effect(&self) -> bool {
-        false
+        self.radius > 0.0
+    }
+
+    fn input_request(&self) -> InputRequest {
+        InputRequest::Neighborhood {
+            radius_px: self.radius,
+        }
     }
 
     fn apply_param(&mut self, param: ModifierParam, _img_size: Option<(u32, u32)>) {
@@ -47,12 +52,12 @@ impl ModifierImpl for GaussianBlur {
         _image_size: Option<(u32, u32)>,
         _rotation: u8,
     ) -> Element<'_, Message> {
-        finish(column![value_row(
+        finish(column![number_row(
             "Radius",
             self.radius,
-            0.0..=100.0,
+            0.0,
             0.5,
-            Fmt::num(1),
+            "px",
             move |v| EditMsg::Update(index, ModifierParam::GaussianBlurRadius(v)).into(),
         )])
     }

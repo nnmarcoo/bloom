@@ -11,9 +11,63 @@ use crate::modifiers::kinds::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InputClass {
+pub enum Axis {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum InputRequest {
+    SamplePoint,
+    Neighborhood { radius_px: f32 },
+    ScanLines { axis: Axis },
+    FullFrame,
+}
+
+impl InputRequest {
+    pub fn is_pointwise(&self) -> bool {
+        matches!(self, InputRequest::SamplePoint)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EffectClass {
     Pointwise,
-    NonPointwise,
+    Fragment,
+    Separable { apron_px: f32 },
+    ComputeScanline { axis: Axis },
+}
+
+impl EffectClass {
+    pub fn from_input_request(req: InputRequest) -> Self {
+        match req {
+            InputRequest::SamplePoint => EffectClass::Pointwise,
+            InputRequest::FullFrame => EffectClass::Fragment,
+            InputRequest::Neighborhood { radius_px } => EffectClass::Separable {
+                apron_px: radius_px,
+            },
+            InputRequest::ScanLines { axis } => EffectClass::ComputeScanline { axis },
+        }
+    }
+
+    pub fn is_pointwise(&self) -> bool {
+        matches!(self, EffectClass::Pointwise)
+    }
+
+    pub fn is_fragment(&self) -> bool {
+        matches!(self, EffectClass::Fragment)
+    }
+
+    pub fn separable_apron(&self) -> Option<f32> {
+        match self {
+            EffectClass::Separable { apron_px } => Some(*apron_px),
+            _ => None,
+        }
+    }
+
+    pub fn is_compute_scanline(&self) -> bool {
+        matches!(self, EffectClass::ComputeScanline { .. })
+    }
 }
 
 pub trait ModifierImpl {
@@ -23,8 +77,12 @@ pub trait ModifierImpl {
         true
     }
 
-    fn input_class(&self) -> InputClass {
-        InputClass::Pointwise
+    fn input_request(&self) -> InputRequest {
+        InputRequest::SamplePoint
+    }
+
+    fn effect_class(&self) -> EffectClass {
+        EffectClass::from_input_request(self.input_request())
     }
 
     fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>);
@@ -139,8 +197,12 @@ impl ModifierKind {
         self.as_impl().has_effect()
     }
 
-    pub fn input_class(&self) -> InputClass {
-        self.as_impl().input_class()
+    pub fn input_request(&self) -> InputRequest {
+        self.as_impl().input_request()
+    }
+
+    pub fn effect_class(&self) -> EffectClass {
+        self.as_impl().effect_class()
     }
 
     pub fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>) {
@@ -233,6 +295,43 @@ pub enum ModifierParam {
     DrawingOpacity(f32),
     DrawingSize(f32),
     DrawingHardness(f32),
+}
+
+#[cfg(test)]
+mod effect_class_tests {
+    use super::*;
+    use crate::modifiers::kinds::{ChromaticAberration, Exposure, GaussianBlur, PixelSort, Text};
+
+    fn class(k: ModifierKind) -> EffectClass {
+        k.effect_class()
+    }
+
+    #[test]
+    fn class_matches_input_request_partition() {
+        assert!(class(ModifierKind::Exposure(Exposure::default())).is_pointwise());
+        assert!(
+            class(ModifierKind::ChromaticAberration(
+                ChromaticAberration::default()
+            ))
+            .is_fragment()
+        );
+        assert!(class(ModifierKind::Text(Text::default())).is_fragment());
+
+        let blur = ModifierKind::GaussianBlur(GaussianBlur { radius: 7.0 });
+        assert_eq!(blur.effect_class().separable_apron(), Some(7.0));
+
+        let sort = ModifierKind::PixelSort(PixelSort {
+            threshold: 0.5,
+            angle: 90.0,
+        });
+        assert!(sort.effect_class().is_compute_scanline());
+        assert!(matches!(
+            sort.effect_class(),
+            EffectClass::ComputeScanline {
+                axis: Axis::Vertical
+            }
+        ));
+    }
 }
 
 pub mod ids {

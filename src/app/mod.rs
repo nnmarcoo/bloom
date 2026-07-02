@@ -732,6 +732,10 @@ impl App {
             subs.push(every(Duration::from_millis(tick_ms)).map(Message::NotificationTick));
         }
 
+        if self.program.reprocess_pending() {
+            subs.push(every(Duration::from_millis(16)).map(|_| Message::Noop));
+        }
+
         Subscription::batch(subs)
     }
 }

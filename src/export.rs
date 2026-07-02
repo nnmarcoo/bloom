@@ -27,7 +27,7 @@ const STRIP_HEIGHT: u32 = 64;
 
 #[derive(Clone, Copy)]
 struct ExportCtx<'a> {
-    pixels: &'a [u8],
+    processed: &'a [u8],
     img_w: u32,
     img_h: u32,
     cx0: u32,
@@ -37,14 +37,22 @@ struct ExportCtx<'a> {
     out_w: u32,
     out_h: u32,
     rotation: u8,
-    modifiers: &'a [Modifier],
-    text_layers: &'a [Option<TextRaster>],
 }
 
-fn still_ctx<'a>(
-    data: &'a ExportData,
-    text_layers: &'a [Option<TextRaster>],
-) -> Result<ExportCtx<'a>, String> {
+#[derive(Clone, Copy)]
+struct Geom {
+    img_w: u32,
+    img_h: u32,
+    cx0: u32,
+    cy0: u32,
+    cw: u32,
+    ch: u32,
+    out_w: u32,
+    out_h: u32,
+    rotation: u8,
+}
+
+fn geom_of(data: &ExportData) -> Geom {
     let img_w = data.width;
     let img_h = data.height;
 
@@ -65,14 +73,7 @@ fn still_ctx<'a>(
         (ch, cw)
     };
 
-    let still = data
-        .frames
-        .get(data.still_index)
-        .ok_or_else(|| "No frame available.".to_string())?;
-    ensure_available(&still.pixels, img_w, img_h)?;
-
-    Ok(ExportCtx {
-        pixels: &still.pixels,
+    Geom {
         img_w,
         img_h,
         cx0,
@@ -82,14 +83,48 @@ fn still_ctx<'a>(
         out_w,
         out_h,
         rotation: data.rotation,
-        modifiers: &data.modifiers,
+    }
+}
+
+fn ctx_with<'a>(geom: &Geom, processed: &'a [u8]) -> ExportCtx<'a> {
+    ExportCtx {
+        processed,
+        img_w: geom.img_w,
+        img_h: geom.img_h,
+        cx0: geom.cx0,
+        cy0: geom.cy0,
+        cw: geom.cw,
+        ch: geom.ch,
+        out_w: geom.out_w,
+        out_h: geom.out_h,
+        rotation: geom.rotation,
+    }
+}
+
+fn process_frame(
+    data: &ExportData,
+    text_layers: &[Option<TextRaster>],
+    pixels: &[u8],
+) -> Result<Vec<u8>, String> {
+    ensure_available(pixels, data.width, data.height)?;
+    Ok(cpu::render_full(
+        &data.modifiers,
         text_layers,
-    })
+        pixels,
+        data.width,
+        data.height,
+    ))
 }
 
 pub fn render_still_rgba(data: &ExportData) -> Result<(u32, u32, Vec<u8>), String> {
     let text_layers = text_raster::build_layers(&data.modifiers, data.width, data.height);
-    let ctx = still_ctx(data, &text_layers)?;
+    let geom = geom_of(data);
+    let still = data
+        .frames
+        .get(data.still_index)
+        .ok_or_else(|| "No frame available.".to_string())?;
+    let processed = process_frame(data, &text_layers, &still.pixels)?;
+    let ctx = ctx_with(&geom, &processed);
     let mut rgba = vec![0u8; ctx.out_w as usize * ctx.out_h as usize * 4];
     render_into(&mut rgba, &ctx);
     Ok((ctx.out_w, ctx.out_h, rgba))
@@ -97,7 +132,7 @@ pub fn render_still_rgba(data: &ExportData) -> Result<(u32, u32, Vec<u8>), Strin
 
 pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Result<String, String> {
     let text_layers = text_raster::build_layers(&data.modifiers, data.width, data.height);
-    let ctx = still_ctx(&data, &text_layers)?;
+    let geom = geom_of(&data);
 
     let ext = path
         .extension()
@@ -106,11 +141,21 @@ pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Resul
         .to_ascii_lowercase();
 
     match ext.as_str() {
-        "gif" => encode_gif(&ctx, &data.frames, path, &progress)?,
-        "apng" => encode_apng(&ctx, &data.frames, path, &progress)?,
-        "jpg" | "jpeg" => encode_jpeg(&ctx, path, &progress)?,
-        "png" => encode_png(&ctx, path, &progress)?,
-        _ => encode_rgba(&ctx, path, &progress)?,
+        "gif" => encode_gif(&geom, &data, &text_layers, path, &progress)?,
+        "apng" => encode_apng(&geom, &data, &text_layers, path, &progress)?,
+        _ => {
+            let still = data
+                .frames
+                .get(data.still_index)
+                .ok_or_else(|| "No frame available.".to_string())?;
+            let processed = process_frame(&data, &text_layers, &still.pixels)?;
+            let ctx = ctx_with(&geom, &processed);
+            match ext.as_str() {
+                "jpg" | "jpeg" => encode_jpeg(&ctx, path, &progress)?,
+                "png" => encode_png(&ctx, path, &progress)?,
+                _ => encode_rgba(&ctx, path, &progress)?,
+            }
+        }
     }
 
     Ok(path
@@ -217,27 +262,26 @@ fn encode_jpeg(ctx: &ExportCtx, path: &Path, progress: &impl Fn(f32)) -> Result<
 }
 
 fn encode_apng(
-    ctx: &ExportCtx,
-    frames: &[ExportFrame],
+    geom: &Geom,
+    data: &ExportData,
+    text_layers: &[Option<TextRaster>],
     path: &Path,
     progress: &impl Fn(f32),
 ) -> Result<(), String> {
+    let frames = &data.frames;
     let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
-    let mut enc = png::Encoder::new(BufWriter::new(file), ctx.out_w, ctx.out_h);
+    let mut enc = png::Encoder::new(BufWriter::new(file), geom.out_w, geom.out_h);
     enc.set_color(png::ColorType::Rgba);
     enc.set_depth(png::BitDepth::Eight);
     enc.set_animated(frames.len() as u32, 0)
         .map_err(|e| e.to_string())?;
     let mut writer = enc.write_header().map_err(|e| e.to_string())?;
 
-    let mut buf = vec![0u8; ctx.out_w as usize * ctx.out_h as usize * 4];
+    let mut buf = vec![0u8; geom.out_w as usize * geom.out_h as usize * 4];
     let n = frames.len();
     for (i, fr) in frames.iter().enumerate() {
-        ensure_available(&fr.pixels, ctx.img_w, ctx.img_h)?;
-        let fctx = ExportCtx {
-            pixels: &fr.pixels,
-            ..*ctx
-        };
+        let processed = process_frame(data, text_layers, &fr.pixels)?;
+        let fctx = ctx_with(geom, &processed);
         render_into(&mut buf, &fctx);
         let ms = (fr.delay.as_millis().min(u16::MAX as u128) as u16).max(1);
         writer
@@ -251,37 +295,36 @@ fn encode_apng(
 }
 
 fn encode_gif(
-    ctx: &ExportCtx,
-    frames: &[ExportFrame],
+    geom: &Geom,
+    data: &ExportData,
+    text_layers: &[Option<TextRaster>],
     path: &Path,
     progress: &impl Fn(f32),
 ) -> Result<(), String> {
-    if ctx.out_w > u16::MAX as u32 || ctx.out_h > u16::MAX as u32 {
+    if geom.out_w > u16::MAX as u32 || geom.out_h > u16::MAX as u32 {
         return Err("Image is too large for the GIF format (max 65535 px).".to_string());
     }
 
+    let frames = &data.frames;
     let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
     let mut enc = gif::Encoder::new(
         BufWriter::new(file),
-        ctx.out_w as u16,
-        ctx.out_h as u16,
+        geom.out_w as u16,
+        geom.out_h as u16,
         &[],
     )
     .map_err(|e| e.to_string())?;
     enc.set_repeat(gif::Repeat::Infinite)
         .map_err(|e| e.to_string())?;
 
-    let mut buf = vec![0u8; ctx.out_w as usize * ctx.out_h as usize * 4];
+    let mut buf = vec![0u8; geom.out_w as usize * geom.out_h as usize * 4];
     let n = frames.len();
     for (i, fr) in frames.iter().enumerate() {
-        ensure_available(&fr.pixels, ctx.img_w, ctx.img_h)?;
-        let fctx = ExportCtx {
-            pixels: &fr.pixels,
-            ..*ctx
-        };
+        let processed = process_frame(data, text_layers, &fr.pixels)?;
+        let fctx = ctx_with(geom, &processed);
         render_into(&mut buf, &fctx);
         let mut frame =
-            gif::Frame::from_rgba_speed(ctx.out_w as u16, ctx.out_h as u16, &mut buf, 10);
+            gif::Frame::from_rgba_speed(geom.out_w as u16, geom.out_h as u16, &mut buf, 10);
         frame.delay = (fr.delay.as_millis() / 10).clamp(1, u16::MAX as u128) as u16;
         frame.dispose = gif::DisposalMethod::Background;
         enc.write_frame(&frame).map_err(|e| e.to_string())?;
@@ -311,21 +354,10 @@ fn fill_row(row: &mut [u8], oy: u32, ctx: &ExportCtx) {
         }
 
         let src = (fy as usize * ctx.img_w as usize + fx as usize) * 4;
-        let p = &ctx.pixels[src..src + 4];
-        let raw = cpu::pixel_to_f32(p);
-        let uv = [fx as f32 / ctx.img_w as f32, fy as f32 / ctx.img_h as f32];
-        let result = cpu::apply_modifiers_with_text(
-            ctx.modifiers,
-            ctx.text_layers,
-            ctx.pixels,
-            ctx.img_w,
-            ctx.img_h,
-            fx as f32 + 0.5,
-            fy as f32 + 0.5,
-            uv,
-            raw,
-        );
-        row[out..out + 4].copy_from_slice(&cpu::f32_to_pixel(result));
+        match ctx.processed.get(src..src + 4) {
+            Some(p) => row[out..out + 4].copy_from_slice(p),
+            None => row[out..out + 4].copy_from_slice(&[0, 0, 0, 0]),
+        }
     }
 }
 
@@ -432,6 +464,100 @@ mod tests {
         assert!(
             green_only < white,
             "text dominated by green fringe (green-only {green_only} vs white {white})"
+        );
+    }
+
+    #[test]
+    fn gaussian_blur_spreads_and_conserves_energy() {
+        use crate::modifiers::kinds::GaussianBlur;
+
+        let (w, h) = (64u32, 64u32);
+        let mut px = vec![0u8; (w * h * 4) as usize];
+        let cx = (h / 2 * w + w / 2) as usize * 4;
+        px[cx..cx + 4].copy_from_slice(&[255, 255, 255, 255]);
+        let pixels = Arc::new(px);
+
+        let data = ExportData {
+            frames: vec![ExportFrame {
+                pixels,
+                delay: Duration::ZERO,
+            }],
+            still_index: 0,
+            width: w,
+            height: h,
+            modifiers: vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
+                radius: 4.0,
+            }))],
+            crop: None,
+            rotation: 0,
+        };
+
+        let (_, _, rgba) = render_still_rgba(&data).expect("render");
+
+        let center = rgba[cx];
+        let nonzero = rgba.chunks_exact(4).filter(|p| p[0] > 0).count();
+        assert!(center < 255, "blur should lower the peak (got {center})");
+        assert!(center > 0, "center should stay non-zero (got {center})");
+        assert!(
+            nonzero > 9,
+            "blur should spread to many pixels (got {nonzero})"
+        );
+    }
+
+    fn fnv1a(bytes: &[u8]) -> u64 {
+        let mut h = 0xcbf29ce484222325u64;
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h
+    }
+
+    fn gradient(w: u32, h: u32) -> Arc<Vec<u8>> {
+        let mut px = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let o = ((y * w + x) * 4) as usize;
+                px[o] = (x * 255 / w.max(1)) as u8;
+                px[o + 1] = (y * 255 / h.max(1)) as u8;
+                px[o + 2] = ((x + y) * 255 / (w + h).max(1)) as u8;
+                px[o + 3] = 255;
+            }
+        }
+        Arc::new(px)
+    }
+
+    #[test]
+    fn mixed_chain_render_is_byte_stable() {
+        use crate::modifiers::kinds::{ChromaticAberration, Exposure, GaussianBlur, Posterize};
+
+        let (w, h) = (96u32, 72u32);
+        let data = ExportData {
+            frames: vec![ExportFrame {
+                pixels: gradient(w, h),
+                delay: Duration::ZERO,
+            }],
+            still_index: 0,
+            width: w,
+            height: h,
+            modifiers: vec![
+                Modifier::new(ModifierKind::Exposure(Exposure { exposure: 0.5 })),
+                Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 3.0 })),
+                Modifier::new(ModifierKind::ChromaticAberration(ChromaticAberration {
+                    amount: 8.0,
+                })),
+                Modifier::new(ModifierKind::Posterize(Posterize { levels: 6 })),
+            ],
+            crop: None,
+            rotation: 0,
+        };
+
+        let (ow, oh, rgba) = render_still_rgba(&data).expect("render");
+        assert_eq!((ow, oh), (w, h));
+        assert_eq!(
+            fnv1a(&rgba),
+            0xb183c9457bb99f15,
+            "mixed-chain render output changed"
         );
     }
 }
