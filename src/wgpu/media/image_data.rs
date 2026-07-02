@@ -929,7 +929,11 @@ mod tests {
         let px = img.pixels_snapshot();
         for i in 0..4 {
             let o = i * 4;
-            assert_eq!(&px[o..o + 4], &[gray[i], gray[i], gray[i], 255], "pixel {i}");
+            assert_eq!(
+                &px[o..o + 4],
+                &[gray[i], gray[i], gray[i], 255],
+                "pixel {i}"
+            );
         }
     }
 }
