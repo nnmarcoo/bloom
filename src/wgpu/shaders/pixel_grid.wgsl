@@ -1,10 +1,10 @@
-struct Uniforms {
+struct PixelGridUniforms {
     screen_to_img: mat4x4<f32>,
     viewport: vec4<f32>,
     bounds_img: vec4<f32>,
 };
 
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(0) var<uniform> u: PixelGridUniforms;
 
 const GRID_STRENGTH: f32 = 0.5;
 
@@ -25,14 +25,14 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let vp = uniforms.viewport;
+    let vp = u.viewport;
     let ndc = vec2<f32>(
         (in.position.x - vp.x) / vp.z * 2.0 - 1.0,
         1.0 - (in.position.y - vp.y) / vp.w * 2.0,
     );
-    let img = (uniforms.screen_to_img * vec4<f32>(ndc, 0.0, 1.0)).xy;
+    let img = (u.screen_to_img * vec4<f32>(ndc, 0.0, 1.0)).xy;
 
-    let b = uniforms.bounds_img;
+    let b = u.bounds_img;
     if img.x < b.x || img.y < b.y || img.x > b.z || img.y > b.w {
         discard;
     }

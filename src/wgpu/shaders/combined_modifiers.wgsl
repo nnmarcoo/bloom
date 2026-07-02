@@ -7,6 +7,12 @@ struct ModUniforms {
     _pad0: u32,
     _pad1: u32,
     _pad2: u32,
+    proc_origin: vec2<f32>,
+    proc_size: vec2<f32>,
+    src_origin: vec2<f32>,
+    src_size: vec2<f32>,
+    full_size_px: vec2<f32>,
+    _pad3: vec2<f32>,
     entries: array<ModEntry, 32>,
 }
 
@@ -89,7 +95,7 @@ fn grain_value(cx: i32, cy: i32, wx: f32, wy: f32, seed: i32) -> f32 {
     return mix(mix(n00, n10, wx), mix(n01, n11, wx), wy);
 }
 
-fn apply_entry(e: ModEntry, tile_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
+fn apply_entry(e: ModEntry, full_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
     let kind = bitcast<u32>(e.data[0].x);
     let p0 = e.data[0].y;
     let p1 = e.data[0].z;
@@ -125,7 +131,6 @@ fn apply_entry(e: ModEntry, tile_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
             c = vec4<f32>(hsl_to_rgb(hsl), c.a);
         }
         case 5u: {
-            let full_uv = tile_uv * vec2<f32>(p5, p6) + vec2<f32>(p3, p4);
             let dist = length(full_uv - vec2<f32>(0.5, 0.5)) * 2.0;
             let inner = max(p1 - p2, 0.0);
             let vignette = 1.0 - smoothstep(inner, p1 + 0.0001, dist);
@@ -154,8 +159,8 @@ fn apply_entry(e: ModEntry, tile_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
             c = vec4<f32>(c.r + p0, c.g + p1, c.b + p2, c.a);
         }
         case 10u: {
-            let full_px_x = p3 + tile_uv.x * p5;
-            let full_px_y = p4 + tile_uv.y * p6;
+            let full_px_x = full_uv.x * u.full_size_px.x;
+            let full_px_y = full_uv.y * u.full_size_px.y;
             let iseed = i32(p2);
             let sz = max(p1, 0.5);
             let gx = full_px_x / sz;
@@ -183,7 +188,6 @@ fn apply_entry(e: ModEntry, tile_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
             c = vec4<f32>(c.rgb + grain, c.a);
         }
         case 16u: {
-            let full_uv = tile_uv * vec2<f32>(p4, p5) + vec2<f32>(p2, p3);
             let cs = cos(p1);
             let sn = sin(p1);
             let rot_uv = vec2<f32>(
@@ -206,10 +210,12 @@ fn apply_entry(e: ModEntry, tile_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    var c = textureSample(t_image, s_image, in.uv);
+    let full_uv = u.proc_origin + in.uv * u.proc_size;
+    let src_uv = (full_uv - u.src_origin) / u.src_size;
+    var c = textureSample(t_image, s_image, src_uv);
 
     for (var i = 0u; i < u.count; i++) {
-        c = apply_entry(u.entries[i], in.uv, c);
+        c = apply_entry(u.entries[i], full_uv, c);
     }
 
     return clamp(c, vec4<f32>(0.0), vec4<f32>(1.0));

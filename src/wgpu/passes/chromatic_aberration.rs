@@ -5,15 +5,17 @@ use iced::wgpu::{
     Sampler, ShaderStages, StoreOp, TextureFormat, TextureView,
 };
 
-use crate::{modifiers::gpu::TileInfo, wgpu::gpu};
+use crate::{modifiers::gpu::UvRect, wgpu::gpu};
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct CaUniforms {
     amount: f32,
-    tile_origin: [f32; 2],
-    tile_size: [f32; 2],
-    _pad: [f32; 3],
+    _pad0: f32,
+    proc_origin: [f32; 2],
+    proc_size: [f32; 2],
+    src_origin: [f32; 2],
+    src_size: [f32; 2],
 }
 
 pub struct ChromaticAberrationPass {
@@ -61,21 +63,19 @@ impl ChromaticAberrationPass {
         encoder: &mut CommandEncoder,
         uniform_buffer: &Buffer,
         amount: f32,
-        tile: &TileInfo,
+        full_w: f32,
+        proc: UvRect,
+        src: UvRect,
         input: &TextureView,
         output: &TextureView,
     ) {
         let uniforms = CaUniforms {
-            amount: amount / tile.full_w as f32,
-            tile_origin: [
-                tile.tile_x as f32 / tile.full_w as f32,
-                tile.tile_y as f32 / tile.full_h as f32,
-            ],
-            tile_size: [
-                tile.tile_w as f32 / tile.full_w as f32,
-                tile.tile_h as f32 / tile.full_h as f32,
-            ],
-            _pad: [0.0; 3],
+            amount: amount / full_w,
+            _pad0: 0.0,
+            proc_origin: proc.origin,
+            proc_size: proc.size,
+            src_origin: src.origin,
+            src_size: src.size,
         };
         gpu::write_uniform(queue, uniform_buffer, &uniforms);
         let bg = gpu::standard_bind_group(

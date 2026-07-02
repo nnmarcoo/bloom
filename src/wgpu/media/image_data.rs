@@ -23,13 +23,16 @@ use image::{
 use jpeg2k::Image as Jp2Image;
 use jxl_oxide::JxlImage;
 use ktx2::{Reader as Ktx2Reader, SupercompressionScheme};
-use psd::Psd;
 use resvg;
 use rgb::ComponentBytes;
 use tiny_skia::Pixmap;
 use usvg::Options as SvgOptions;
 use xcf_rs::data::xcf::Xcf;
 use zip::ZipArchive;
+use zune_core::bytestream::ZCursor;
+use zune_core::colorspace::ColorSpace;
+use zune_core::result::DecodingResult;
+use zune_psd::PSDDecoder;
 
 use super::animation::{Animation, Frame};
 use super::exif_data::ExifData;
@@ -257,8 +260,58 @@ impl ImageData {
 
     pub fn load_psd(path: &Path) -> Result<Self, ImageError> {
         let bytes = std::fs::read(path).map_err(ImageError::IoError)?;
-        let psd = Psd::from_bytes(&bytes).map_err(|e| ImageError::IoError(Error::other(e)))?;
-        Ok(Self::new(psd.rgba(), psd.width(), psd.height()))
+        let mut decoder = PSDDecoder::new(ZCursor::new(&bytes));
+        let pixels = decoder
+            .decode()
+            .map_err(|e| ImageError::IoError(Error::other(format!("{e:?}"))))?;
+        let (width, height) = decoder
+            .dimensions()
+            .ok_or_else(|| ImageError::IoError(Error::other("psd: missing dimensions")))?;
+        let channels = match decoder.colorspace() {
+            Some(ColorSpace::RGBA) => 4,
+            Some(ColorSpace::RGB) => 3,
+            Some(ColorSpace::LumaA) => 2,
+            Some(ColorSpace::Luma) => 1,
+            other => {
+                return Err(ImageError::IoError(Error::other(format!(
+                    "psd: unsupported color mode {other:?}"
+                ))));
+            }
+        };
+
+        let samples: Vec<u8> = match pixels {
+            DecodingResult::U8(v) => v,
+            DecodingResult::U16(v) => v.into_iter().map(|s| (s >> 8) as u8).collect(),
+            _ => {
+                return Err(ImageError::IoError(Error::other(
+                    "psd: unsupported sample type",
+                )));
+            }
+        };
+
+        let px_count = width * height;
+        if samples.len() < px_count * channels {
+            return Err(ImageError::IoError(Error::other(
+                "psd: pixel data shorter than image dimensions",
+            )));
+        }
+        let mut rgba = vec![0u8; px_count * 4];
+        for i in 0..px_count {
+            let s = i * channels;
+            let (r, g, b, a) = match channels {
+                1 => (samples[s], samples[s], samples[s], 255),
+                2 => (samples[s], samples[s], samples[s], samples[s + 1]),
+                3 => (samples[s], samples[s + 1], samples[s + 2], 255),
+                _ => (samples[s], samples[s + 1], samples[s + 2], samples[s + 3]),
+            };
+            let d = i * 4;
+            rgba[d] = r;
+            rgba[d + 1] = g;
+            rgba[d + 2] = b;
+            rgba[d + 3] = a;
+        }
+
+        Ok(Self::new(rgba, width as u32, height as u32))
     }
 
     pub fn load_kra(path: &Path) -> Result<Self, ImageError> {
@@ -817,6 +870,70 @@ impl ImageData {
             MediaData::Image(img)
         } else {
             media
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn raw_psd(width: u16, height: u16, color_mode: u16, planes: &[&[u8]]) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(b"8BPS");
+        b.extend_from_slice(&1u16.to_be_bytes());
+        b.extend_from_slice(&[0u8; 6]);
+        b.extend_from_slice(&(planes.len() as u16).to_be_bytes());
+        b.extend_from_slice(&(height as u32).to_be_bytes());
+        b.extend_from_slice(&(width as u32).to_be_bytes());
+        b.extend_from_slice(&8u16.to_be_bytes());
+        b.extend_from_slice(&color_mode.to_be_bytes());
+        b.extend_from_slice(&0u32.to_be_bytes());
+        b.extend_from_slice(&0u32.to_be_bytes());
+        b.extend_from_slice(&0u32.to_be_bytes());
+        b.extend_from_slice(&0u16.to_be_bytes());
+        for plane in planes {
+            b.extend_from_slice(plane);
+        }
+        b
+    }
+
+    fn load_bytes(name: &str, bytes: &[u8]) -> Result<ImageData, ImageError> {
+        let path = std::env::temp_dir().join(name);
+        std::fs::write(&path, bytes).unwrap();
+        let result = ImageData::load_psd(&path);
+        let _ = std::fs::remove_file(&path);
+        result
+    }
+
+    #[test]
+    fn psd_grayscale_with_alpha_channel_loads() {
+        let gray = [10u8, 20, 30, 40];
+        let alpha = [255u8, 128, 0, 64];
+        let bytes = raw_psd(2, 2, 1, &[&gray, &alpha]);
+        let img = load_bytes("bloom-test-luma-a.psd", &bytes).expect("grayscale+alpha psd loads");
+        assert_eq!((img.width, img.height), (2, 2));
+        let px = img.pixels_snapshot();
+        for i in 0..4 {
+            let o = i * 4;
+            assert_eq!(&px[o..o + 3], &[gray[i], gray[i], gray[i]], "pixel {i}");
+            assert_eq!(px[o + 3], 255, "alpha {i} (zune-psd drops grayscale alpha)");
+        }
+    }
+
+    #[test]
+    fn psd_grayscale_loads_as_luma() {
+        let gray = [0u8, 85, 170, 255];
+        let bytes = raw_psd(4, 1, 1, &[&gray]);
+        let img = load_bytes("bloom-test-luma.psd", &bytes).expect("grayscale psd loads");
+        let px = img.pixels_snapshot();
+        for i in 0..4 {
+            let o = i * 4;
+            assert_eq!(
+                &px[o..o + 4],
+                &[gray[i], gray[i], gray[i], 255],
+                "pixel {i}"
+            );
         }
     }
 }

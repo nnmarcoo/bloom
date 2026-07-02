@@ -10,6 +10,10 @@ struct TextUniforms {
     px_range: f32,
     _pad0: f32,
     color: vec4<f32>,
+    proc_origin: vec2<f32>,
+    proc_size: vec2<f32>,
+    src_origin: vec2<f32>,
+    src_size: vec2<f32>,
 }
 
 struct Instance {
@@ -84,5 +88,7 @@ fn vs_copy(@builtin(vertex_index) vi: u32) -> CopyOut {
 
 @fragment
 fn fs_copy(in: CopyOut) -> @location(0) vec4<f32> {
-    return textureSample(t_atlas, s_atlas, in.uv);
+    let full_uv = u.proc_origin + in.uv * u.proc_size;
+    let src_uv = (full_uv - u.src_origin) / u.src_size;
+    return textureSample(t_atlas, s_atlas, src_uv);
 }

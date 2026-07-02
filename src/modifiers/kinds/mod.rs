@@ -48,6 +48,7 @@ use iced::{Element, Length};
 
 use crate::app::Message;
 use crate::widgets::angle_dial::AngleDial;
+use crate::widgets::number_entry::NumberEntry;
 use crate::widgets::value_slider::{Fmt, Track, ValueSlider};
 
 const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
@@ -81,6 +82,34 @@ fn value_row<'a>(
             .step(step)
             .format(fmt),
     ]
+    .align_y(Vertical::Center)
+    .spacing(4)
+    .into()
+}
+
+fn number_row<'a>(
+    label: &'a str,
+    value: f32,
+    min: f32,
+    step: f32,
+    suffix: &'static str,
+    on_change: impl Fn(f32) -> Message + 'static,
+) -> Element<'a, Message> {
+    row![
+        iced::widget::text(label)
+            .size(10)
+            .width(Length::Fixed(58.0))
+            .align_x(Horizontal::Left),
+        iced::widget::container(
+            NumberEntry::new(value, on_change)
+                .range(min, f32::INFINITY)
+                .step(step)
+                .suffix(suffix)
+                .width(70.0)
+        )
+        .center_x(Length::Fill),
+    ]
+    .width(Length::Fill)
     .align_y(Vertical::Center)
     .spacing(4)
     .into()

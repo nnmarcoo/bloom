@@ -13,7 +13,11 @@ use iced::wgpu::{
 use std::borrow::Cow;
 
 use crate::{
-    modifiers::{gpu::TileInfo, kinds::Text, text_render},
+    modifiers::{
+        gpu::{TileInfo, UvRect},
+        kinds::Text,
+        text_render,
+    },
     wgpu::gpu,
 };
 
@@ -42,6 +46,10 @@ struct TextUniforms {
     px_range: f32,
     _pad0: f32,
     color: [f32; 4],
+    proc_origin: [f32; 2],
+    proc_size: [f32; 2],
+    src_origin: [f32; 2],
+    src_size: [f32; 2],
 }
 
 pub struct TextLayer {
@@ -346,6 +354,8 @@ impl TextPass {
         uniform_buffer: &Buffer,
         layer: &TextLayer,
         tile: &TileInfo,
+        proc: UvRect,
+        src: UvRect,
         input: &TextureView,
         output: &TextureView,
     ) {
@@ -378,18 +388,24 @@ impl TextPass {
             copy.draw(0..4, 0..1);
         }
 
+        let full_w = tile.full_w as f32;
+        let full_h = tile.full_h as f32;
         let uniforms = TextUniforms {
-            anchor: [layer.x * tile.full_w as f32, layer.y * tile.full_h as f32],
+            anchor: [layer.x * full_w, layer.y * full_h],
             block_size: [layer.block_w, layer.block_h],
             pivot: [0.5, 0.5],
-            tile_origin: [tile.tile_x as f32, tile.tile_y as f32],
-            tile_size: [tile.tile_w as f32, tile.tile_h as f32],
+            tile_origin: [proc.origin[0] * full_w, proc.origin[1] * full_h],
+            tile_size: [proc.size[0] * full_w, proc.size[1] * full_h],
             block_min: layer.block_min,
             rotation: layer.rotation.to_radians(),
             opacity: layer.opacity,
             px_range: PX_RANGE,
             _pad0: 0.0,
             color: [layer.color[0], layer.color[1], layer.color[2], 1.0],
+            proc_origin: proc.origin,
+            proc_size: proc.size,
+            src_origin: src.origin,
+            src_size: src.size,
         };
         gpu::write_uniform(queue, uniform_buffer, &uniforms);
 

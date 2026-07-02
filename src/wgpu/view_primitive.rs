@@ -13,13 +13,13 @@ use crate::{
     wgpu::{
         media::image_data::ImageData,
         passes::{checkerboard::CheckerboardUniforms, pixel_grid::PixelGridUniforms},
-        view_pipeline::{Uniforms, ViewPipeline},
+        view_pipeline::{DisplayUniforms, ViewPipeline},
     },
 };
 
 #[derive(Debug)]
 pub struct ViewPrimitive {
-    pub uniforms: Uniforms,
+    pub uniforms: DisplayUniforms,
     pub image: Option<Arc<ImageData>>,
     pub scale: f32,
     pub pan_ndc: Vec2,
@@ -33,6 +33,7 @@ pub struct ViewPrimitive {
     pub modifiers: Arc<Vec<Modifier>>,
     pub dirty: bool,
     pub pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
+    pub reprocess_pending: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Primitive for ViewPrimitive {
@@ -81,6 +82,8 @@ impl Primitive for ViewPrimitive {
             pipeline.update_pixel_grid(queue, &grid);
         }
         pipeline.prepare_modifiers(device, queue, &self.modifiers, self.dirty);
+        self.reprocess_pending
+            .store(pipeline.reprocess_pending(), Ordering::Release);
     }
 
     fn render(

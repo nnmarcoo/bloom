@@ -5,7 +5,7 @@ use iced::Element;
 use iced::widget::{column, text_input};
 
 use crate::app::{EditMsg, Message};
-use crate::modifiers::{InputClass, ModifierImpl, ModifierParam};
+use crate::modifiers::{InputRequest, ModifierImpl, ModifierParam};
 use crate::widgets::number_entry::NumberEntry;
 use crate::widgets::value_slider::Fmt;
 
@@ -104,8 +104,8 @@ impl ModifierImpl for Text {
         !self.content.is_empty() && self.opacity > 0.0
     }
 
-    fn input_class(&self) -> InputClass {
-        InputClass::NonPointwise
+    fn input_request(&self) -> InputRequest {
+        InputRequest::FullFrame
     }
 
     fn apply_param(&mut self, param: ModifierParam, _img_size: Option<(u32, u32)>) {

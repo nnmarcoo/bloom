@@ -4,13 +4,14 @@ use bytemuck::{Pod, bytes_of};
 use iced::wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer, BufferBindingType,
-    BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, CommandEncoder, Device,
-    Extent3d, FragmentState, LoadOp, MultisampleState, Operations, PipelineCompilationOptions,
-    PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue, RenderPassColorAttachment,
-    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType,
-    ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Texture, TextureDescriptor,
-    TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
-    TextureViewDescriptor, TextureViewDimension, VertexState,
+    BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, CommandEncoder, ComputePipeline,
+    ComputePipelineDescriptor, Device, Extent3d, FragmentState, LoadOp, MultisampleState,
+    Operations, PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState,
+    PrimitiveTopology, Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
+    RenderPipelineDescriptor, Sampler, SamplerBindingType, ShaderModuleDescriptor, ShaderSource,
+    ShaderStages, StoreOp, Texture, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension,
+    VertexState,
 };
 
 pub fn fullscreen_pipeline(
@@ -301,6 +302,68 @@ pub fn hw_mip_count(w: u32, h: u32) -> u32 {
         return 1;
     }
     32 - max_dim.leading_zeros()
+}
+
+pub fn compute_pipeline(
+    device: &Device,
+    shader_src: &str,
+    entry_point: &str,
+    label: Option<&str>,
+    bind_group_layout: &BindGroupLayout,
+) -> ComputePipeline {
+    let shader = device.create_shader_module(ShaderModuleDescriptor {
+        label,
+        source: ShaderSource::Wgsl(Cow::Borrowed(shader_src)),
+    });
+    let layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+        label,
+        bind_group_layouts: &[bind_group_layout],
+        push_constant_ranges: &[],
+    });
+    device.create_compute_pipeline(&ComputePipelineDescriptor {
+        label,
+        layout: Some(&layout),
+        module: &shader,
+        entry_point: Some(entry_point),
+        compilation_options: PipelineCompilationOptions::default(),
+        cache: None,
+    })
+}
+
+pub fn storage_buffer(device: &Device, bytes: u64, label: Option<&str>) -> Buffer {
+    device.create_buffer(&BufferDescriptor {
+        label,
+        size: bytes.max(4),
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+#[allow(dead_code)]
+pub fn readback_buffer(device: &Device, bytes: u64, label: Option<&str>) -> Buffer {
+    device.create_buffer(&BufferDescriptor {
+        label,
+        size: bytes.max(4),
+        usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+#[allow(dead_code)]
+pub fn read_buffer_blocking(device: &Device, buffer: &Buffer) -> Vec<u8> {
+    let slice = buffer.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(iced::wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    let _ = device.poll(iced::wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: None,
+    });
+    rx.recv().ok();
+    let data = slice.get_mapped_range().to_vec();
+    buffer.unmap();
+    data
 }
 
 pub fn texture_2d_mipmapped(

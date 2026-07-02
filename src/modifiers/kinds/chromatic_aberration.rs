@@ -5,7 +5,7 @@ use iced::Element;
 use iced::widget::column;
 
 use crate::app::{EditMsg, Message};
-use crate::modifiers::{InputClass, ModifierImpl, ModifierParam};
+use crate::modifiers::{InputRequest, ModifierImpl, ModifierParam};
 use crate::widgets::value_slider::Fmt;
 
 use super::{finish, hash_f32, value_row};
@@ -30,8 +30,8 @@ impl ModifierImpl for ChromaticAberration {
         self.amount != 0.0
     }
 
-    fn input_class(&self) -> InputClass {
-        InputClass::NonPointwise
+    fn input_request(&self) -> InputRequest {
+        InputRequest::FullFrame
     }
 
     fn apply_param(&mut self, param: ModifierParam, _img_size: Option<(u32, u32)>) {
