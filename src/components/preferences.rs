@@ -311,11 +311,14 @@ fn keybind_row<'a>(
             .into()
     } else {
         let label = binding.map(|kb| kb.display()).unwrap_or_else(|| "—".into());
-        button(text(label).size(11))
-            .style(key_chip_style)
-            .on_press(Message::Preference(PreferenceMessage::StartCapture(action)))
-            .padding([4.0, 8.0])
-            .into()
+        with_tooltip(
+            button(text(label).size(11))
+                .style(key_chip_style)
+                .on_press(Message::Preference(PreferenceMessage::StartCapture(action)))
+                .padding([4.0, 8.0]),
+            "Edit keybinding",
+            Position::Top,
+        )
     };
 
     let note = if is_capturing {
