@@ -268,8 +268,9 @@ impl ImageData {
             .dimensions()
             .ok_or_else(|| ImageError::IoError(Error::other("psd: missing dimensions")))?;
         let channels = match decoder.colorspace() {
-            Some(ColorSpace::RGBA) | Some(ColorSpace::LumaA) => 4,
+            Some(ColorSpace::RGBA) => 4,
             Some(ColorSpace::RGB) => 3,
+            Some(ColorSpace::LumaA) => 2,
             Some(ColorSpace::Luma) => 1,
             other => {
                 return Err(ImageError::IoError(Error::other(format!(
@@ -299,6 +300,7 @@ impl ImageData {
             let s = i * channels;
             let (r, g, b, a) = match channels {
                 1 => (samples[s], samples[s], samples[s], 255),
+                2 => (samples[s], samples[s], samples[s], samples[s + 1]),
                 3 => (samples[s], samples[s + 1], samples[s + 2], 255),
                 _ => (samples[s], samples[s + 1], samples[s + 2], samples[s + 3]),
             };
@@ -868,6 +870,66 @@ impl ImageData {
             MediaData::Image(img)
         } else {
             media
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn raw_psd(width: u16, height: u16, color_mode: u16, planes: &[&[u8]]) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(b"8BPS");
+        b.extend_from_slice(&1u16.to_be_bytes());
+        b.extend_from_slice(&[0u8; 6]);
+        b.extend_from_slice(&(planes.len() as u16).to_be_bytes());
+        b.extend_from_slice(&(height as u32).to_be_bytes());
+        b.extend_from_slice(&(width as u32).to_be_bytes());
+        b.extend_from_slice(&8u16.to_be_bytes());
+        b.extend_from_slice(&color_mode.to_be_bytes());
+        b.extend_from_slice(&0u32.to_be_bytes());
+        b.extend_from_slice(&0u32.to_be_bytes());
+        b.extend_from_slice(&0u32.to_be_bytes());
+        b.extend_from_slice(&0u16.to_be_bytes());
+        for plane in planes {
+            b.extend_from_slice(plane);
+        }
+        b
+    }
+
+    fn load_bytes(name: &str, bytes: &[u8]) -> Result<ImageData, ImageError> {
+        let path = std::env::temp_dir().join(name);
+        std::fs::write(&path, bytes).unwrap();
+        let result = ImageData::load_psd(&path);
+        let _ = std::fs::remove_file(&path);
+        result
+    }
+
+    #[test]
+    fn psd_grayscale_with_alpha_channel_loads() {
+        let gray = [10u8, 20, 30, 40];
+        let alpha = [255u8, 128, 0, 64];
+        let bytes = raw_psd(2, 2, 1, &[&gray, &alpha]);
+        let img = load_bytes("bloom-test-luma-a.psd", &bytes).expect("grayscale+alpha psd loads");
+        assert_eq!((img.width, img.height), (2, 2));
+        let px = img.pixels_snapshot();
+        for i in 0..4 {
+            let o = i * 4;
+            assert_eq!(&px[o..o + 3], &[gray[i], gray[i], gray[i]], "pixel {i}");
+            assert_eq!(px[o + 3], 255, "alpha {i} (zune-psd drops grayscale alpha)");
+        }
+    }
+
+    #[test]
+    fn psd_grayscale_loads_as_luma() {
+        let gray = [0u8, 85, 170, 255];
+        let bytes = raw_psd(4, 1, 1, &[&gray]);
+        let img = load_bytes("bloom-test-luma.psd", &bytes).expect("grayscale psd loads");
+        let px = img.pixels_snapshot();
+        for i in 0..4 {
+            let o = i * 4;
+            assert_eq!(&px[o..o + 4], &[gray[i], gray[i], gray[i], 255], "pixel {i}");
         }
     }
 }

@@ -9,6 +9,8 @@ use crate::modifiers::{InputRequest, ModifierImpl, ModifierParam};
 
 use super::{finish, hash_f32, number_row};
 
+const MAX_RADIUS: f32 = 500.0;
+
 #[derive(Debug, Clone)]
 pub struct GaussianBlur {
     pub radius: f32,
@@ -37,7 +39,7 @@ impl ModifierImpl for GaussianBlur {
 
     fn apply_param(&mut self, param: ModifierParam, _img_size: Option<(u32, u32)>) {
         if let ModifierParam::GaussianBlurRadius(v) = param {
-            self.radius = v;
+            self.radius = v.clamp(0.0, MAX_RADIUS);
         }
     }
 
