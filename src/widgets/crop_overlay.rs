@@ -10,6 +10,7 @@ use iced::{Background, Border, Color, Element, Event, Length, Rectangle, Rendere
 
 use crate::app::{EditMsg, Message};
 use crate::wgpu::view_program::ViewProgram;
+use crate::widgets::viewport_nav::{self, NavState};
 
 const OVERLAY_ALPHA: f32 = 0.55;
 const BORDER_W: f32 = 1.5;
@@ -41,6 +42,7 @@ struct DragState {
 struct State {
     drag: Option<DragState>,
     modifiers: keyboard::Modifiers,
+    nav: NavState,
 }
 
 pub struct CropOverlay {
@@ -313,13 +315,11 @@ impl CropOverlay {
 
 fn clamp_rect(nx: f32, ny: f32, nw: f32, nh: f32, img_w: f32, img_h: f32) -> [f32; 4] {
     const MIN: f32 = 1.0;
-    let nw = nw.round().clamp(MIN, img_w);
-    let nh = nh.round().clamp(MIN, img_h);
-    let nx = nx.round().clamp(0.0, img_w - nw);
-    let ny = ny.round().clamp(0.0, img_h - nh);
-    let nw = nw.min(img_w - nx).max(MIN);
-    let nh = nh.min(img_h - ny).max(MIN);
-    [nx, ny, nw, nh]
+    let right = (nx + nw).round().clamp(MIN, img_w);
+    let bottom = (ny + nh).round().clamp(MIN, img_h);
+    let nx = nx.round().clamp(0.0, right - MIN);
+    let ny = ny.round().clamp(0.0, bottom - MIN);
+    [nx, ny, right - nx, bottom - ny]
 }
 
 fn fill(renderer: &mut Renderer, x: f32, y: f32, w: f32, h: f32, color: Color) {
@@ -398,6 +398,13 @@ impl Widget<Message, Theme, Renderer> for CropOverlay {
         let state = tree.state.downcast_mut::<State>();
         let bounds = layout.bounds();
         let local = cursor.position_in(bounds).map(|p| vec2(p.x, p.y));
+
+        if state.drag.is_none()
+            && viewport_nav::handle(&mut state.nav, event, bounds, cursor, true, shell)
+        {
+            shell.request_redraw();
+            return;
+        }
 
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
             state.modifiers = *modifiers;
@@ -585,6 +592,9 @@ impl Widget<Message, Theme, Renderer> for CropOverlay {
         _renderer: &Renderer,
     ) -> mouse::Interaction {
         let state = tree.state.downcast_ref::<State>();
+        if let Some(nav) = state.nav.interaction() {
+            return nav;
+        }
         if let Some(drag) = &state.drag {
             return match drag.handle {
                 Handle::Inside => mouse::Interaction::Grabbing,

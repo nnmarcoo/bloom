@@ -8,7 +8,7 @@ use iced::{Element, Length};
 use crate::app::Message;
 use crate::styles::{
     BUTTON_SIZE, PAD, TOOLTIP_DELAY, icon_button_active_style, icon_button_style,
-    plain_icon_button_style, svg_disabled_style, svg_style, tooltip_style,
+    plain_icon_button_style, svg_style, tooltip_style,
 };
 
 pub fn format_duration(d: Duration) -> String {
@@ -56,18 +56,6 @@ pub fn svg_button_plain<'a>(icon: &'static [u8], msg: Message) -> Element<'a, Me
     .padding(PAD)
     .style(plain_icon_button_style)
     .on_press(msg)
-    .into()
-}
-
-pub fn svg_button_disabled<'a>(icon: &'static [u8]) -> Element<'a, Message> {
-    button(
-        svg(Handle::from_memory(icon))
-            .style(svg_disabled_style)
-            .width(Length::Fixed(BUTTON_SIZE))
-            .height(Length::Fixed(BUTTON_SIZE)),
-    )
-    .padding(PAD)
-    .style(plain_icon_button_style)
     .into()
 }
 

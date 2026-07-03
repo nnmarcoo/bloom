@@ -22,7 +22,7 @@ pub use brightness_contrast::BrightnessContrast;
 pub use chromatic_aberration::ChromaticAberration;
 pub use color_balance::ColorBalance;
 pub use crop::Crop;
-pub use drawing::Drawing;
+pub use drawing::{Drawing, Stroke};
 pub use exposure::Exposure;
 pub use gaussian_blur::GaussianBlur;
 pub use grain::Grain;

@@ -1,4 +1,5 @@
 pub mod cpu;
+pub mod drawing_raster;
 pub mod gpu;
 pub mod kinds;
 pub mod pixel_sort;

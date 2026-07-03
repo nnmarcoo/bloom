@@ -5,8 +5,16 @@ use std::time::Duration;
 
 use rayon::prelude::*;
 
+use crate::modifiers::drawing_raster::{self, DrawingRaster, LayerView};
 use crate::modifiers::text_raster::{self, TextRaster};
 use crate::modifiers::{Modifier, cpu};
+
+fn layer_views(layers: &[Option<DrawingRaster>]) -> Vec<Option<LayerView<'_>>> {
+    layers
+        .iter()
+        .map(|l| l.as_ref().map(|r| r.view()))
+        .collect()
+}
 
 pub struct ExportFrame {
     pub pixels: Arc<Vec<u8>>,
@@ -104,12 +112,14 @@ fn ctx_with<'a>(geom: &Geom, processed: &'a [u8]) -> ExportCtx<'a> {
 fn process_frame(
     data: &ExportData,
     text_layers: &[Option<TextRaster>],
+    drawing_layers: &[Option<LayerView<'_>>],
     pixels: &[u8],
 ) -> Result<Vec<u8>, String> {
     ensure_available(pixels, data.width, data.height)?;
     Ok(cpu::render_full(
         &data.modifiers,
         text_layers,
+        drawing_layers,
         pixels,
         data.width,
         data.height,
@@ -118,12 +128,14 @@ fn process_frame(
 
 pub fn render_still_rgba(data: &ExportData) -> Result<(u32, u32, Vec<u8>), String> {
     let text_layers = text_raster::build_layers(&data.modifiers, data.width, data.height);
+    let drawing_rasters = drawing_raster::build_layers(&data.modifiers, data.width, data.height);
+    let drawing_layers = layer_views(&drawing_rasters);
     let geom = geom_of(data);
     let still = data
         .frames
         .get(data.still_index)
         .ok_or_else(|| "No frame available.".to_string())?;
-    let processed = process_frame(data, &text_layers, &still.pixels)?;
+    let processed = process_frame(data, &text_layers, &drawing_layers, &still.pixels)?;
     let ctx = ctx_with(&geom, &processed);
     let mut rgba = vec![0u8; ctx.out_w as usize * ctx.out_h as usize * 4];
     render_into(&mut rgba, &ctx);
@@ -132,6 +144,8 @@ pub fn render_still_rgba(data: &ExportData) -> Result<(u32, u32, Vec<u8>), Strin
 
 pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Result<String, String> {
     let text_layers = text_raster::build_layers(&data.modifiers, data.width, data.height);
+    let drawing_rasters = drawing_raster::build_layers(&data.modifiers, data.width, data.height);
+    let drawing_layers = layer_views(&drawing_rasters);
     let geom = geom_of(&data);
 
     let ext = path
@@ -141,14 +155,14 @@ pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Resul
         .to_ascii_lowercase();
 
     match ext.as_str() {
-        "gif" => encode_gif(&geom, &data, &text_layers, path, &progress)?,
-        "apng" => encode_apng(&geom, &data, &text_layers, path, &progress)?,
+        "gif" => encode_gif(&geom, &data, &text_layers, &drawing_layers, path, &progress)?,
+        "apng" => encode_apng(&geom, &data, &text_layers, &drawing_layers, path, &progress)?,
         _ => {
             let still = data
                 .frames
                 .get(data.still_index)
                 .ok_or_else(|| "No frame available.".to_string())?;
-            let processed = process_frame(&data, &text_layers, &still.pixels)?;
+            let processed = process_frame(&data, &text_layers, &drawing_layers, &still.pixels)?;
             let ctx = ctx_with(&geom, &processed);
             match ext.as_str() {
                 "jpg" | "jpeg" => encode_jpeg(&ctx, path, &progress)?,
@@ -261,10 +275,12 @@ fn encode_jpeg(ctx: &ExportCtx, path: &Path, progress: &impl Fn(f32)) -> Result<
         .map_err(|e| e.to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_apng(
     geom: &Geom,
     data: &ExportData,
     text_layers: &[Option<TextRaster>],
+    drawing_layers: &[Option<LayerView<'_>>],
     path: &Path,
     progress: &impl Fn(f32),
 ) -> Result<(), String> {
@@ -280,7 +296,7 @@ fn encode_apng(
     let mut buf = vec![0u8; geom.out_w as usize * geom.out_h as usize * 4];
     let n = frames.len();
     for (i, fr) in frames.iter().enumerate() {
-        let processed = process_frame(data, text_layers, &fr.pixels)?;
+        let processed = process_frame(data, text_layers, drawing_layers, &fr.pixels)?;
         let fctx = ctx_with(geom, &processed);
         render_into(&mut buf, &fctx);
         let ms = (fr.delay.as_millis().min(u16::MAX as u128) as u16).max(1);
@@ -294,10 +310,12 @@ fn encode_apng(
     writer.finish().map_err(|e| e.to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_gif(
     geom: &Geom,
     data: &ExportData,
     text_layers: &[Option<TextRaster>],
+    drawing_layers: &[Option<LayerView<'_>>],
     path: &Path,
     progress: &impl Fn(f32),
 ) -> Result<(), String> {
@@ -320,7 +338,7 @@ fn encode_gif(
     let mut buf = vec![0u8; geom.out_w as usize * geom.out_h as usize * 4];
     let n = frames.len();
     for (i, fr) in frames.iter().enumerate() {
-        let processed = process_frame(data, text_layers, &fr.pixels)?;
+        let processed = process_frame(data, text_layers, drawing_layers, &fr.pixels)?;
         let fctx = ctx_with(geom, &processed);
         render_into(&mut buf, &fctx);
         let mut frame =
@@ -401,6 +419,50 @@ mod tests {
 
         let lit = rgba.chunks_exact(4).filter(|p| p[0] > 200).count();
         assert!(lit > 0, "expected white text pixels in export, found none");
+    }
+
+    #[test]
+    fn drawing_appears_in_still_export() {
+        use crate::modifiers::kinds::{Drawing, Stroke};
+
+        let (w, h) = (128u32, 128u32);
+        let pixels = Arc::new(vec![0u8; (w * h * 4) as usize]);
+
+        let drawing = Drawing {
+            strokes: vec![Stroke {
+                points: vec![[0.2, 0.5], [0.8, 0.5]],
+                size: 12.0,
+                hardness: 0.8,
+                opacity: 1.0,
+                color: [1.0, 0.0, 0.0],
+            }],
+            ..Drawing::default()
+        };
+        let data = ExportData {
+            frames: vec![ExportFrame {
+                pixels,
+                delay: Duration::ZERO,
+            }],
+            still_index: 0,
+            width: w,
+            height: h,
+            modifiers: vec![Modifier::new(ModifierKind::Drawing(drawing))],
+            crop: None,
+            rotation: 0,
+        };
+
+        let (ow, oh, rgba) = render_still_rgba(&data).expect("render");
+        assert_eq!((ow, oh), (w, h));
+
+        let center = ((h / 2) as usize * w as usize + (w / 2) as usize) * 4;
+        assert!(
+            rgba[center] > 200 && rgba[center + 1] < 40,
+            "expected red stroke at image center"
+        );
+        assert!(
+            rgba[..w as usize * 4].chunks_exact(4).all(|p| p[3] == 0),
+            "top row should stay untouched"
+        );
     }
 
     #[test]

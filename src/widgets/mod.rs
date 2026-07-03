@@ -1,6 +1,7 @@
 pub mod angle_dial;
 pub mod color_swatch;
 pub mod crop_overlay;
+pub mod draw_overlay;
 pub mod field_editor;
 pub mod font_picker;
 pub mod histogram;
@@ -15,3 +16,4 @@ pub mod text_overlay;
 pub mod theme_picker;
 pub mod timeline;
 pub mod value_slider;
+pub mod viewport_nav;

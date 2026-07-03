@@ -5,7 +5,7 @@ use crate::{
     components::notifications::Notification,
     modifiers::{
         Modifier, ModifierKind, ModifierParam, ModifierType,
-        kinds::{Crop, Text},
+        kinds::{Crop, Drawing, Text},
     },
     wgpu::view_program::ViewProgram,
 };
@@ -58,6 +58,7 @@ pub fn update(state: &mut EditState, program: &mut ViewProgram, msg: EditMsg) ->
             let was_crop = state.selected_tool == Tool::Crop;
             let is_crop = tool == Tool::Crop;
             let is_text = tool == Tool::Text;
+            let is_draw = tool == Tool::Draw;
             state.selected_tool = tool;
             program.crop_tool_active = is_crop;
             if is_crop {
@@ -104,10 +105,27 @@ pub fn update(state: &mut EditState, program: &mut ViewProgram, msg: EditMsg) ->
                     program.mark_dirty();
                 }
             }
+            if is_draw {
+                if let Some(idx) = program
+                    .modifiers
+                    .iter()
+                    .rposition(|m| m.enabled && matches!(m.kind, ModifierKind::Drawing(_)))
+                {
+                    state.active = Some(idx);
+                } else {
+                    let idx = program.modifiers.len();
+                    program
+                        .modifiers_mut()
+                        .push(Modifier::new(ModifierKind::Drawing(Drawing::default())));
+                    state.active = Some(idx);
+                    program.mark_dirty();
+                }
+            }
         }
         EditMsg::Add(t) => {
             let is_crop = matches!(t, ModifierType::Crop);
             let is_text = matches!(t, ModifierType::Text);
+            let is_draw = matches!(t, ModifierType::Drawing);
             let already_has_crop =
                 is_crop && program.modifiers.iter().any(|m| m.kind.as_crop().is_some());
             if already_has_crop {
@@ -136,6 +154,10 @@ pub fn update(state: &mut EditState, program: &mut ViewProgram, msg: EditMsg) ->
                 state.selected_tool = Tool::Text;
                 program.crop_tool_active = false;
             }
+            if is_draw {
+                state.selected_tool = Tool::Draw;
+                program.crop_tool_active = false;
+            }
             program.mark_dirty();
         }
         EditMsg::Remove(i) => {
@@ -161,11 +183,17 @@ pub fn update(state: &mut EditState, program: &mut ViewProgram, msg: EditMsg) ->
             program.mark_dirty();
         }
         EditMsg::Update(i, param) => {
+            let stroke_edit = matches!(
+                param,
+                ModifierParam::DrawingStrokeStart(_) | ModifierParam::DrawingStrokeExtend(_)
+            );
             let img_size = program.image_size();
             if let Some(m) = program.modifiers_mut().get_mut(i) {
                 m.apply_param(param, img_size);
             }
-            program.mark_dirty();
+            if !stroke_edit {
+                program.mark_dirty();
+            }
         }
         EditMsg::SetActive(i) => {
             if i < program.modifiers.len() {

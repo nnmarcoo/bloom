@@ -14,6 +14,7 @@ use crate::{
         gpu,
         passes::{
             chromatic_aberration::ChromaticAberrationPass,
+            drawing::{DrawingLayer, DrawingPass},
             gaussian_blur::{GaussianBlurPass, TileRect},
             pixel_sort::PixelSortCompute,
             text::{TextLayer, TextPass},
@@ -157,6 +158,7 @@ struct StepPools {
     fused: usize,
     ca: usize,
     text: usize,
+    drawing: usize,
 }
 
 const ROI_MARGIN_PX: f32 = 256.0;
@@ -461,11 +463,15 @@ pub struct ModifierPipeline {
     sort_progress_sig: u64,
     text_layers: Vec<Option<TextLayer>>,
     text_sigs: Vec<Option<u64>>,
+    drawing_layers: Vec<Option<DrawingLayer>>,
+    drawing_sigs: Vec<Option<u64>>,
+    drawing_uniform_pool: Vec<iced::wgpu::Buffer>,
     combined: CombinedPass,
     chromatic_aberration: ChromaticAberrationPass,
     gaussian_blur: GaussianBlurPass,
     pixel_sort: PixelSortCompute,
     text: TextPass,
+    drawing: DrawingPass,
     display_bgl: BindGroupLayout,
     trilinear_sampler: Sampler,
     linear_sampler: Sampler,
@@ -537,11 +543,15 @@ impl ModifierPipeline {
             sort_progress_sig: 0,
             text_layers: Vec::new(),
             text_sigs: Vec::new(),
+            drawing_layers: Vec::new(),
+            drawing_sigs: Vec::new(),
+            drawing_uniform_pool: Vec::new(),
             combined: CombinedPass::new(device, format),
             chromatic_aberration: ChromaticAberrationPass::new(device, format),
             gaussian_blur: GaussianBlurPass::new(device, format),
             pixel_sort: PixelSortCompute::new(device),
             text: TextPass::new(device, format),
+            drawing: DrawingPass::new(device, format),
             display_bgl,
             trilinear_sampler,
             linear_sampler,
@@ -643,9 +653,74 @@ impl ModifierPipeline {
             raster_changed = true;
         }
 
+        if self.drawing_layers.len() != modifiers.len() {
+            self.drawing_layers.clear();
+            self.drawing_layers.resize_with(modifiers.len(), || None);
+            self.drawing_sigs.clear();
+            self.drawing_sigs.resize(modifiers.len(), None);
+        }
+        let mut drawing_dirty: Option<[f32; 4]> = None;
+        for (i, m) in modifiers.iter().enumerate() {
+            match &m.kind {
+                ModifierKind::Drawing(d) if m.has_visible_effect() => {
+                    let sig = d.strokes_sig();
+                    let stale = self.drawing_layers[i]
+                        .as_ref()
+                        .is_none_or(|l| !l.matches(source.full_width, source.full_height));
+                    if !stale && self.drawing_sigs[i] == Some(sig) {
+                        continue;
+                    }
+                    if stale {
+                        self.drawing_layers[i] = Some(DrawingLayer::new(
+                            device,
+                            source.full_width,
+                            source.full_height,
+                        ));
+                    }
+                    if let Some(rect) = self.drawing_layers[i].as_mut().unwrap().sync(
+                        queue,
+                        d,
+                        source.full_width,
+                        source.full_height,
+                    ) {
+                        drawing_dirty = Some(match drawing_dirty {
+                            Some(a) => [
+                                a[0].min(rect[0]),
+                                a[1].min(rect[1]),
+                                a[2].max(rect[2]),
+                                a[3].max(rect[3]),
+                            ],
+                            None => rect,
+                        });
+                    }
+                    self.drawing_sigs[i] = Some(sig);
+                }
+                _ => {
+                    if self.drawing_layers[i].take().is_some() {
+                        raster_changed = true;
+                    }
+                    self.drawing_sigs[i] = None;
+                }
+            }
+        }
+
         if raster_changed && !dirty {
             for o in self.tile_outputs.iter_mut().flatten() {
                 o.valid = false;
+            }
+        } else if !dirty && let Some(dr) = drawing_dirty {
+            for (ti, o) in self.tile_outputs.iter_mut().enumerate() {
+                let Some(o) = o else { continue };
+                let tile = &source.tiles[ti];
+                let cover = o.proc_px.unwrap_or([
+                    tile.x as f32,
+                    tile.y as f32,
+                    (tile.x + tile.width) as f32,
+                    (tile.y + tile.height) as f32,
+                ]);
+                if cover[0] < dr[2] && dr[0] < cover[2] && cover[1] < dr[3] && dr[1] < cover[3] {
+                    o.valid = false;
+                }
             }
         }
 
@@ -671,7 +746,10 @@ impl ModifierPipeline {
             return;
         }
 
-        let roi_ok = plan_vec.iter().all(|p| matches!(p, PlanItem::Fused(_)));
+        let roi_ok = plan_vec.iter().all(|p| match p {
+            PlanItem::Fused(_) => true,
+            PlanItem::Step(_, m) => matches!(m.kind, ModifierKind::Drawing(_)),
+        });
 
         let mut plan: Option<Vec<PlanItem>> = Some(plan_vec);
         let mut encoder: Option<CommandEncoder> = None;
@@ -679,6 +757,7 @@ impl ModifierPipeline {
         let mut ca_pool_used = 0usize;
         let mut blur_pool_used = 0usize;
         let mut text_pool_used = 0usize;
+        let mut drawing_pool_used = 0usize;
         let mut scheduler = Scheduler::new();
 
         for ti in 0..n_tiles {
@@ -950,6 +1029,30 @@ impl ModifierPipeline {
                                     self.text.record(
                                         device, queue, enc, buffer, layer, &tile_info, pr.proc,
                                         src_rect, &prev, out,
+                                    );
+                                }
+                            }
+                            ModifierKind::Drawing(_) => {
+                                if let Some(layer) =
+                                    self.drawing_layers.get(*idx).and_then(|l| l.as_ref())
+                                {
+                                    if drawing_pool_used == self.drawing_uniform_pool.len() {
+                                        self.drawing_uniform_pool
+                                            .push(self.drawing.uniform_buffer(device));
+                                    }
+                                    let buffer = &self.drawing_uniform_pool[drawing_pool_used];
+                                    drawing_pool_used += 1;
+                                    let enc = encoder.get_or_insert_with(|| {
+                                        device.create_command_encoder(
+                                            &iced::wgpu::CommandEncoderDescriptor {
+                                                label: Some("modifier-pipeline-encoder"),
+                                            },
+                                        )
+                                    });
+                                    let src_rect = if k == 0 { pr.src } else { pr.proc };
+                                    self.drawing.record(
+                                        device, queue, enc, buffer, layer, pr.proc, src_rect,
+                                        &prev, out,
                                     );
                                 }
                             }
@@ -1935,6 +2038,18 @@ impl ModifierPipeline {
                         self.text.record(
                             device, queue, encoder, buffer, layer, tile_info, proc, src, prev, out,
                         );
+                    }
+                }
+                ModifierKind::Drawing(_) => {
+                    if let Some(layer) = self.drawing_layers.get(*idx).and_then(|l| l.as_ref()) {
+                        if pools.drawing == self.drawing_uniform_pool.len() {
+                            self.drawing_uniform_pool
+                                .push(self.drawing.uniform_buffer(device));
+                        }
+                        let buffer = &self.drawing_uniform_pool[pools.drawing];
+                        pools.drawing += 1;
+                        self.drawing
+                            .record(device, queue, encoder, buffer, layer, proc, src, prev, out);
                     }
                 }
                 _ => {
