@@ -17,6 +17,7 @@ use crate::modifiers::ModifierParam;
 use crate::modifiers::kinds::Text;
 use crate::modifiers::text_render;
 use crate::wgpu::view_program::ViewProgram;
+use crate::widgets::viewport_nav::{self, NavState};
 
 const HANDLE_R: f32 = 6.0;
 const HANDLE_HIT: f32 = 12.0;
@@ -75,6 +76,7 @@ struct State {
     pending: Option<String>,
     shift: bool,
     typing: bool,
+    nav: NavState,
 }
 
 impl State {
@@ -584,6 +586,14 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
             state.selection = Some(clamp_caret(clamp_against, sel));
         }
 
+        let allow_space = !(self.active && state.typing);
+        if state.drag.is_none()
+            && viewport_nav::handle(&mut state.nav, event, bounds, cursor, allow_space, shell)
+        {
+            shell.request_redraw();
+            return;
+        }
+
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
             state.shift = modifiers.shift();
             return;
@@ -842,6 +852,9 @@ impl Widget<Message, Theme, Renderer> for TextOverlay {
         _renderer: &Renderer,
     ) -> mouse::Interaction {
         let state = tree.state.downcast_ref::<State>();
+        if let Some(nav) = state.nav.interaction() {
+            return nav;
+        }
         if let Some(drag) = &state.drag {
             return match drag.grab {
                 Grab::Move => mouse::Interaction::Grabbing,

@@ -265,7 +265,10 @@ fn add_row<'a>() -> Element<'a, Message> {
                 sub_menu(
                     "Create",
                     styled_menu(
-                        column![menu_item("Text", EditMsg::Add(ModifierType::Text).into()),],
+                        column![
+                            menu_item("Text", EditMsg::Add(ModifierType::Text).into()),
+                            menu_item("Drawing", EditMsg::Add(ModifierType::Drawing).into()),
+                        ],
                         160
                     )
                 )

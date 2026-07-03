@@ -17,6 +17,7 @@ use crate::{
     wgpu::view_program::{Histogram, ViewProgram},
     widgets::{
         crop_overlay::CropOverlay,
+        draw_overlay::DrawOverlay,
         loading_spinner::Circular,
         menu::{menu_item, menu_item_enabled, menu_separator, styled_menu},
         text_overlay::TextOverlay,
@@ -82,6 +83,25 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
             )
             .into(),
         );
+    }
+
+    if ctx.selected_tool == &Tool::Draw && ctx.loading.is_none() {
+        use crate::modifiers::ModifierKind;
+        let is_drawing = |i: &usize| {
+            ctx.modifiers
+                .get(*i)
+                .is_some_and(|m| m.enabled && matches!(m.kind, ModifierKind::Drawing(_)))
+        };
+        let idx = ctx.active_modifier.filter(is_drawing).or_else(|| {
+            ctx.modifiers
+                .iter()
+                .rposition(|m| m.enabled && matches!(m.kind, ModifierKind::Drawing(_)))
+        });
+        if let Some(i) = idx
+            && let ModifierKind::Drawing(d) = &ctx.modifiers[i].kind
+        {
+            layers.push(DrawOverlay::new(ctx.program.clone(), i, d.size, d.color).into());
+        }
     }
 
     if ctx.selected_tool == &Tool::Text && ctx.loading.is_none() {

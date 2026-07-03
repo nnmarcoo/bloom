@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::modifiers::cpu::smoothstep;
 use crate::modifiers::kinds::Text;
 use crate::modifiers::text_render::{self, GlyphSdf, SDF_EDGE};
 
@@ -103,14 +104,6 @@ impl TextRaster {
         }
         Some([self.color[0], self.color[1], self.color[2], a])
     }
-}
-
-fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
-    if e1 <= e0 {
-        return if x < e0 { 0.0 } else { 1.0 };
-    }
-    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
 }
 
 fn median3(a: f32, b: f32, c: f32) -> f32 {

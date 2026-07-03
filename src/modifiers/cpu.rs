@@ -1,11 +1,13 @@
 use rayon::prelude::*;
 
+use crate::modifiers::drawing_raster::LayerView;
 use crate::modifiers::text_raster::TextRaster;
 use crate::modifiers::{Modifier, ModifierKind};
 
 pub(crate) fn render_full(
     modifiers: &[Modifier],
     text_layers: &[Option<TextRaster>],
+    drawing_layers: &[Option<LayerView<'_>>],
     pixels: &[u8],
     img_w: u32,
     img_h: u32,
@@ -44,6 +46,12 @@ pub(crate) fn render_full(
                 flush_segment(&mut cur, &mut segment);
                 if let Some(Some(raster)) = text_layers.get(i) {
                     text_full(&mut cur, img_w, img_h, raster);
+                }
+            }
+            ModifierKind::Drawing(_) => {
+                flush_segment(&mut cur, &mut segment);
+                if let Some(Some(raster)) = drawing_layers.get(i) {
+                    drawing_full(&mut cur, img_w, raster);
                 }
             }
             ModifierKind::PixelSort(ps) => {
@@ -158,6 +166,20 @@ fn chromatic_aberration_full(src: &[u8], img_w: u32, img_h: u32, amount: f32) ->
     out
 }
 
+fn drawing_full(buf: &mut [u8], img_w: u32, raster: &LayerView<'_>) {
+    let w = img_w as usize;
+    buf.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
+        let fy = y as f32 + 0.5;
+        for x in 0..w {
+            if let Some(src) = raster.sample(x as f32 + 0.5, fy) {
+                let o = x * 4;
+                let dst = pixel_to_f32(&row[o..o + 4]);
+                row[o..o + 4].copy_from_slice(&f32_to_pixel(blend_over(dst, src)));
+            }
+        }
+    });
+}
+
 fn text_full(buf: &mut [u8], img_w: u32, img_h: u32, raster: &TextRaster) {
     let w = img_w as usize;
     let _ = img_h;
@@ -181,13 +203,14 @@ pub(crate) fn apply_modifiers(
     uv: [f32; 2],
     c: [f32; 4],
 ) -> [f32; 4] {
-    apply_modifiers_with_text(modifiers, &[], pixels, img_w, img_h, 0.0, 0.0, uv, c)
+    apply_modifiers_with_layers(modifiers, &[], &[], pixels, img_w, img_h, 0.0, 0.0, uv, c)
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn apply_modifiers_with_text(
+pub(crate) fn apply_modifiers_with_layers(
     modifiers: &[Modifier],
     text_layers: &[Option<TextRaster>],
+    drawing_layers: &[Option<LayerView<'_>>],
     pixels: &[u8],
     img_w: u32,
     img_h: u32,
@@ -215,6 +238,7 @@ pub(crate) fn apply_modifiers_with_text(
                 let cr = apply_prior(
                     prior,
                     &text_layers[..i.min(text_layers.len())],
+                    &drawing_layers[..i.min(drawing_layers.len())],
                     img_w,
                     img_h,
                     r_uv,
@@ -223,6 +247,7 @@ pub(crate) fn apply_modifiers_with_text(
                 let cb = apply_prior(
                     prior,
                     &text_layers[..i.min(text_layers.len())],
+                    &drawing_layers[..i.min(drawing_layers.len())],
                     img_w,
                     img_h,
                     b_uv,
@@ -234,10 +259,27 @@ pub(crate) fn apply_modifiers_with_text(
             ModifierKind::GaussianBlur(gb) => {
                 let prior = &modifiers[..i];
                 let prior_text = &text_layers[..i.min(text_layers.len())];
-                c = gaussian_blur_cpu(prior, prior_text, pixels, img_w, img_h, uv, gb.radius);
+                let prior_drawing = &drawing_layers[..i.min(drawing_layers.len())];
+                c = gaussian_blur_cpu(
+                    prior,
+                    prior_text,
+                    prior_drawing,
+                    pixels,
+                    img_w,
+                    img_h,
+                    uv,
+                    gb.radius,
+                );
             }
             ModifierKind::Text(_) => {
                 if let Some(Some(raster)) = text_layers.get(i)
+                    && let Some(src) = raster.sample(fx, fy)
+                {
+                    c = blend_over(c, src);
+                }
+            }
+            ModifierKind::Drawing(_) => {
+                if let Some(Some(raster)) = drawing_layers.get(i)
                     && let Some(src) = raster.sample(fx, fy)
                 {
                     c = blend_over(c, src);
@@ -255,6 +297,7 @@ pub(crate) fn apply_modifiers_with_text(
 fn gaussian_blur_cpu(
     prior: &[Modifier],
     prior_text: &[Option<TextRaster>],
+    prior_drawing: &[Option<LayerView<'_>>],
     pixels: &[u8],
     img_w: u32,
     img_h: u32,
@@ -266,6 +309,7 @@ fn gaussian_blur_cpu(
         return apply_prior(
             prior,
             prior_text,
+            prior_drawing,
             img_w,
             img_h,
             uv,
@@ -287,6 +331,7 @@ fn gaussian_blur_cpu(
             let tap = apply_prior(
                 prior,
                 prior_text,
+                prior_drawing,
                 img_w,
                 img_h,
                 [su, sv],
@@ -305,7 +350,15 @@ fn gaussian_blur_cpu(
     }
 }
 
-fn blend_over(dst: [f32; 4], src: [f32; 4]) -> [f32; 4] {
+pub(crate) fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+    if e1 <= e0 {
+        return if x < e0 { 0.0 } else { 1.0 };
+    }
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+pub(crate) fn blend_over(dst: [f32; 4], src: [f32; 4]) -> [f32; 4] {
     let sa = src[3];
     let da = dst[3];
     let out_a = sa + da * (1.0 - sa);
@@ -324,6 +377,7 @@ fn blend_over(dst: [f32; 4], src: [f32; 4]) -> [f32; 4] {
 fn apply_prior(
     modifiers: &[Modifier],
     text_layers: &[Option<TextRaster>],
+    drawing_layers: &[Option<LayerView<'_>>],
     img_w: u32,
     img_h: u32,
     uv: [f32; 2],
@@ -338,6 +392,13 @@ fn apply_prior(
         match &m.kind {
             ModifierKind::Text(_) => {
                 if let Some(Some(raster)) = text_layers.get(i)
+                    && let Some(src) = raster.sample(fx, fy)
+                {
+                    c = blend_over(c, src);
+                }
+            }
+            ModifierKind::Drawing(_) => {
+                if let Some(Some(raster)) = drawing_layers.get(i)
                     && let Some(src) = raster.sample(fx, fy)
                 {
                     c = blend_over(c, src);

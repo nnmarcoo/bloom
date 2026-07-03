@@ -295,6 +295,11 @@ pub enum ModifierParam {
     DrawingOpacity(f32),
     DrawingSize(f32),
     DrawingHardness(f32),
+    DrawingColor([f32; 3]),
+    DrawingStrokeStart([f32; 2]),
+    DrawingStrokeExtend([f32; 2]),
+    DrawingUndoStroke,
+    DrawingClear,
 }
 
 #[cfg(test)]

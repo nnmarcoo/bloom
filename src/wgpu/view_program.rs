@@ -13,7 +13,11 @@ use rayon::prelude::*;
 
 use crate::{
     app::Message,
-    modifiers::{Modifier, cpu, text_raster::TextRaster},
+    modifiers::{
+        Modifier, cpu,
+        drawing_raster::{DrawingLayerCache, LayerView},
+        text_raster::TextRaster,
+    },
     wgpu::{
         media::animation::Animation,
         media::exif_data::ExifData,
@@ -49,7 +53,37 @@ impl Default for ViewProgramState {
 pub enum ViewDragState {
     #[default]
     Idle,
-    Panning(Point),
+    Panning(Point, Button),
+}
+
+pub(crate) fn wheel_scale_msg(
+    last_scale: &mut Option<Instant>,
+    delta: &mouse::ScrollDelta,
+    pos: Vec2,
+) -> Option<Message> {
+    let scale_msg = |y: f32| {
+        if y > 0.0 {
+            Message::ScaleUp(pos)
+        } else {
+            Message::ScaleDown(pos)
+        }
+    };
+    match delta {
+        mouse::ScrollDelta::Lines { y, .. } if *y != 0.0 => {
+            *last_scale = None;
+            Some(scale_msg(*y))
+        }
+        mouse::ScrollDelta::Pixels { y, .. } if *y != 0.0 => {
+            let now = Instant::now();
+            if last_scale.is_none_or(|t| now.duration_since(t) >= SCALE_COOLDOWN) {
+                *last_scale = Some(now);
+                Some(scale_msg(*y))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 #[derive(Clone)]
@@ -76,12 +110,18 @@ pub struct ViewProgram {
     dirty: Arc<std::sync::atomic::AtomicBool>,
     pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
     reprocess_pending: Arc<std::sync::atomic::AtomicBool>,
-    text_raster_cache: Arc<std::sync::Mutex<Option<TextRasterCache>>>,
+    raster_cache: Arc<std::sync::Mutex<Option<RasterCache>>>,
     eyedropper_cache: Arc<std::sync::Mutex<Option<EyedropperCache>>>,
     staged_cache: Arc<std::sync::Mutex<Option<StagedCache>>>,
 }
 
-type TextRasterCache = (u64, u32, u32, Vec<Option<TextRaster>>);
+struct RasterCache {
+    text_key: u64,
+    w: u32,
+    h: u32,
+    text: Vec<Option<TextRaster>>,
+    drawing: Vec<Option<DrawingLayerCache>>,
+}
 
 struct StagedCache {
     key: u64,
@@ -127,7 +167,7 @@ impl Default for ViewProgram {
             dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pre_clear_gpu: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             reprocess_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            text_raster_cache: Arc::new(std::sync::Mutex::new(None)),
+            raster_cache: Arc::new(std::sync::Mutex::new(None)),
             eyedropper_cache: Arc::new(std::sync::Mutex::new(None)),
             staged_cache: Arc::new(std::sync::Mutex::new(None)),
         }
@@ -537,26 +577,60 @@ impl ViewProgram {
         Some(local_px + origin)
     }
 
-    fn with_text_rasters<R>(
+    fn with_rasters<R>(
         &self,
         img_w: u32,
         img_h: u32,
-        f: impl FnOnce(&[Option<TextRaster>]) -> R,
+        f: impl FnOnce(&[Option<TextRaster>], &[Option<LayerView<'_>>]) -> R,
     ) -> R {
-        let hash = hash_text_modifiers(&self.modifiers);
+        use crate::modifiers::ModifierKind;
+
+        let text_key = hash_text_modifiers(&self.modifiers);
         let mut cache = self
-            .text_raster_cache
+            .raster_cache
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let stale = cache
             .as_ref()
-            .map(|(h, w, hgt, _)| (*h, *w, *hgt) != (hash, img_w, img_h))
+            .map(|c| (c.text_key, c.w, c.h) != (text_key, img_w, img_h))
             .unwrap_or(true);
         if stale {
-            let layers = crate::modifiers::text_raster::build_layers(&self.modifiers, img_w, img_h);
-            *cache = Some((hash, img_w, img_h, layers));
+            let drawing = cache
+                .take()
+                .filter(|c| (c.w, c.h) == (img_w, img_h))
+                .map(|c| c.drawing)
+                .unwrap_or_default();
+            *cache = Some(RasterCache {
+                text_key,
+                w: img_w,
+                h: img_h,
+                text: crate::modifiers::text_raster::build_layers(&self.modifiers, img_w, img_h),
+                drawing,
+            });
         }
-        f(&cache.as_ref().unwrap().3)
+        let c = cache.as_mut().unwrap();
+        if c.drawing.len() != self.modifiers.len() {
+            c.drawing.clear();
+            c.drawing.resize_with(self.modifiers.len(), || None);
+        }
+        for (i, m) in self.modifiers.iter().enumerate() {
+            match &m.kind {
+                ModifierKind::Drawing(d) if m.has_visible_effect() => {
+                    let entry = c.drawing[i]
+                        .get_or_insert_with(|| DrawingLayerCache::new(img_w, img_h));
+                    let _ = entry.sync(d);
+                }
+                _ => {
+                    c.drawing[i] = None;
+                }
+            }
+        }
+        let views: Vec<Option<LayerView<'_>>> = c
+            .drawing
+            .iter()
+            .map(|o| o.as_ref().map(|k| k.view()))
+            .collect();
+        f(&c.text, &views)
     }
 
     fn has_any_visible_modifier(&self) -> bool {
@@ -566,6 +640,7 @@ impl ViewProgram {
     fn sample_pixel(
         &self,
         text_layers: &[Option<TextRaster>],
+        drawing_layers: &[Option<LayerView<'_>>],
         px: u32,
         py: u32,
         uv: [f32; 2],
@@ -575,7 +650,7 @@ impl ViewProgram {
         let h = image.height;
 
         if (w as u64) * (h as u64) <= STAGED_EYEDROPPER_MAX_PX {
-            if let Some(c) = self.staged_pixel(text_layers, image, px, py) {
+            if let Some(c) = self.staged_pixel(text_layers, drawing_layers, image, px, py) {
                 return Some(c);
             }
         }
@@ -585,6 +660,7 @@ impl ViewProgram {
         let p = pixels.get(idx..idx + 4)?;
         Some(cpu::f32_to_pixel(self.apply_modifiers_cpu(
             text_layers,
+            drawing_layers,
             &pixels,
             w,
             h,
@@ -596,6 +672,7 @@ impl ViewProgram {
     fn staged_pixel(
         &self,
         text_layers: &[Option<TextRaster>],
+        drawing_layers: &[Option<LayerView<'_>>],
         image: &ImageData,
         px: u32,
         py: u32,
@@ -611,7 +688,8 @@ impl ViewProgram {
         let stale = guard.as_ref().map(|c| c.key != key).unwrap_or(true);
         if stale {
             let pixels = image.pixels_snapshot();
-            let staged = cpu::render_full(&self.modifiers, text_layers, &pixels, w, h);
+            let staged =
+                cpu::render_full(&self.modifiers, text_layers, drawing_layers, &pixels, w, h);
             *guard = Some(StagedCache {
                 key,
                 w,
@@ -632,25 +710,28 @@ impl ViewProgram {
         }
         let (px, py) = (img.x as u32, img.y as u32);
         let uv = [px as f32 / self.image_size.x, py as f32 / self.image_size.y];
-        self.with_text_rasters(
+        self.with_rasters(
             self.image_size.x as u32,
             self.image_size.y as u32,
-            |layers| self.sample_pixel(layers, px, py, uv),
+            |text, drawing| self.sample_pixel(text, drawing, px, py, uv),
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_modifiers_cpu(
         &self,
         text_layers: &[Option<crate::modifiers::text_raster::TextRaster>],
+        drawing_layers: &[Option<LayerView<'_>>],
         pixels: &[u8],
         img_w: u32,
         img_h: u32,
         uv: [f32; 2],
         c: [f32; 4],
     ) -> [f32; 4] {
-        cpu::apply_modifiers_with_text(
+        cpu::apply_modifiers_with_layers(
             &self.modifiers,
             text_layers,
+            drawing_layers,
             pixels,
             img_w,
             img_h,
@@ -738,10 +819,10 @@ impl ViewProgram {
         let uv = img / self.image_size;
 
         let rgba = if self.has_any_visible_modifier() {
-            self.with_text_rasters(
+            self.with_rasters(
                 self.image_size.x as u32,
                 self.image_size.y as u32,
-                |layers| self.sample_pixel(layers, px, py, [uv.x, uv.y]),
+                |text, drawing| self.sample_pixel(text, drawing, px, py, [uv.x, uv.y]),
             )?
         } else {
             let image = self.image.as_ref()?;
@@ -818,7 +899,7 @@ impl ViewProgram {
             return Some(pixels);
         }
 
-        self.with_text_rasters(image.width, image.height, |text_layers| {
+        self.with_rasters(image.width, image.height, |text_layers, drawing_layers| {
             for row in 0..size as i64 {
                 for col in 0..size as i64 {
                     let (x, y) = coord(row, col);
@@ -830,6 +911,7 @@ impl ViewProgram {
                     let uv = [x as f32 / w as f32, y as f32 / h as f32];
                     let rgba = cpu::f32_to_pixel(self.apply_modifiers_cpu(
                         text_layers,
+                        drawing_layers,
                         &buf,
                         w as u32,
                         h as u32,
@@ -921,33 +1003,7 @@ impl Program<Message> for ViewProgram {
             && let Some(pos) = cursor.position_in(bounds)
         {
             let pos = Vec2::new(pos.x, pos.y);
-            let scale_msg = |y: f32| {
-                if y > 0.0 {
-                    Message::ScaleUp(pos)
-                } else {
-                    Message::ScaleDown(pos)
-                }
-            };
-            let msg = match delta {
-                mouse::ScrollDelta::Lines { y, .. } if *y != 0.0 => {
-                    state.last_scale = None;
-                    Some(scale_msg(*y))
-                }
-                mouse::ScrollDelta::Pixels { y, .. } if *y != 0.0 => {
-                    let now = Instant::now();
-                    if state
-                        .last_scale
-                        .is_none_or(|t| now.duration_since(t) >= SCALE_COOLDOWN)
-                    {
-                        state.last_scale = Some(now);
-                        Some(scale_msg(*y))
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            };
-            if let Some(msg) = msg {
+            if let Some(msg) = wheel_scale_msg(&mut state.last_scale, delta, pos) {
                 return Some(Action::publish(msg).and_capture());
             }
             return Some(Action::capture());
@@ -955,10 +1011,12 @@ impl Program<Message> for ViewProgram {
 
         match state.drag {
             ViewDragState::Idle => {
-                if let Event::Mouse(mouse::Event::ButtonPressed(Button::Left)) = event
+                if let Event::Mouse(mouse::Event::ButtonPressed(
+                    button @ (Button::Left | Button::Middle),
+                )) = event
                     && let Some(pos) = cursor.position_over(bounds)
                 {
-                    state.drag = ViewDragState::Panning(pos);
+                    state.drag = ViewDragState::Panning(pos, *button);
                     return Some(Action::publish(Message::PanStarted));
                 }
                 if let Event::Mouse(mouse::Event::CursorMoved { .. }) = event
@@ -969,14 +1027,14 @@ impl Program<Message> for ViewProgram {
                     ))));
                 }
             }
-            ViewDragState::Panning(prev) => match event {
-                Event::Mouse(mouse::Event::ButtonReleased(Button::Left)) => {
+            ViewDragState::Panning(prev, button) => match event {
+                Event::Mouse(mouse::Event::ButtonReleased(released)) if *released == button => {
                     state.drag = ViewDragState::Idle;
                     return Some(Action::publish(Message::PanEnded).and_capture());
                 }
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
                     let delta = vec2(position.x - prev.x, prev.y - position.y);
-                    state.drag = ViewDragState::Panning(*position);
+                    state.drag = ViewDragState::Panning(*position, button);
                     return Some(Action::publish(Message::Pan(delta)).and_capture());
                 }
                 _ => {}
@@ -992,7 +1050,7 @@ impl Program<Message> for ViewProgram {
         _cursor: Cursor,
     ) -> Interaction {
         match state.drag {
-            ViewDragState::Panning(_) => Interaction::Grabbing,
+            ViewDragState::Panning(..) => Interaction::Grabbing,
             ViewDragState::Idle => Interaction::Idle,
         }
     }
