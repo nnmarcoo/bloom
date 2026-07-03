@@ -607,6 +607,8 @@ impl App {
             Some(Action::ToolCrop) => Task::done(EditMsg::SelectTool(Tool::Crop).into()),
             Some(Action::ToolDraw) => Task::done(EditMsg::SelectTool(Tool::Draw).into()),
             Some(Action::ToolText) => Task::done(EditMsg::SelectTool(Tool::Text).into()),
+            Some(Action::BrushSizeUp) => self.adjust_brush_size(1.0),
+            Some(Action::BrushSizeDown) => self.adjust_brush_size(-1.0),
             Some(Action::TogglePlayback) => {
                 if self.transport.playback_active(&self.program) {
                     Task::done(TransportMsg::TogglePlayback.into())
@@ -618,6 +620,34 @@ impl App {
             Some(Action::ToggleEditPanel) => Task::done(Message::ToggleEditPanel),
             None => Task::none(),
         }
+    }
+
+    fn adjust_brush_size(&mut self, dir: f32) -> Task<Message> {
+        use crate::modifiers::{ModifierKind, ModifierParam};
+        if self.edit.selected_tool != Tool::Draw {
+            return Task::none();
+        }
+        let is_drawing = |i: usize| {
+            self.program
+                .modifiers
+                .get(i)
+                .is_some_and(|m| m.enabled && matches!(m.kind, ModifierKind::Drawing(_)))
+        };
+        let idx = self.edit.active.filter(|i| is_drawing(*i)).or_else(|| {
+            self.program
+                .modifiers
+                .iter()
+                .rposition(|m| m.enabled && matches!(m.kind, ModifierKind::Drawing(_)))
+        });
+        let Some(idx) = idx else {
+            return Task::none();
+        };
+        let ModifierKind::Drawing(d) = &self.program.modifiers[idx].kind else {
+            return Task::none();
+        };
+        let step = (d.size * 0.1).max(1.0);
+        let size = (d.size + dir * step).round().clamp(1.0, 300.0);
+        Task::done(EditMsg::Update(idx, ModifierParam::DrawingSize(size)).into())
     }
 
     pub fn view(&self) -> Element<'_, Message> {

@@ -26,6 +26,8 @@ pub enum Action {
     ToolCrop,
     ToolDraw,
     ToolText,
+    BrushSizeUp,
+    BrushSizeDown,
     TogglePlayback,
     ToggleInfoPanel,
     ToggleEditPanel,
@@ -80,6 +82,8 @@ impl Action {
             Self::ToolCrop => "Crop tool".into(),
             Self::ToolDraw => "Draw tool".into(),
             Self::ToolText => "Text tool".into(),
+            Self::BrushSizeUp => "Brush size up".into(),
+            Self::BrushSizeDown => "Brush size down".into(),
             Self::TogglePlayback => "Toggle playback".into(),
             Self::ToggleInfoPanel => "Toggle info panel".into(),
             Self::ToggleEditPanel => "Toggle edit panel".into(),
@@ -106,6 +110,8 @@ impl Action {
             Self::ToolCrop => "Switch to the crop tool",
             Self::ToolDraw => "Switch to the draw tool",
             Self::ToolText => "Switch to the text tool",
+            Self::BrushSizeUp => "Increase the draw tool brush size",
+            Self::BrushSizeDown => "Decrease the draw tool brush size",
             Self::TogglePlayback => "Pause or resume animation playback",
             Self::ToggleInfoPanel => "Show or hide the image info panel",
             Self::ToggleEditPanel => "Show or hide the edit panel",
@@ -129,9 +135,12 @@ impl Action {
             | Self::UiScaleReset
             | Self::ToggleInfoPanel
             | Self::ToggleEditPanel => KeyCategory::View,
-            Self::ToolSelect | Self::ToolCrop | Self::ToolDraw | Self::ToolText => {
-                KeyCategory::Tools
-            }
+            Self::ToolSelect
+            | Self::ToolCrop
+            | Self::ToolDraw
+            | Self::ToolText
+            | Self::BrushSizeUp
+            | Self::BrushSizeDown => KeyCategory::Tools,
             Self::TogglePlayback => KeyCategory::Playback,
         }
     }
@@ -161,6 +170,8 @@ impl Action {
             Action::ToolCrop,
             Action::ToolDraw,
             Action::ToolText,
+            Action::BrushSizeUp,
+            Action::BrushSizeDown,
             Action::TogglePlayback,
         ]
     }
@@ -365,6 +376,8 @@ impl Default for Keymap {
         m.insert(Action::ToolCrop, n(key::Code::KeyC));
         m.insert(Action::ToolDraw, n(key::Code::KeyD));
         m.insert(Action::ToolText, n(key::Code::KeyT));
+        m.insert(Action::BrushSizeUp, n(key::Code::BracketRight));
+        m.insert(Action::BrushSizeDown, n(key::Code::BracketLeft));
         m.insert(Action::TogglePlayback, n(key::Code::Space));
         m.insert(Action::ToggleInfoPanel, n(key::Code::KeyI));
         m.insert(Action::ToggleEditPanel, n(key::Code::KeyE));
@@ -449,6 +462,8 @@ pub(crate) struct KeymapFile {
     pub tool_crop: Option<String>,
     pub tool_draw: Option<String>,
     pub tool_text: Option<String>,
+    pub brush_size_up: Option<String>,
+    pub brush_size_down: Option<String>,
     pub toggle_playback: Option<String>,
     pub toggle_info_panel: Option<String>,
     pub toggle_edit_panel: Option<String>,
@@ -491,6 +506,8 @@ impl From<&Keymap> for KeymapFile {
             tool_crop: bind(Action::ToolCrop),
             tool_draw: bind(Action::ToolDraw),
             tool_text: bind(Action::ToolText),
+            brush_size_up: bind(Action::BrushSizeUp),
+            brush_size_down: bind(Action::BrushSizeDown),
             toggle_playback: bind(Action::TogglePlayback),
             toggle_info_panel: bind(Action::ToggleInfoPanel),
             toggle_edit_panel: bind(Action::ToggleEditPanel),
@@ -535,6 +552,8 @@ impl From<KeymapFile> for Keymap {
             resolve(f.tool_crop, Action::ToolCrop),
             resolve(f.tool_draw, Action::ToolDraw),
             resolve(f.tool_text, Action::ToolText),
+            resolve(f.brush_size_up, Action::BrushSizeUp),
+            resolve(f.brush_size_down, Action::BrushSizeDown),
             resolve(f.toggle_playback, Action::TogglePlayback),
             resolve(f.toggle_info_panel, Action::ToggleInfoPanel),
             resolve(f.toggle_edit_panel, Action::ToggleEditPanel),
