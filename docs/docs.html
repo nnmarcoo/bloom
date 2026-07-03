@@ -44,7 +44,8 @@
         <div class="feature"><h3>80+ formats</h3><p>JPEG, PNG, WebP, HEIC, JPEG&nbsp;XL, PSD, SVG, DICOM, RAW, and more.</p></div>
         <div class="feature"><h3>Animation</h3><p>GIF, APNG and animated WebP with timeline scrubbing.</p></div>
         <div class="feature"><h3>Video</h3><p>MP4, MOV, MKV, WebM and more, with audio and frame stepping.</p></div>
-        <div class="feature"><h3>Modifiers</h3><p>A stackable, non-destructive pipeline of 19 effects.</p></div>
+        <div class="feature"><h3>Modifiers</h3><p>A stackable, non-destructive pipeline of 17 effects.</p></div>
+        <div class="feature"><h3>Draw &amp; text</h3><p>Paint brush strokes and set type directly on the canvas.</p></div>
         <div class="feature"><h3>Huge images</h3><p>Opens enormous images well beyond 2,500&nbsp;MP.</p></div>
         <div class="feature"><h3>Info panel</h3><p>EXIF, dimensions, pixel color, and an RGB histogram.</p></div>
         <div class="feature"><h3>Export</h3><p>PNG, JPEG or WebP with crop, rotation and modifiers applied.</p></div>
@@ -100,7 +101,7 @@
           <div class="keygroup">
             <h3>Gestures</h3>
             <div class="krow"><span>Zoom in / out</span><span class="kbds"><kbd>Scroll</kbd></span></div>
-            <div class="krow"><span>Pan</span><span class="kbds"><kbd>Drag</kbd></span></div>
+            <div class="krow"><span>Pan</span><span class="kbds"><kbd>Drag</kbd><span class="sep">/</span><kbd>Middle-drag</kbd></span></div>
             <div class="krow"><span>Open a file</span><span class="kbds"><kbd>Drag &amp; drop</kbd></span></div>
             <div class="krow"><span>Context menu</span><span class="kbds"><kbd>Right-click</kbd></span></div>
           </div>
@@ -167,7 +168,7 @@
 
     <section class="docsection" id="modifiers">
       <h2>Modifiers</h2>
-      <input type="search" class="fmt-search" placeholder="Search 19 modifiers…" aria-label="Search modifiers" autocomplete="off">
+      <input type="search" class="fmt-search" placeholder="Search 17 modifiers…" aria-label="Search modifiers" autocomplete="off">
       <div class="fmt-list">
         <div class="fmt" data-keys="brightness contrast light tone"><span class="fmt-name">Brightness / Contrast</span><span class="fmt-note">Adjust overall lightness and tonal range.</span></div>
         <div class="fmt" data-keys="exposure light brightness stops"><span class="fmt-name">Exposure</span><span class="fmt-note">Shift overall light, measured in stops.</span></div>
@@ -177,17 +178,17 @@
         <div class="fmt" data-keys="color colour balance tint temperature"><span class="fmt-name">Color Balance</span><span class="fmt-note">Tint shadows, midtones, and highlights.</span></div>
         <div class="fmt" data-keys="posterize levels banding quantize"><span class="fmt-name">Posterize</span><span class="fmt-note">Reduce the image to a few tonal levels.</span></div>
         <div class="fmt" data-keys="threshold black white binary cutoff"><span class="fmt-name">Threshold</span><span class="fmt-note">Convert to pure black and white at a cutoff.</span></div>
-        <div class="fmt planned" data-keys="gaussian blur soften smooth"><span class="fmt-name">Gaussian Blur</span><span class="fmt-tag">Planned</span><span class="fmt-note">Smooth, even softening.</span></div>
+        <div class="fmt" data-keys="gaussian blur soften smooth"><span class="fmt-name">Gaussian Blur</span><span class="fmt-note">Smooth, even softening.</span></div>
         <div class="fmt planned" data-keys="motion blur directional streak"><span class="fmt-name">Motion Blur</span><span class="fmt-tag">Planned</span><span class="fmt-note">Directional streak blur.</span></div>
         <div class="fmt planned" data-keys="radial blur spin zoom"><span class="fmt-name">Radial Blur</span><span class="fmt-tag">Planned</span><span class="fmt-note">Spin or zoom blur around a center.</span></div>
         <div class="fmt" data-keys="chromatic aberration color colour fringe lens rgb"><span class="fmt-name">Chromatic Aberration</span><span class="fmt-note">Split color channels for a lens-fringe look.</span></div>
         <div class="fmt" data-keys="halftone dots print newspaper comic"><span class="fmt-name">Halftone</span><span class="fmt-note">Simulate printed dot patterns.</span></div>
-        <div class="fmt planned" data-keys="pixel sort glitch"><span class="fmt-name">Pixel Sort</span><span class="fmt-tag">Planned</span><span class="fmt-note">Sort pixels into glitch streaks.</span></div>
+        <div class="fmt" data-keys="pixel sort glitch angle diagonal"><span class="fmt-name">Pixel Sort</span><span class="fmt-note">Sort pixels into glitch streaks, at any angle.</span></div>
         <div class="fmt" data-keys="grain noise film texture"><span class="fmt-name">Grain</span><span class="fmt-note">Add film-like noise.</span></div>
         <div class="fmt" data-keys="vignette edges darken corners"><span class="fmt-name">Vignette</span><span class="fmt-note">Darken or lighten the edges.</span></div>
         <div class="fmt" data-keys="crop trim cut frame"><span class="fmt-name">Crop</span><span class="fmt-note">Trim the image to a region.</span></div>
-        <div class="fmt planned" data-keys="draw paint brush pen freehand"><span class="fmt-name">Draw</span><span class="fmt-tag">Planned</span><span class="fmt-note">Paint freehand strokes.</span></div>
-        <div class="fmt planned" data-keys="text type caption label words"><span class="fmt-name">Text</span><span class="fmt-tag">Planned</span><span class="fmt-note">Overlay text.</span></div>
+        <div class="fmt" data-keys="draw paint brush pen freehand pencil drawing"><span class="fmt-name">Drawing</span><span class="fmt-note">Paint freehand strokes with an adjustable brush.</span></div>
+        <div class="fmt" data-keys="text type caption label words font"><span class="fmt-name">Text</span><span class="fmt-note">Type directly on the canvas; crisp at any zoom.</span></div>
       </div>
       <p class="fmt-empty" hidden></p>
       <div class="infonote">
@@ -320,7 +321,7 @@ cargo build --release --features av</pre>
     document.querySelectorAll('#formats .fmt:not(.planned) .fmt-ext code').length,
     'formats', raw => '“' + raw + '” isn’t supported.');
   wireSearch('#modifiers',
-    document.querySelectorAll('#modifiers .fmt').length,
+    document.querySelectorAll('#modifiers .fmt:not(.planned)').length,
     'modifiers', raw => 'No modifier matches “' + raw + '”.');
 
   /* sidebar scrollspy */

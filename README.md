@@ -14,22 +14,14 @@
 
 ## Features
 
-- **GPU rendering** — hardware-accelerated via [wgpu](https://wgpu.rs) at any resolution
-- **Hardware mipmaps** — smooth zoomed-out views
-- **GIF, APNG & WebP** — animation playback with timeline scrubbing and frame controls
-- **Video** — MP4, MOV, MKV, WebM, AVI and more with audio, scrubbing, and frame stepping
-- **Gallery** — browse every image in a folder
-- **Tiled textures** — handles images larger than GPU texture limits
-- **Pan and zoom** — 0.01× to 35×, with custom % input
-- **Non-destructive modifiers** — brightness/contrast, exposure, hue/saturation, vibrance, color balance, levels, vignette, grain, chromatic aberration, halftone, posterize, threshold, and more
+- **GPU rendering** — hardware-accelerated via [wgpu](https://wgpu.rs), with mipmaps and tiled textures for images beyond GPU limits
+- **Animation & video** — GIF, APNG, and WebP, plus MP4, MOV, MKV, WebM, and more with audio, scrubbing, and frame stepping
+- **Non-destructive modifiers** — 17 stackable effects, from color correction (levels, exposure, vibrance, …) to Gaussian blur, halftone, grain, and pixel sort at any angle
+- **Draw & text tools** — paint freehand brush strokes and place text directly on the canvas
 - **Export** — PNG, JPEG, or WebP with crop, rotation, and modifiers applied
-- **Clipboard import** — load an image from clipboard or file path
-- **Drag and drop** — drop any supported file onto the window
-- **Info panel** — metadata, dimensions, EXIF, pixel color under cursor, RGB histogram, and animation timing
-- **Rotation** — 90° clockwise or counter-clockwise
-- **Checkerboard toggle** — visualize transparency
-- **Context menu** — right-click to copy pixel color or file path
-- **Themes** — 22 built-in, including Catppuccin, Tokyo Night, Nord, Dracula, Gruvbox, and Kanagawa
+- **Gallery** — browse every image in a folder; open files by drag and drop or clipboard paste
+- **Info panel** — dimensions, EXIF, RGB histogram, and pixel color under the cursor
+- **Themes** — 22 built-in, including Catppuccin, Tokyo Night, Nord, and Gruvbox
 - **Customizable keybindings** — rebind any action in preferences
 
 ## Supported Formats
@@ -117,7 +109,7 @@ For video playback, the `ffmpeg-next` bindings link against FFmpeg. A helper scr
 cargo build --release --features av
 ```
 
-On Linux the script installs the FFmpeg dev libraries via your system package manager (`libavformat-dev`, `libavfilter-dev`, `libavdevice-dev`, `libclang-dev` on Ubuntu/Debian; `ffmpeg-devel clang` on Fedora; `ffmpeg clang` on Arch). On Windows it fetches a prebuilt shared FFmpeg into `vendor/ffmpeg`, sets `FFMPEG_DIR`, adds the DLLs to your `PATH`, and installs LLVM via winget (needed for `ffmpeg-sys-next`'s bindgen step) — open a new terminal afterward so the environment changes take effect.
+On macOS and Linux the script installs the FFmpeg dev libraries via your package manager. On Windows it fetches a prebuilt FFmpeg into `vendor/ffmpeg` and installs LLVM — open a new terminal afterward so the environment changes take effect.
 
 Requires a GPU with WebGPU support. On Windows, DX12 is used by default.
 
