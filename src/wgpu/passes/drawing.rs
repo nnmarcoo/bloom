@@ -52,7 +52,13 @@ impl DrawingLayer {
         self.cache.w == w && self.cache.h == h
     }
 
-    pub fn sync(&mut self, queue: &Queue, d: &Drawing, full_w: u32, full_h: u32) -> Option<[f32; 4]> {
+    pub fn sync(
+        &mut self,
+        queue: &Queue,
+        d: &Drawing,
+        full_w: u32,
+        full_h: u32,
+    ) -> Option<[f32; 4]> {
         let [x0, y0, x1, y1] = self.cache.sync(d)?;
         if x0 >= x1 || y0 >= y1 {
             return None;

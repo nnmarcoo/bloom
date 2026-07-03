@@ -586,10 +586,7 @@ impl ViewProgram {
         use crate::modifiers::ModifierKind;
 
         let text_key = hash_text_modifiers(&self.modifiers);
-        let mut cache = self
-            .raster_cache
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.raster_cache.lock().unwrap_or_else(|e| e.into_inner());
         let stale = cache
             .as_ref()
             .map(|c| (c.text_key, c.w, c.h) != (text_key, img_w, img_h))
@@ -616,8 +613,8 @@ impl ViewProgram {
         for (i, m) in self.modifiers.iter().enumerate() {
             match &m.kind {
                 ModifierKind::Drawing(d) if m.has_visible_effect() => {
-                    let entry = c.drawing[i]
-                        .get_or_insert_with(|| DrawingLayerCache::new(img_w, img_h));
+                    let entry =
+                        c.drawing[i].get_or_insert_with(|| DrawingLayerCache::new(img_w, img_h));
                     let _ = entry.sync(d);
                 }
                 _ => {

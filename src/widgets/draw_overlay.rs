@@ -36,7 +36,12 @@ pub struct DrawOverlay {
 }
 
 impl DrawOverlay {
-    pub fn new(program: ViewProgram, modifier_idx: usize, brush_size: f32, color: [f32; 3]) -> Self {
+    pub fn new(
+        program: ViewProgram,
+        modifier_idx: usize,
+        brush_size: f32,
+        color: [f32; 3],
+    ) -> Self {
         Self {
             program,
             modifier_idx,
@@ -95,7 +100,8 @@ impl Widget<Message, Theme, Renderer> for DrawOverlay {
         let bounds = layout.bounds();
         let local = cursor.position_in(bounds).map(|p| vec2(p.x, p.y));
 
-        if !state.drawing && viewport_nav::handle(&mut state.nav, event, bounds, cursor, true, shell)
+        if !state.drawing
+            && viewport_nav::handle(&mut state.nav, event, bounds, cursor, true, shell)
         {
             shell.request_redraw();
             return;
@@ -197,15 +203,14 @@ impl Widget<Message, Theme, Renderer> for DrawOverlay {
         let mut frame = Frame::new(renderer, bounds.size());
         let center = Point::new(pos.x, pos.y);
         let circle = Path::circle(center, radius);
-        frame.stroke(&circle, Stroke::default().with_color(OUTLINE).with_width(2.5));
+        frame.stroke(
+            &circle,
+            Stroke::default().with_color(OUTLINE).with_width(2.5),
+        );
         frame.stroke(
             &circle,
             Stroke::default()
-                .with_color(Color::from_rgb(
-                    self.color[0],
-                    self.color[1],
-                    self.color[2],
-                ))
+                .with_color(Color::from_rgb(self.color[0], self.color[1], self.color[2]))
                 .with_width(1.0),
         );
 

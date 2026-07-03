@@ -29,23 +29,22 @@ fn union(a: Option<Rect>, b: Option<Rect>) -> Option<Rect> {
 struct Brush {
     outer: f32,
     inner: f32,
-    gain: f32,
     spacing: f32,
 }
 
 fn brush_for(stroke: &Stroke, scale: f32) -> Brush {
-    let r_true = (stroke.size * 0.5 * scale).max(0.05);
-    let radius = r_true.max(0.5);
+    let hardness = stroke.hardness.clamp(0.0, 1.0);
+    let radius = (stroke.size * 0.5 * scale).max(0.5);
     let outer = radius + 0.5;
-    let inner = (radius * stroke.hardness.clamp(0.0, 1.0))
-        .min(outer - 1.0)
-        .max(0.0);
-    let gain = (r_true / radius).clamp(0.35, 1.0);
+    let inner = if hardness >= 1.0 {
+        outer
+    } else {
+        (radius * hardness).min(outer - 1.0).max(0.0)
+    };
     let spacing = (outer * 0.25).max(0.35);
     Brush {
         outer,
         inner,
-        gain,
         spacing,
     }
 }
@@ -292,7 +291,7 @@ impl DrawingLayerCache {
                 if d >= r {
                     continue;
                 }
-                let cov = (1.0 - smoothstep(brush.inner, r, d)) * brush.gain;
+                let cov = 1.0 - smoothstep(brush.inner, r, d);
                 let m = (cov * 255.0 + 0.5) as u8;
                 let i = (y * self.w + x) as usize;
                 self.mask[i] = self.mask[i].max(m);
