@@ -9,7 +9,7 @@ use iced::keyboard::{
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::tooltip::Position;
 use iced::widget::{
-    Space, button, column, container, pick_list, row, rule, scrollable, text, toggler,
+    Space, button, column, container, image, pick_list, row, rule, scrollable, text, toggler,
 };
 use iced::{Color, Element, Font, Length, Theme};
 
@@ -37,6 +37,7 @@ pub enum PrefSection {
     Appearance,
     Rendering,
     Keybindings,
+    About,
 }
 
 #[derive(Debug, Clone)]
@@ -663,6 +664,68 @@ fn keybindings_pane<'a>(
     col.into()
 }
 
+fn logo_handle() -> image::Handle {
+    static LOGO: OnceLock<image::Handle> = OnceLock::new();
+    LOGO.get_or_init(|| {
+        image::Handle::from_bytes(include_bytes!("../../assets/logo/bloom64.png").as_slice())
+    })
+    .clone()
+}
+
+fn about_pane<'a>(theme: &Theme) -> Element<'a, Message> {
+    let muted = muted_text(theme);
+
+    let link = |label: &'a str, url: &'static str| {
+        with_tooltip(
+            button(text(label).size(12))
+                .style(plain_icon_button_style)
+                .on_press(Message::OpenUrl(url))
+                .padding([4.0, 8.0]),
+            url,
+            Position::Bottom,
+        )
+    };
+
+    column![
+        row![
+            image(logo_handle())
+                .width(Length::Fixed(64.0))
+                .height(Length::Fixed(64.0)),
+            column![
+                text("Bloom").size(24).font(Font {
+                    weight: Weight::Semibold,
+                    ..Font::DEFAULT
+                }),
+                text(concat!("Version ", env!("CARGO_PKG_VERSION")))
+                    .size(12)
+                    .color(muted),
+            ]
+            .spacing(PAD / 2.0),
+        ]
+        .spacing(PAD * 2.0)
+        .align_y(Vertical::Center),
+        Space::new().height(PAD),
+        text(env!("CARGO_PKG_DESCRIPTION")).size(13),
+        Space::new().height(PAD),
+        row![
+            link("GitHub", env!("CARGO_PKG_REPOSITORY")),
+            link(
+                "Report an issue",
+                concat!(env!("CARGO_PKG_REPOSITORY"), "/issues")
+            ),
+        ]
+        .spacing(PAD),
+        Space::new().height(PAD * 2.0),
+        text(concat!("Licensed under ", env!("CARGO_PKG_LICENSE")))
+            .size(11)
+            .color(muted),
+    ]
+    .spacing(PAD)
+    .align_x(Horizontal::Center)
+    .width(Length::Fill)
+    .into()
+}
+
 pub fn view<'a>(
     pending: &'a Config,
     theme: &Theme,
@@ -688,6 +751,8 @@ pub fn view<'a>(
                 PrefSection::Keybindings,
                 active == PrefSection::Keybindings
             ),
+            Space::new().height(Length::Fill),
+            nav_button("About", PrefSection::About, active == PrefSection::About),
         ]
         .spacing(PAD)
         .width(Length::Fill)
@@ -701,19 +766,31 @@ pub fn view<'a>(
         PrefSection::Appearance => appearance_pane(pending, theme),
         PrefSection::Rendering => rendering_pane(pending, theme),
         PrefSection::Keybindings => keybindings_pane(pending, preference_state, theme),
+        PrefSection::About => about_pane(theme),
     };
 
-    let content = scrollable(
+    let content: Element<'a, Message> = if active == PrefSection::About {
         container(pane)
-            .max_width(PREF_CONTENT_MAX_WIDTH)
             .width(Length::Fill)
-            .padding(PAD * 3.0),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .direction(Direction::Vertical(
-        Scrollbar::new().width(4).scroller_width(4),
-    ));
+            .height(Length::Fill)
+            .align_x(Horizontal::Center)
+            .align_y(Vertical::Center)
+            .padding(PAD * 3.0)
+            .into()
+    } else {
+        scrollable(
+            container(pane)
+                .max_width(PREF_CONTENT_MAX_WIDTH)
+                .width(Length::Fill)
+                .padding(PAD * 3.0),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .direction(Direction::Vertical(
+            Scrollbar::new().width(4).scroller_width(4),
+        ))
+        .into()
+    };
 
     let footer = bar(
         row![

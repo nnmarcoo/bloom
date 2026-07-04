@@ -155,7 +155,7 @@ pub fn view<'a>(
                         menu_item_enabled("Export frame", Message::ExportFrame, is_animation),
                     ]
                     .push(menu_separator())
-                    .push(menu_item("About", Message::Noop))
+                    .push(menu_item("About", Message::OpenAbout))
                     .push(menu_item("Exit", Message::Exit)),
                     180
                 ),

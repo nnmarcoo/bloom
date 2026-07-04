@@ -160,6 +160,11 @@ pub fn copy_text(text: String) -> iced::Task<Message> {
     })
 }
 
+pub fn open_url(url: &'static str) -> iced::Task<Message> {
+    let _ = open::that_detached(url);
+    iced::Task::none()
+}
+
 pub fn open_file_location(path: PathBuf) -> iced::Task<Message> {
     use std::process::Command;
 

@@ -121,6 +121,8 @@ pub enum Message {
     ToggleInfoColumn,
     ToggleInfoSection(&'static str),
     TogglePreferences,
+    OpenAbout,
+    OpenUrl(&'static str),
     Preference(PreferenceMessage),
     ClipboardLoaded(MediaData),
     CursorMoved(Vec2),
@@ -321,6 +323,14 @@ impl App {
             Message::TogglePreferences => {
                 self.editing_config = Some(self.config.clone());
                 self.preference_state = preferences::PreferenceState::default();
+            }
+            Message::OpenAbout => {
+                self.editing_config = Some(self.config.clone());
+                self.preference_state = preferences::PreferenceState::default();
+                self.preference_state.section = preferences::PrefSection::About;
+            }
+            Message::OpenUrl(url) => {
+                return tasks::open_url(url);
             }
             Message::Preference(msg) => {
                 let Some(pending) = self.editing_config.as_mut() else {
