@@ -55,7 +55,9 @@ fn open_output(
     octx.add_stream(codec).map_err(err)?;
 
     let mut enc_ctx = codec::context::Context::new_with_codec(codec);
-    enc_ctx.set_threading(codec::threading::Config::kind(codec::threading::Type::Frame));
+    enc_ctx.set_threading(codec::threading::Config::kind(
+        codec::threading::Type::Frame,
+    ));
     let mut enc = enc_ctx.encoder().video().map_err(err)?;
     enc.set_width(enc_w);
     enc.set_height(enc_h);
@@ -180,7 +182,9 @@ pub fn encode_video(
             .parameters(),
     )
     .map_err(err)?;
-    decoder_ctx.set_threading(codec::threading::Config::kind(codec::threading::Type::Frame));
+    decoder_ctx.set_threading(codec::threading::Config::kind(
+        codec::threading::Type::Frame,
+    ));
     let mut decoder = decoder_ctx.decoder().video().map_err(err)?;
 
     if decoder.width() != data.width || decoder.height() != data.height {
@@ -323,8 +327,8 @@ mod tests {
     use crate::wgpu::media::video::probe_video;
 
     fn ffmpeg_exe() -> Option<std::path::PathBuf> {
-        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("vendor/ffmpeg/bin/ffmpeg.exe");
+        let p =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/ffmpeg/bin/ffmpeg.exe");
         p.exists().then_some(p)
     }
 
@@ -468,7 +472,8 @@ mod tests {
         let px = &decoded.stdout;
         assert_eq!(px.len(), 64 * 48 * 4);
         assert!(
-            px.chunks_exact(4).all(|p| p[0] < 40 && p[1] < 40 && p[2] < 40),
+            px.chunks_exact(4)
+                .all(|p| p[0] < 40 && p[1] < 40 && p[2] < 40),
             "exposure -10 should crush the frame to near-black"
         );
     }
