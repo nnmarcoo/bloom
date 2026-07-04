@@ -42,6 +42,7 @@ jobs:
           sed -i "s|^prefix=.*|prefix=$HOME/ffmpeg|" "$HOME/ffmpeg/lib/pkgconfig/"*.pc
           echo "FFMPEG_DIR=$HOME/ffmpeg" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=$HOME/ffmpeg/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$HOME/ffmpeg/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 
       - name: fmt
         run: cargo fmt --check
