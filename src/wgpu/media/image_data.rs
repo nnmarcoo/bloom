@@ -914,9 +914,9 @@ mod tests {
         let img = load_bytes("bloom-test-luma-a.psd", &bytes).expect("grayscale+alpha psd loads");
         assert_eq!((img.width, img.height), (2, 2));
         let px = img.pixels_snapshot();
-        for i in 0..4 {
+        for (i, &g) in gray.iter().enumerate() {
             let o = i * 4;
-            assert_eq!(&px[o..o + 3], &[gray[i], gray[i], gray[i]], "pixel {i}");
+            assert_eq!(&px[o..o + 3], &[g, g, g], "pixel {i}");
             assert_eq!(px[o + 3], 255, "alpha {i} (zune-psd drops grayscale alpha)");
         }
     }
@@ -927,13 +927,9 @@ mod tests {
         let bytes = raw_psd(4, 1, 1, &[&gray]);
         let img = load_bytes("bloom-test-luma.psd", &bytes).expect("grayscale psd loads");
         let px = img.pixels_snapshot();
-        for i in 0..4 {
+        for (i, &g) in gray.iter().enumerate() {
             let o = i * 4;
-            assert_eq!(
-                &px[o..o + 4],
-                &[gray[i], gray[i], gray[i], 255],
-                "pixel {i}"
-            );
+            assert_eq!(&px[o..o + 4], &[g, g, g, 255], "pixel {i}");
         }
     }
 }
