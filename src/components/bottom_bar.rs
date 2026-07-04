@@ -26,7 +26,6 @@ pub fn view<'a>(
     show_checkerboard: bool,
     has_image: bool,
     is_animation: bool,
-    is_video: bool,
     fit_active: bool,
     export_progress: Option<f32>,
 ) -> Element<'a, Message> {
@@ -152,7 +151,7 @@ pub fn view<'a>(
                     column![
                         menu_item("Preferences", Message::TogglePreferences),
                         menu_separator(),
-                        menu_item_enabled("Export", Message::ExportImage, has_image && !is_video,),
+                        menu_item_enabled("Export", Message::ExportImage, has_image),
                         menu_item_enabled("Export frame", Message::ExportFrame, is_animation),
                     ]
                     .push(menu_separator())

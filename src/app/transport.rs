@@ -97,15 +97,11 @@ impl TransportState {
         program.animation_info().is_some()
     }
 
-    pub fn is_video(&self) -> bool {
-        #[cfg(feature = "av")]
-        {
-            self.video.is_some()
-        }
-        #[cfg(not(feature = "av"))]
-        {
-            false
-        }
+    #[cfg(feature = "av")]
+    pub fn video_export_data(&self, program: &ViewProgram) -> Option<crate::export::ExportData> {
+        self.video
+            .as_ref()
+            .map(|v| program.build_video_export(v.info()))
     }
 
     pub fn volume_indicator(&self) -> (Option<f32>, bool) {

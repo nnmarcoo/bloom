@@ -21,14 +21,59 @@ pub struct ExportFrame {
     pub delay: Duration,
 }
 
+pub enum ExportSource {
+    Frames {
+        frames: Vec<ExportFrame>,
+        still_index: usize,
+    },
+    #[cfg(feature = "av")]
+    Video(VideoExportInfo),
+}
+
+#[cfg(feature = "av")]
+pub struct VideoExportInfo {
+    pub path: std::path::PathBuf,
+    pub frame_count: u64,
+    pub duration: Duration,
+}
+
 pub struct ExportData {
-    pub frames: Vec<ExportFrame>,
-    pub still_index: usize,
+    pub source: ExportSource,
     pub width: u32,
     pub height: u32,
     pub modifiers: Vec<Modifier>,
     pub crop: Option<[f32; 4]>,
     pub rotation: u8,
+}
+
+impl ExportData {
+    pub fn is_animated(&self) -> bool {
+        matches!(&self.source, ExportSource::Frames { frames, .. } if frames.len() > 1)
+    }
+
+    pub fn is_video(&self) -> bool {
+        #[cfg(feature = "av")]
+        {
+            matches!(&self.source, ExportSource::Video(_))
+        }
+        #[cfg(not(feature = "av"))]
+        {
+            false
+        }
+    }
+
+    fn in_memory(&self) -> Result<(&[ExportFrame], usize), String> {
+        match &self.source {
+            ExportSource::Frames {
+                frames,
+                still_index,
+            } => Ok((frames, *still_index)),
+            #[cfg(feature = "av")]
+            ExportSource::Video(_) => {
+                Err("Video frames are not available for this format.".to_string())
+            }
+        }
+    }
 }
 
 const STRIP_HEIGHT: u32 = 64;
@@ -131,9 +176,9 @@ pub fn render_still_rgba(data: &ExportData) -> Result<(u32, u32, Vec<u8>), Strin
     let drawing_rasters = drawing_raster::build_layers(&data.modifiers, data.width, data.height);
     let drawing_layers = layer_views(&drawing_rasters);
     let geom = geom_of(data);
-    let still = data
-        .frames
-        .get(data.still_index)
+    let (frames, still_index) = data.in_memory()?;
+    let still = frames
+        .get(still_index)
         .ok_or_else(|| "No frame available.".to_string())?;
     let processed = process_frame(data, &text_layers, &drawing_layers, &still.pixels)?;
     let ctx = ctx_with(&geom, &processed);
@@ -143,10 +188,20 @@ pub fn render_still_rgba(data: &ExportData) -> Result<(u32, u32, Vec<u8>), Strin
 }
 
 pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Result<String, String> {
+    #[cfg(feature = "av")]
+    if let ExportSource::Video(info) = &data.source {
+        if let Err(e) = crate::video_export::encode_video(&data, info, path, &progress) {
+            let _ = std::fs::remove_file(path);
+            return Err(e);
+        }
+        return Ok(export_name(path));
+    }
+
     let text_layers = text_raster::build_layers(&data.modifiers, data.width, data.height);
     let drawing_rasters = drawing_raster::build_layers(&data.modifiers, data.width, data.height);
     let drawing_layers = layer_views(&drawing_rasters);
     let geom = geom_of(&data);
+    let (frames, still_index) = data.in_memory()?;
 
     let ext = path
         .extension()
@@ -155,12 +210,27 @@ pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Resul
         .to_ascii_lowercase();
 
     match ext.as_str() {
-        "gif" => encode_gif(&geom, &data, &text_layers, &drawing_layers, path, &progress)?,
-        "apng" => encode_apng(&geom, &data, &text_layers, &drawing_layers, path, &progress)?,
+        "gif" => encode_gif(
+            &geom,
+            &data,
+            frames,
+            &text_layers,
+            &drawing_layers,
+            path,
+            &progress,
+        )?,
+        "apng" => encode_apng(
+            &geom,
+            &data,
+            frames,
+            &text_layers,
+            &drawing_layers,
+            path,
+            &progress,
+        )?,
         _ => {
-            let still = data
-                .frames
-                .get(data.still_index)
+            let still = frames
+                .get(still_index)
                 .ok_or_else(|| "No frame available.".to_string())?;
             let processed = process_frame(&data, &text_layers, &drawing_layers, &still.pixels)?;
             let ctx = ctx_with(&geom, &processed);
@@ -172,10 +242,44 @@ pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Resul
         }
     }
 
-    Ok(path
-        .file_name()
+    Ok(export_name(path))
+}
+
+fn export_name(path: &Path) -> String {
+    path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
+#[cfg(feature = "av")]
+pub struct FrameProcessor<'a> {
+    data: &'a ExportData,
+    text_layers: Vec<Option<TextRaster>>,
+    drawing_rasters: Vec<Option<DrawingRaster>>,
+    geom: Geom,
+}
+
+#[cfg(feature = "av")]
+impl<'a> FrameProcessor<'a> {
+    pub fn new(data: &'a ExportData) -> Self {
+        Self {
+            data,
+            text_layers: text_raster::build_layers(&data.modifiers, data.width, data.height),
+            drawing_rasters: drawing_raster::build_layers(&data.modifiers, data.width, data.height),
+            geom: geom_of(data),
+        }
+    }
+
+    pub fn out_size(&self) -> (u32, u32) {
+        (self.geom.out_w, self.geom.out_h)
+    }
+
+    pub fn process_into(&self, pixels: &[u8], out: &mut [u8]) -> Result<(), String> {
+        let drawing_layers = layer_views(&self.drawing_rasters);
+        let processed = process_frame(self.data, &self.text_layers, &drawing_layers, pixels)?;
+        render_into(out, &ctx_with(&self.geom, &processed));
+        Ok(())
+    }
 }
 
 fn ensure_available(pixels: &[u8], w: u32, h: u32) -> Result<(), String> {
@@ -279,12 +383,12 @@ fn encode_jpeg(ctx: &ExportCtx, path: &Path, progress: &impl Fn(f32)) -> Result<
 fn encode_apng(
     geom: &Geom,
     data: &ExportData,
+    frames: &[ExportFrame],
     text_layers: &[Option<TextRaster>],
     drawing_layers: &[Option<LayerView<'_>>],
     path: &Path,
     progress: &impl Fn(f32),
 ) -> Result<(), String> {
-    let frames = &data.frames;
     let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
     let mut enc = png::Encoder::new(BufWriter::new(file), geom.out_w, geom.out_h);
     enc.set_color(png::ColorType::Rgba);
@@ -314,6 +418,7 @@ fn encode_apng(
 fn encode_gif(
     geom: &Geom,
     data: &ExportData,
+    frames: &[ExportFrame],
     text_layers: &[Option<TextRaster>],
     drawing_layers: &[Option<LayerView<'_>>],
     path: &Path,
@@ -323,7 +428,6 @@ fn encode_gif(
         return Err("Image is too large for the GIF format (max 65535 px).".to_string());
     }
 
-    let frames = &data.frames;
     let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
     let mut enc = gif::Encoder::new(
         BufWriter::new(file),
@@ -402,11 +506,13 @@ mod tests {
             ..Text::default()
         };
         let data = ExportData {
-            frames: vec![ExportFrame {
-                pixels,
-                delay: Duration::ZERO,
-            }],
-            still_index: 0,
+            source: ExportSource::Frames {
+                frames: vec![ExportFrame {
+                    pixels,
+                    delay: Duration::ZERO,
+                }],
+                still_index: 0,
+            },
             width: w,
             height: h,
             modifiers: vec![Modifier::new(ModifierKind::Text(text))],
@@ -439,11 +545,13 @@ mod tests {
             ..Drawing::default()
         };
         let data = ExportData {
-            frames: vec![ExportFrame {
-                pixels,
-                delay: Duration::ZERO,
-            }],
-            still_index: 0,
+            source: ExportSource::Frames {
+                frames: vec![ExportFrame {
+                    pixels,
+                    delay: Duration::ZERO,
+                }],
+                still_index: 0,
+            },
             width: w,
             height: h,
             modifiers: vec![Modifier::new(ModifierKind::Drawing(drawing))],
@@ -485,11 +593,13 @@ mod tests {
         };
         let ca = ChromaticAberration { amount: 30.0 };
         let data = ExportData {
-            frames: vec![ExportFrame {
-                pixels,
-                delay: Duration::ZERO,
-            }],
-            still_index: 0,
+            source: ExportSource::Frames {
+                frames: vec![ExportFrame {
+                    pixels,
+                    delay: Duration::ZERO,
+                }],
+                still_index: 0,
+            },
             width: w,
             height: h,
             modifiers: vec![
@@ -540,11 +650,13 @@ mod tests {
         let pixels = Arc::new(px);
 
         let data = ExportData {
-            frames: vec![ExportFrame {
-                pixels,
-                delay: Duration::ZERO,
-            }],
-            still_index: 0,
+            source: ExportSource::Frames {
+                frames: vec![ExportFrame {
+                    pixels,
+                    delay: Duration::ZERO,
+                }],
+                still_index: 0,
+            },
             width: w,
             height: h,
             modifiers: vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
@@ -595,11 +707,13 @@ mod tests {
 
         let (w, h) = (96u32, 72u32);
         let data = ExportData {
-            frames: vec![ExportFrame {
-                pixels: gradient(w, h),
-                delay: Duration::ZERO,
-            }],
-            still_index: 0,
+            source: ExportSource::Frames {
+                frames: vec![ExportFrame {
+                    pixels: gradient(w, h),
+                    delay: Duration::ZERO,
+                }],
+                still_index: 0,
+            },
             width: w,
             height: h,
             modifiers: vec![

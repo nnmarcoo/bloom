@@ -778,10 +778,31 @@ impl ViewProgram {
         height: u32,
     ) -> crate::export::ExportData {
         crate::export::ExportData {
-            frames,
-            still_index,
+            source: crate::export::ExportSource::Frames {
+                frames,
+                still_index,
+            },
             width,
             height,
+            modifiers: self.modifiers.as_ref().clone(),
+            crop: self.active_crop(),
+            rotation: self.rotation,
+        }
+    }
+
+    #[cfg(feature = "av")]
+    pub fn build_video_export(
+        &self,
+        info: &crate::wgpu::media::video::VideoInfo,
+    ) -> crate::export::ExportData {
+        crate::export::ExportData {
+            source: crate::export::ExportSource::Video(crate::export::VideoExportInfo {
+                path: info.path.clone(),
+                frame_count: info.frame_count,
+                duration: info.duration,
+            }),
+            width: info.width,
+            height: info.height,
             modifiers: self.modifiers.as_ref().clone(),
             crop: self.active_crop(),
             rotation: self.rotation,

@@ -454,8 +454,13 @@ impl App {
                 return Task::batch([task, self.maybe_request_histogram()]);
             }
             Message::ExportImage => {
+                #[cfg(feature = "av")]
+                if let Some(data) = self.transport.video_export_data(&self.program) {
+                    let suggested = self.suggested_export_name("mp4");
+                    return tasks::export_image(data, suggested);
+                }
                 if let Some(data) = self.program.export_data() {
-                    let ext = if data.frames.len() > 1 { "gif" } else { "png" };
+                    let ext = if data.is_animated() { "gif" } else { "png" };
                     let suggested = self.suggested_export_name(ext);
                     return tasks::export_image(data, suggested);
                 }
@@ -707,7 +712,6 @@ impl App {
                 self.program.show_checkerboard,
                 self.gallery.current().is_some(),
                 self.transport.playback_active(&self.program),
-                self.transport.is_video(),
                 self.program.fit_active(),
                 self.export_progress,
             ));

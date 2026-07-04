@@ -178,6 +178,10 @@ impl VideoState {
         })
     }
 
+    pub fn info(&self) -> &VideoInfo {
+        &self.info
+    }
+
     pub fn duration(&self) -> Duration {
         self.info.duration
     }
