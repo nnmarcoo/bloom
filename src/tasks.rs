@@ -57,19 +57,27 @@ pub fn select_media() -> iced::Task<Message> {
 pub fn export_image(data: ExportData, suggested_name: String) -> iced::Task<Message> {
     let (mut tx, rx) = futures::channel::mpsc::channel(64);
 
-    let animated = data.frames.len() > 1;
+    let animated = data.is_animated();
+    let video = data.is_video();
 
     tokio::spawn(async move {
         let mut dialog = rfd::AsyncFileDialog::new();
-        if animated {
+        if video {
             dialog = dialog
-                .add_filter("GIF Animation", &["gif"])
-                .add_filter("Animated PNG", &["apng"]);
+                .add_filter("MP4 Video", &["mp4"])
+                .add_filter("Matroska Video", &["mkv"])
+                .add_filter("QuickTime Video", &["mov"]);
+        } else {
+            if animated {
+                dialog = dialog
+                    .add_filter("GIF Animation", &["gif"])
+                    .add_filter("Animated PNG", &["apng"]);
+            }
+            dialog = dialog
+                .add_filter("PNG Image", &["png"])
+                .add_filter("JPEG Image", &["jpg", "jpeg"])
+                .add_filter("WebP Image", &["webp"]);
         }
-        dialog = dialog
-            .add_filter("PNG Image", &["png"])
-            .add_filter("JPEG Image", &["jpg", "jpeg"])
-            .add_filter("WebP Image", &["webp"]);
         let handle = dialog.set_file_name(&suggested_name).save_file().await;
 
         let Some(handle) = handle else { return };

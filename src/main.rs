@@ -12,6 +12,8 @@ mod modifiers;
 mod styles;
 mod tasks;
 mod ui;
+#[cfg(feature = "av")]
+mod video_export;
 mod wgpu;
 mod widgets;
 use std::{env, path::PathBuf};
