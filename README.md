@@ -16,7 +16,7 @@
 
 - **GPU rendering** — hardware-accelerated via [wgpu](https://wgpu.rs), with mipmaps and tiled textures for images beyond GPU limits
 - **Animation & video** — GIF, APNG, and WebP, plus MP4, MOV, MKV, WebM, and more with audio, scrubbing, and frame stepping
-- **Non-destructive modifiers** — 17 stackable effects, from color correction (levels, exposure, vibrance, …) to Gaussian blur, halftone, grain, and pixel sort at any angle
+- **Non-destructive modifiers** — 22 stackable effects, from color correction (levels, exposure, vibrance, …) to blur (Gaussian, motion, radial), halftone, grain, and pixel sort at any angle
 - **Draw & text tools** — paint freehand brush strokes and place text directly on the canvas
 - **Export** — PNG, JPEG, or WebP with crop, rotation, and modifiers applied
 - **Gallery** — browse every image in a folder; open files by drag and drop or clipboard paste
