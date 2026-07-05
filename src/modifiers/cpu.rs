@@ -521,7 +521,7 @@ fn hue_to_rgb(p: f32, q: f32, t_in: f32) -> f32 {
 
 #[cfg(test)]
 mod pointwise_tests {
-    use crate::modifiers::kinds::{Grayscale, Invert, Sepia, Temperature};
+    use crate::modifiers::kinds::{Duotone, Grayscale, Invert, Sepia, Solarize, Temperature};
     use crate::modifiers::{Modifier, ModifierKind};
 
     fn apply(kind: ModifierKind, c: [f32; 4]) -> [f32; 4] {
@@ -530,16 +530,28 @@ mod pointwise_tests {
 
     #[test]
     fn invert_flips_channels_and_scales_by_amount() {
-        let full = apply(ModifierKind::Invert(Invert { amount: 1.0 }), [0.2, 0.6, 0.9, 1.0]);
+        let full = apply(
+            ModifierKind::Invert(Invert { amount: 1.0 }),
+            [0.2, 0.6, 0.9, 1.0],
+        );
         assert!((full[0] - 0.8).abs() < 1e-5);
         assert!((full[1] - 0.4).abs() < 1e-5);
         assert!((full[2] - 0.1).abs() < 1e-5);
         assert_eq!(full[3], 1.0, "alpha untouched");
 
-        let half = apply(ModifierKind::Invert(Invert { amount: 0.5 }), [0.2, 0.6, 0.9, 1.0]);
-        assert!((half[0] - 0.5).abs() < 1e-5, "amount 0.5 is halfway to inverse");
+        let half = apply(
+            ModifierKind::Invert(Invert { amount: 0.5 }),
+            [0.2, 0.6, 0.9, 1.0],
+        );
+        assert!(
+            (half[0] - 0.5).abs() < 1e-5,
+            "amount 0.5 is halfway to inverse"
+        );
 
-        let none = apply(ModifierKind::Invert(Invert { amount: 0.0 }), [0.2, 0.6, 0.9, 1.0]);
+        let none = apply(
+            ModifierKind::Invert(Invert { amount: 0.0 }),
+            [0.2, 0.6, 0.9, 1.0],
+        );
         assert!((none[0] - 0.2).abs() < 1e-5, "amount 0 is identity");
     }
 
@@ -551,7 +563,10 @@ mod pointwise_tests {
         );
         let luma = 0.2 * 0.2126 + 0.6 * 0.7152 + 0.9 * 0.0722;
         assert!((g[0] - luma).abs() < 1e-5);
-        assert!((g[0] - g[1]).abs() < 1e-6 && (g[1] - g[2]).abs() < 1e-6, "all channels equal");
+        assert!(
+            (g[0] - g[1]).abs() < 1e-6 && (g[1] - g[2]).abs() < 1e-6,
+            "all channels equal"
+        );
         assert_eq!(g[3], 1.0);
     }
 
@@ -578,7 +593,62 @@ mod pointwise_tests {
         assert!(s[0] > s[1] && s[1] > s[2], "sepia is R>G>B warm tint");
         assert_eq!(s[3], 1.0);
 
-        let none = apply(ModifierKind::Sepia(Sepia { intensity: 0.0 }), [0.5, 0.5, 0.5, 1.0]);
+        let none = apply(
+            ModifierKind::Sepia(Sepia { intensity: 0.0 }),
+            [0.5, 0.5, 0.5, 1.0],
+        );
         assert!((none[0] - 0.5).abs() < 1e-5, "intensity 0 is identity");
+    }
+
+    #[test]
+    fn solarize_inverts_above_threshold_only() {
+        let s = apply(
+            ModifierKind::Solarize(Solarize { threshold: 0.5 }),
+            [0.2, 0.8, 0.5, 1.0],
+        );
+        assert!((s[0] - 0.2).abs() < 1e-5, "0.2 < 0.5 stays");
+        assert!((s[1] - 0.2).abs() < 1e-5, "0.8 >= 0.5 inverts to 0.2");
+        assert!((s[2] - 0.5).abs() < 1e-5, "0.5 >= 0.5 inverts to 0.5");
+        assert_eq!(s[3], 1.0);
+    }
+
+    #[test]
+    fn duotone_maps_luma_endpoints_to_colors() {
+        let shadow = [0.1, 0.15, 0.4];
+        let highlight = [1.0, 0.95, 0.8];
+        let d = |c| {
+            apply(
+                ModifierKind::Duotone(Duotone {
+                    shadow,
+                    highlight,
+                    amount: 1.0,
+                }),
+                c,
+            )
+        };
+
+        let black = d([0.0, 0.0, 0.0, 1.0]);
+        for i in 0..3 {
+            assert!((black[i] - shadow[i]).abs() < 1e-5, "black -> shadow color");
+        }
+
+        let white = d([1.0, 1.0, 1.0, 1.0]);
+        for i in 0..3 {
+            assert!(
+                (white[i] - highlight[i]).abs() < 1e-5,
+                "white -> highlight color"
+            );
+        }
+        assert_eq!(white[3], 1.0);
+
+        let neutral = apply(
+            ModifierKind::Duotone(Duotone {
+                shadow,
+                highlight,
+                amount: 0.0,
+            }),
+            [0.3, 0.7, 0.2, 1.0],
+        );
+        assert!((neutral[0] - 0.3).abs() < 1e-5, "amount 0 is identity");
     }
 }

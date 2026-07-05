@@ -3,6 +3,7 @@ mod chromatic_aberration;
 mod color_balance;
 mod crop;
 mod drawing;
+mod duotone;
 mod exposure;
 mod gaussian_blur;
 mod grain;
@@ -16,6 +17,7 @@ mod pixel_sort;
 mod posterize;
 mod radial_blur;
 mod sepia;
+mod solarize;
 mod temperature;
 mod text;
 mod threshold;
@@ -27,6 +29,7 @@ pub use chromatic_aberration::ChromaticAberration;
 pub use color_balance::ColorBalance;
 pub use crop::Crop;
 pub use drawing::{Drawing, Stroke};
+pub use duotone::Duotone;
 pub use exposure::Exposure;
 pub use gaussian_blur::GaussianBlur;
 pub use grain::Grain;
@@ -40,6 +43,7 @@ pub use pixel_sort::PixelSort;
 pub use posterize::Posterize;
 pub use radial_blur::RadialBlur;
 pub use sepia::Sepia;
+pub use solarize::Solarize;
 pub use temperature::Temperature;
 pub use text::Text;
 pub use threshold::Threshold;
@@ -142,6 +146,27 @@ fn gradient_row<'a>(
             .format(fmt)
             .track(track),
     ]
+    .align_y(Vertical::Center)
+    .spacing(4)
+    .into()
+}
+
+fn color_row<'a>(
+    label: &'a str,
+    rgb: [f32; 3],
+    on_change: impl Fn([f32; 3]) -> Message + 'static,
+) -> Element<'a, Message> {
+    row![
+        iced::widget::text(label)
+            .size(10)
+            .width(Length::Fixed(58.0))
+            .align_x(Horizontal::Left),
+        iced::widget::container(crate::widgets::color_swatch::ColorSwatch::new(
+            rgb[0], rgb[1], rgb[2], on_change,
+        ))
+        .center_x(Length::Fill),
+    ]
+    .width(Length::Fill)
     .align_y(Vertical::Center)
     .spacing(4)
     .into()

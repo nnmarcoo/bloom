@@ -237,6 +237,8 @@ fn add_row<'a>() -> Element<'a, Message> {
                             menu_item("Posterize", EditMsg::Add(ModifierType::Posterize).into()),
                             menu_item("Threshold", EditMsg::Add(ModifierType::Threshold).into()),
                             menu_item("Sepia", EditMsg::Add(ModifierType::Sepia).into()),
+                            menu_item("Solarize", EditMsg::Add(ModifierType::Solarize).into()),
+                            menu_item("Duotone", EditMsg::Add(ModifierType::Duotone).into()),
                         ],
                         200
                     )

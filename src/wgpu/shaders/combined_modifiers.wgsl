@@ -205,6 +205,17 @@ fn apply_entry(e: ModEntry, full_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
             );
             c = vec4<f32>(mix(c.rgb, sep, p0), c.a);
         }
+        case 15u: {
+            let solar = select(c.rgb, vec3<f32>(1.0) - c.rgb, c.rgb >= vec3<f32>(p0));
+            c = vec4<f32>(solar, c.a);
+        }
+        case 17u: {
+            let luma = dot(c.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+            let shadow = vec3<f32>(p0, p1, p2);
+            let highlight = vec3<f32>(p3, p4, p5);
+            let toned = mix(shadow, highlight, luma);
+            c = vec4<f32>(mix(c.rgb, toned, p6), c.a);
+        }
         case 16u: {
             let cs = cos(p1);
             let sn = sin(p1);

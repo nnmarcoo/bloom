@@ -5,9 +5,9 @@ use iced::Element;
 use crate::app::Message;
 use crate::modifiers::gpu::{ModEntry, TileInfo};
 use crate::modifiers::kinds::{
-    BrightnessContrast, ChromaticAberration, ColorBalance, Crop, Drawing, Exposure, GaussianBlur,
-    Grain, Grayscale, Halftone, HueSaturation, Invert, Levels, MotionBlur, PixelSort, Posterize,
-    RadialBlur, Sepia, Temperature, Text, Threshold, Vibrance, Vignette,
+    BrightnessContrast, ChromaticAberration, ColorBalance, Crop, Drawing, Duotone, Exposure,
+    GaussianBlur, Grain, Grayscale, Halftone, HueSaturation, Invert, Levels, MotionBlur, PixelSort,
+    Posterize, RadialBlur, Sepia, Solarize, Temperature, Text, Threshold, Vibrance, Vignette,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,6 +177,8 @@ define_modifiers!(
     Grayscale,
     Invert,
     Sepia,
+    Duotone,
+    Solarize,
     GaussianBlur,
     MotionBlur,
     RadialBlur,
@@ -270,6 +272,10 @@ pub enum ModifierParam {
     GrayscaleAmount(f32),
     InvertAmount(f32),
     SepiaIntensity(f32),
+    SolarizeThreshold(f32),
+    DuotoneShadow([f32; 3]),
+    DuotoneHighlight([f32; 3]),
+    DuotoneAmount(f32),
     GaussianBlurRadius(f32),
     MotionBlurAngle(f32),
     MotionBlurDistance(f32),
@@ -363,5 +369,7 @@ pub mod ids {
     pub const GRAYSCALE: u32 = 12;
     pub const TEMPERATURE: u32 = 13;
     pub const SEPIA: u32 = 14;
+    pub const SOLARIZE: u32 = 15;
     pub const HALFTONE: u32 = 16;
+    pub const DUOTONE: u32 = 17;
 }
