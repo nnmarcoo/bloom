@@ -151,13 +151,15 @@ pub fn view<'a>(
             keymap,
             Action::ToggleFullscreen,
         ),
-        with_tooltip(
+        with_tooltip_key(
             svg_button(
                 include_bytes!("../../assets/icons/folder.svg"),
                 Message::SelectMedia
             ),
             "Select media",
             Position::Top,
+            keymap,
+            Action::OpenMedia,
         ),
         with_tooltip(
             MenuButton::new(

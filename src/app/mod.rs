@@ -634,6 +634,10 @@ impl App {
             Some(Action::ToggleInfoPanel) => Task::done(Message::ToggleInfoColumn),
             Some(Action::ToggleEditPanel) => Task::done(Message::ToggleEditPanel),
             Some(Action::ToggleCheckerboard) => Task::done(Message::ToggleCheckerboard),
+            Some(Action::ToggleBottomBar) => Task::done(Message::ToggleBottomBar),
+            Some(Action::OpenMedia) => Task::done(Message::SelectMedia),
+            Some(Action::CopyImage) => Task::done(Message::CopyImage),
+            Some(Action::ExportImage) => Task::done(Message::ExportImage),
             None => Task::none(),
         }
     }
