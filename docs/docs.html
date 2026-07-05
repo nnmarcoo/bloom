@@ -25,17 +25,25 @@
 
 <div class="docwrap">
   <aside class="sidebar">
+    <span class="navlabel">Overview</span>
     <a href="#features" class="active">Features</a>
+    <span class="navlabel">Reference</span>
     <a href="#shortcuts">Shortcuts</a>
     <a href="#mouse">Mouse</a>
     <a href="#formats">Formats</a>
     <a href="#modifiers">Modifiers</a>
     <a href="#themes">Themes</a>
+    <span class="navlabel">Get bloom</span>
     <a href="#install">Installation</a>
-    <a href="#build">Build</a>
+    <a href="#build">Build from source</a>
   </aside>
 
   <div class="content">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <a href="index.html">bloom</a>
+      <span class="sep">/</span>
+      <span class="here">Docs</span>
+    </nav>
     <section class="docsection" id="features">
       <h2>Features</h2>
       <p class="lead">GPU-accelerated and entirely local. No telemetry, no accounts, no network.</p>
@@ -338,7 +346,7 @@ cargo build --release --features av</pre>
 
   /* sidebar scrollspy */
   const links = Array.from(document.querySelectorAll('.sidebar a'));
-  const byId = id => links.find(l => l.getAttribute('href') === '#' + id);
+  const matching = id => links.filter(l => l.getAttribute('href') === '#' + id);
   const sections = Array.from(document.querySelectorAll('.docsection'));
   const line = 100;
   function syncSpy() {
@@ -348,7 +356,7 @@ cargo build --release --features av</pre>
     }
     if (innerHeight + scrollY >= document.body.offsetHeight - 2) current = sections[sections.length - 1];
     links.forEach(l => l.classList.remove('active'));
-    byId(current.id)?.classList.add('active');
+    matching(current.id).forEach(l => l.classList.add('active'));
   }
   let ticking = false;
   addEventListener('scroll', () => {
