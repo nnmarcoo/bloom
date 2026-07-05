@@ -50,6 +50,7 @@ pub struct App {
     preference_state: preferences::PreferenceState,
     cursor_window: Vec2,
     picked_color: Option<[u8; 4]>,
+    context_menu: Option<Vec2>,
     transport: TransportState,
     notifications: Vec<NotificationEntry>,
     export_progress: Option<f32>,
@@ -85,6 +86,7 @@ impl App {
             preference_state: preferences::PreferenceState::default(),
             cursor_window: Vec2::ZERO,
             picked_color: None,
+            context_menu: None,
             transport,
             notifications: Vec::new(),
             export_progress: None,
@@ -127,7 +129,8 @@ pub enum Message {
     ClipboardLoaded(MediaData),
     CursorMoved(Vec2),
     CursorWindow(Vec2),
-    PickColor,
+    OpenContextMenu(Vec2),
+    CloseContextMenu,
     PanStarted,
     PanEnded,
     CopyColor,
@@ -383,13 +386,18 @@ impl App {
                 }
             }
             Message::CursorMoved(pos) => {
-                if self.editing_config.is_none() {
+                if self.editing_config.is_none() && self.context_menu.is_none() {
                     self.program.set_cursor_pos(Some(pos));
                 }
             }
             Message::CursorWindow(pos) => self.cursor_window = pos,
-            Message::PickColor => {
+            Message::OpenContextMenu(pos) => {
                 self.picked_color = self.program.color_at_window(self.cursor_window);
+                self.program.set_cursor_from_window(self.cursor_window);
+                self.context_menu = Some(pos);
+            }
+            Message::CloseContextMenu => {
+                self.context_menu = None;
             }
             Message::PanStarted => {
                 self.program.set_panning(true);
@@ -699,6 +707,7 @@ impl App {
             dragging_modifier: self.edit.dragging,
             drag_hover_target: self.edit.drag_hover,
             histogram,
+            context_menu: self.context_menu.map(|p| iced::Point::new(p.x, p.y)),
             #[cfg(feature = "av")]
             video_panel,
         }));
@@ -756,9 +765,6 @@ impl App {
         let events = event::listen_with(|event, status, _window| match (&event, status) {
             (Event::Mouse(iced::mouse::Event::CursorMoved { position }), _) => {
                 Some(Message::CursorWindow(Vec2::new(position.x, position.y)))
-            }
-            (Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right)), _) => {
-                Some(Message::PickColor)
             }
             (_, event::Status::Ignored) => Some(Message::Event(event)),
             _ => None,

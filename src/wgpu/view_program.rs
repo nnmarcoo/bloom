@@ -411,6 +411,11 @@ impl ViewProgram {
         }
     }
 
+    pub fn set_cursor_from_window(&mut self, window_pos: Vec2) {
+        let local = window_pos - vec2(self.bounds.x, self.bounds.y);
+        self.set_cursor_pos(Some(local));
+    }
+
     pub fn set_panning(&mut self, panning: bool) {
         self.panning = panning;
     }

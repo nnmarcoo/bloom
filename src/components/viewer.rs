@@ -2,10 +2,9 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use iced::{
-    Center, Element, Length, Theme,
+    Center, Element, Length, Point, Theme,
     widget::{column, container, shader, stack, text},
 };
-use iced_aw::ContextMenu;
 
 use crate::{
     app::{Message, Tool},
@@ -17,6 +16,7 @@ use crate::{
     styles::{PAD, spinner_bg_style},
     wgpu::view_program::{Histogram, ViewProgram},
     widgets::{
+        context_menu::ContextMenu,
         crop_overlay::CropOverlay,
         draw_overlay::DrawOverlay,
         loading_spinner::Circular,
@@ -44,6 +44,7 @@ pub struct ViewerCtx<'a> {
     pub dragging_modifier: Option<usize>,
     pub drag_hover_target: Option<usize>,
     pub histogram: Option<&'a Histogram>,
+    pub context_menu: Option<Point>,
     #[cfg(feature = "av")]
     pub video_panel: Option<info_panel::VideoPanel<'a>>,
 }
@@ -165,22 +166,27 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
         "Show Bottom Bar"
     };
     let has_media = image_size.is_some();
-    let viewer_with_menu: Element<'_, Message> = ContextMenu::new(viewer, move || {
-        styled_menu(
-            column![
-                menu_item_enabled("Open File Location", Message::OpenFileLocation, has_media),
-                menu_separator(),
-                menu_item_enabled("Copy Color", Message::CopyColor, has_media),
-                menu_item_enabled("Copy Image", Message::CopyImage, has_media),
-                menu_item_enabled("Copy File Path", Message::CopyPath, has_media),
-                menu_separator(),
-                menu_item_enabled("Export", Message::ExportImage, has_media),
-                menu_separator(),
-                menu_item(bottom_bar_label, Message::ToggleBottomBar),
-            ],
-            180,
-        )
-    })
+    let menu = styled_menu(
+        column![
+            menu_item_enabled("Open File Location", Message::OpenFileLocation, has_media),
+            menu_separator(),
+            menu_item_enabled("Copy Color", Message::CopyColor, has_media),
+            menu_item_enabled("Copy Image", Message::CopyImage, has_media),
+            menu_item_enabled("Copy File Path", Message::CopyPath, has_media),
+            menu_separator(),
+            menu_item_enabled("Export", Message::ExportImage, has_media),
+            menu_separator(),
+            menu_item(bottom_bar_label, Message::ToggleBottomBar),
+        ],
+        180,
+    );
+    let viewer_with_menu: Element<'_, Message> = ContextMenu::new(
+        viewer,
+        menu,
+        ctx.context_menu,
+        |p| Message::OpenContextMenu(glam::Vec2::new(p.x, p.y)),
+        Message::CloseContextMenu,
+    )
     .into();
 
     if !ctx.show_info && !ctx.show_edit {

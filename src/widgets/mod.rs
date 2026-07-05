@@ -1,5 +1,6 @@
 pub mod angle_dial;
 pub mod color_swatch;
+pub mod context_menu;
 pub mod crop_overlay;
 pub mod draw_overlay;
 pub mod field_editor;
