@@ -5,10 +5,43 @@ use ffmpeg::software::scaling::{Context as Scaler, Flags};
 use ffmpeg::{Dictionary, Packet, Rational, Rescale, codec, encoder, frame, media, picture};
 use ffmpeg_next as ffmpeg;
 
-use crate::export::{ExportData, FrameProcessor, VideoExportInfo};
+use crate::modifiers::drawing_raster::{self, DrawingRaster};
+use crate::modifiers::text_raster::{self, TextRaster};
+
+use super::raster::render_into;
+use super::{ExportData, Geom, VideoExportInfo, ctx_with, geom_of, layer_views, process_frame};
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
+}
+
+struct FrameProcessor<'a> {
+    data: &'a ExportData,
+    text_layers: Vec<Option<TextRaster>>,
+    drawing_rasters: Vec<Option<DrawingRaster>>,
+    geom: Geom,
+}
+
+impl<'a> FrameProcessor<'a> {
+    fn new(data: &'a ExportData) -> Self {
+        Self {
+            data,
+            text_layers: text_raster::build_layers(&data.modifiers, data.width, data.height),
+            drawing_rasters: drawing_raster::build_layers(&data.modifiers, data.width, data.height),
+            geom: geom_of(data),
+        }
+    }
+
+    fn out_size(&self) -> (u32, u32) {
+        (self.geom.out_w, self.geom.out_h)
+    }
+
+    fn process_into(&self, pixels: &[u8], out: &mut [u8]) -> Result<(), String> {
+        let drawing_layers = layer_views(&self.drawing_rasters);
+        let processed = process_frame(self.data, &self.text_layers, &drawing_layers, pixels)?;
+        render_into(out, &ctx_with(&self.geom, &processed));
+        Ok(())
+    }
 }
 
 struct AudioCopy {
@@ -155,7 +188,7 @@ fn write_encoded(out: &mut Output) -> Result<(), String> {
     Ok(())
 }
 
-pub fn encode_video(
+pub(super) fn encode_video(
     data: &ExportData,
     info: &VideoExportInfo,
     path: &Path,

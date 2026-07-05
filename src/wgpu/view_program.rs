@@ -13,6 +13,7 @@ use rayon::prelude::*;
 
 use crate::{
     app::Message,
+    export::{ExportData, ExportFrame, ExportSource},
     modifiers::{
         Modifier, cpu,
         drawing_raster::{DrawingLayerCache, LayerView},
@@ -739,9 +740,7 @@ impl ViewProgram {
         )
     }
 
-    pub fn export_data(&self) -> Option<crate::export::ExportData> {
-        use crate::export::ExportFrame;
-
+    pub fn export_data(&self) -> Option<ExportData> {
         let anim = match &self.animation {
             Some(anim) => anim,
             None => return self.export_frame_data(),
@@ -759,26 +758,24 @@ impl ViewProgram {
         Some(self.build_export(frames, anim.current_index(), first.width, first.height))
     }
 
-    pub fn export_frame_data(&self) -> Option<crate::export::ExportData> {
-        use crate::export::ExportFrame;
-
+    pub fn export_frame_data(&self) -> Option<ExportData> {
         let image = self.image.as_ref()?;
         let frames = vec![ExportFrame {
             pixels: image.pixels_snapshot(),
-            delay: std::time::Duration::ZERO,
+            delay: Duration::ZERO,
         }];
         Some(self.build_export(frames, 0, image.width, image.height))
     }
 
     fn build_export(
         &self,
-        frames: Vec<crate::export::ExportFrame>,
+        frames: Vec<ExportFrame>,
         still_index: usize,
         width: u32,
         height: u32,
-    ) -> crate::export::ExportData {
-        crate::export::ExportData {
-            source: crate::export::ExportSource::Frames {
+    ) -> ExportData {
+        ExportData {
+            source: ExportSource::Frames {
                 frames,
                 still_index,
             },
@@ -791,12 +788,9 @@ impl ViewProgram {
     }
 
     #[cfg(feature = "av")]
-    pub fn build_video_export(
-        &self,
-        info: &crate::wgpu::media::video::VideoInfo,
-    ) -> crate::export::ExportData {
-        crate::export::ExportData {
-            source: crate::export::ExportSource::Video(crate::export::VideoExportInfo {
+    pub fn build_video_export(&self, info: &crate::wgpu::media::video::VideoInfo) -> ExportData {
+        ExportData {
+            source: ExportSource::Video(crate::export::VideoExportInfo {
                 path: info.path.clone(),
                 frame_count: info.frame_count,
                 duration: info.duration,
