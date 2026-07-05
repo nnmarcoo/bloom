@@ -168,10 +168,17 @@ pub fn open_url(url: &'static str) -> iced::Task<Message> {
 pub fn open_file_location(path: PathBuf) -> iced::Task<Message> {
     use std::process::Command;
 
+    let path = std::fs::canonicalize(&path).unwrap_or(path);
+
     #[cfg(target_os = "windows")]
-    let _ = Command::new("explorer")
-        .arg(format!("/select,{}", path.display()))
-        .spawn();
+    {
+        use std::os::windows::process::CommandExt;
+        let native = path.to_string_lossy();
+        let native = native.strip_prefix(r"\\?\").unwrap_or(&native);
+        let _ = Command::new("explorer")
+            .raw_arg(format!("/select,\"{native}\""))
+            .spawn();
+    }
 
     #[cfg(target_os = "macos")]
     let _ = Command::new("open").arg("-R").arg(&path).spawn();
