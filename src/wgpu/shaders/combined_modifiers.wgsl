@@ -187,6 +187,24 @@ fn apply_entry(e: ModEntry, full_uv: vec2<f32>, c_in: vec4<f32>) -> vec4<f32> {
             let grain = (noise - vec3<f32>(0.5)) * p0 * luma_weight;
             c = vec4<f32>(c.rgb + grain, c.a);
         }
+        case 11u: {
+            c = vec4<f32>(mix(c.rgb, vec3<f32>(1.0) - c.rgb, p0), c.a);
+        }
+        case 12u: {
+            let luma = dot(c.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+            c = vec4<f32>(mix(c.rgb, vec3<f32>(luma), p0), c.a);
+        }
+        case 13u: {
+            c = vec4<f32>(c.r + p0, c.g + p1, c.b - p0, c.a);
+        }
+        case 14u: {
+            let sep = vec3<f32>(
+                dot(c.rgb, vec3<f32>(0.393, 0.769, 0.189)),
+                dot(c.rgb, vec3<f32>(0.349, 0.686, 0.168)),
+                dot(c.rgb, vec3<f32>(0.272, 0.534, 0.131)),
+            );
+            c = vec4<f32>(mix(c.rgb, sep, p0), c.a);
+        }
         case 16u: {
             let cs = cos(p1);
             let sn = sin(p1);

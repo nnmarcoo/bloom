@@ -192,6 +192,12 @@ fn add_row<'a>() -> Element<'a, Message> {
                                 "Color Balance",
                                 EditMsg::Add(ModifierType::ColorBalance).into()
                             ),
+                            menu_item(
+                                "Temperature",
+                                EditMsg::Add(ModifierType::Temperature).into()
+                            ),
+                            menu_item("Grayscale", EditMsg::Add(ModifierType::Grayscale).into()),
+                            menu_item("Invert", EditMsg::Add(ModifierType::Invert).into()),
                         ],
                         210
                     )
@@ -230,6 +236,7 @@ fn add_row<'a>() -> Element<'a, Message> {
                             ),
                             menu_item("Posterize", EditMsg::Add(ModifierType::Posterize).into()),
                             menu_item("Threshold", EditMsg::Add(ModifierType::Threshold).into()),
+                            menu_item("Sepia", EditMsg::Add(ModifierType::Sepia).into()),
                         ],
                         200
                     )

@@ -518,3 +518,67 @@ fn hue_to_rgb(p: f32, q: f32, t_in: f32) -> f32 {
     }
     p
 }
+
+#[cfg(test)]
+mod pointwise_tests {
+    use crate::modifiers::kinds::{Grayscale, Invert, Sepia, Temperature};
+    use crate::modifiers::{Modifier, ModifierKind};
+
+    fn apply(kind: ModifierKind, c: [f32; 4]) -> [f32; 4] {
+        Modifier::new(kind).kind.apply_cpu(1, 1, [0.5, 0.5], c)
+    }
+
+    #[test]
+    fn invert_flips_channels_and_scales_by_amount() {
+        let full = apply(ModifierKind::Invert(Invert { amount: 1.0 }), [0.2, 0.6, 0.9, 1.0]);
+        assert!((full[0] - 0.8).abs() < 1e-5);
+        assert!((full[1] - 0.4).abs() < 1e-5);
+        assert!((full[2] - 0.1).abs() < 1e-5);
+        assert_eq!(full[3], 1.0, "alpha untouched");
+
+        let half = apply(ModifierKind::Invert(Invert { amount: 0.5 }), [0.2, 0.6, 0.9, 1.0]);
+        assert!((half[0] - 0.5).abs() < 1e-5, "amount 0.5 is halfway to inverse");
+
+        let none = apply(ModifierKind::Invert(Invert { amount: 0.0 }), [0.2, 0.6, 0.9, 1.0]);
+        assert!((none[0] - 0.2).abs() < 1e-5, "amount 0 is identity");
+    }
+
+    #[test]
+    fn grayscale_collapses_to_luma() {
+        let g = apply(
+            ModifierKind::Grayscale(Grayscale { amount: 1.0 }),
+            [0.2, 0.6, 0.9, 1.0],
+        );
+        let luma = 0.2 * 0.2126 + 0.6 * 0.7152 + 0.9 * 0.0722;
+        assert!((g[0] - luma).abs() < 1e-5);
+        assert!((g[0] - g[1]).abs() < 1e-6 && (g[1] - g[2]).abs() < 1e-6, "all channels equal");
+        assert_eq!(g[3], 1.0);
+    }
+
+    #[test]
+    fn temperature_warms_red_cools_blue() {
+        let t = apply(
+            ModifierKind::Temperature(Temperature {
+                temperature: 0.1,
+                tint: 0.05,
+            }),
+            [0.5, 0.5, 0.5, 1.0],
+        );
+        assert!((t[0] - 0.6).abs() < 1e-5, "temp raises red");
+        assert!((t[1] - 0.55).abs() < 1e-5, "tint raises green");
+        assert!((t[2] - 0.4).abs() < 1e-5, "temp lowers blue");
+    }
+
+    #[test]
+    fn sepia_tints_toward_warm_and_desaturates() {
+        let s = apply(
+            ModifierKind::Sepia(Sepia { intensity: 1.0 }),
+            [0.5, 0.5, 0.5, 1.0],
+        );
+        assert!(s[0] > s[1] && s[1] > s[2], "sepia is R>G>B warm tint");
+        assert_eq!(s[3], 1.0);
+
+        let none = apply(ModifierKind::Sepia(Sepia { intensity: 0.0 }), [0.5, 0.5, 0.5, 1.0]);
+        assert!((none[0] - 0.5).abs() < 1e-5, "intensity 0 is identity");
+    }
+}

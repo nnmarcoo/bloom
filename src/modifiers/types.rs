@@ -6,8 +6,8 @@ use crate::app::Message;
 use crate::modifiers::gpu::{ModEntry, TileInfo};
 use crate::modifiers::kinds::{
     BrightnessContrast, ChromaticAberration, ColorBalance, Crop, Drawing, Exposure, GaussianBlur,
-    Grain, Halftone, HueSaturation, Levels, MotionBlur, PixelSort, Posterize, RadialBlur, Text,
-    Threshold, Vibrance, Vignette,
+    Grain, Grayscale, Halftone, HueSaturation, Invert, Levels, MotionBlur, PixelSort, Posterize,
+    RadialBlur, Sepia, Temperature, Text, Threshold, Vibrance, Vignette,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,6 +173,10 @@ define_modifiers!(
     Exposure,
     Vibrance,
     ColorBalance,
+    Temperature,
+    Grayscale,
+    Invert,
+    Sepia,
     GaussianBlur,
     MotionBlur,
     RadialBlur,
@@ -261,6 +265,11 @@ pub enum ModifierParam {
     ColorBalanceCyanRed(f32),
     ColorBalanceMagentaGreen(f32),
     ColorBalanceYellowBlue(f32),
+    TemperatureTemp(f32),
+    TemperatureTint(f32),
+    GrayscaleAmount(f32),
+    InvertAmount(f32),
+    SepiaIntensity(f32),
     GaussianBlurRadius(f32),
     MotionBlurAngle(f32),
     MotionBlurDistance(f32),
@@ -350,5 +359,9 @@ pub mod ids {
     pub const VIBRANCE: u32 = 8;
     pub const COLOR_BALANCE: u32 = 9;
     pub const GRAIN: u32 = 10;
+    pub const INVERT: u32 = 11;
+    pub const GRAYSCALE: u32 = 12;
+    pub const TEMPERATURE: u32 = 13;
+    pub const SEPIA: u32 = 14;
     pub const HALFTONE: u32 = 16;
 }
