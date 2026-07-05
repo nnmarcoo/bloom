@@ -6,13 +6,12 @@ use iced::widget::{Space, button, column, container, mouse_area, row, scrollable
 use iced::{Element, Length, Padding, mouse};
 
 use crate::app::{EditMsg, Message};
-use crate::modifiers::{Modifier, ModifierType};
+use crate::modifiers::Modifier;
 use crate::styles::{
-    PAD, modifier_active_card_style, modifier_add_button_style, modifier_card_style,
-    modifier_drop_indicator_style, plain_icon_button_style, svg_style,
+    PAD, modifier_active_card_style, modifier_card_style, modifier_drop_indicator_style,
+    plain_icon_button_style, svg_style,
 };
-use crate::widgets::menu::{SubMenuSide, menu_item, styled_menu, sub_menu};
-use crate::widgets::menu_button::{MenuAlign, MenuButton};
+use crate::widgets::modifier_picker::ModifierPicker;
 
 pub fn view<'a>(
     modifiers: &'a [Modifier],
@@ -169,126 +168,7 @@ fn card<'a>(
 }
 
 fn add_row<'a>() -> Element<'a, Message> {
-    MenuButton::new(
-        text("+ Add Modifier").size(11),
-        styled_menu(
-            column![
-                sub_menu(
-                    "Adjustments",
-                    styled_menu(
-                        column![
-                            menu_item("Levels", EditMsg::Add(ModifierType::Levels).into()),
-                            menu_item(
-                                "Brightness / Contrast",
-                                EditMsg::Add(ModifierType::BrightnessContrast).into()
-                            ),
-                            menu_item(
-                                "Hue / Saturation",
-                                EditMsg::Add(ModifierType::HueSaturation).into()
-                            ),
-                            menu_item("Exposure", EditMsg::Add(ModifierType::Exposure).into()),
-                            menu_item("Vibrance", EditMsg::Add(ModifierType::Vibrance).into()),
-                            menu_item(
-                                "Color Balance",
-                                EditMsg::Add(ModifierType::ColorBalance).into()
-                            ),
-                            menu_item(
-                                "Temperature",
-                                EditMsg::Add(ModifierType::Temperature).into()
-                            ),
-                            menu_item("Grayscale", EditMsg::Add(ModifierType::Grayscale).into()),
-                            menu_item("Invert", EditMsg::Add(ModifierType::Invert).into()),
-                        ],
-                        210
-                    )
-                )
-                .side(SubMenuSide::Left),
-                sub_menu(
-                    "Pixelate",
-                    styled_menu(
-                        column![menu_item(
-                            "Halftone",
-                            EditMsg::Add(ModifierType::Halftone).into()
-                        ),],
-                        160
-                    )
-                )
-                .side(SubMenuSide::Left),
-                sub_menu(
-                    "Blur",
-                    styled_menu(
-                        column![menu_item(
-                            "Gaussian Blur",
-                            EditMsg::Add(ModifierType::GaussianBlur).into()
-                        ),],
-                        160
-                    )
-                )
-                .side(SubMenuSide::Left),
-                sub_menu(
-                    "Stylize",
-                    styled_menu(
-                        column![
-                            menu_item("Vignette", EditMsg::Add(ModifierType::Vignette).into()),
-                            menu_item(
-                                "Chromatic Aberration",
-                                EditMsg::Add(ModifierType::ChromaticAberration).into()
-                            ),
-                            menu_item("Posterize", EditMsg::Add(ModifierType::Posterize).into()),
-                            menu_item("Threshold", EditMsg::Add(ModifierType::Threshold).into()),
-                            menu_item("Sepia", EditMsg::Add(ModifierType::Sepia).into()),
-                            menu_item("Solarize", EditMsg::Add(ModifierType::Solarize).into()),
-                            menu_item("Duotone", EditMsg::Add(ModifierType::Duotone).into()),
-                        ],
-                        200
-                    )
-                )
-                .side(SubMenuSide::Left),
-                sub_menu(
-                    "Glitch",
-                    styled_menu(
-                        column![menu_item(
-                            "Pixel Sort",
-                            EditMsg::Add(ModifierType::PixelSort).into()
-                        ),],
-                        160
-                    )
-                )
-                .side(SubMenuSide::Left),
-                sub_menu(
-                    "Noise",
-                    styled_menu(
-                        column![menu_item("Grain", EditMsg::Add(ModifierType::Grain).into()),],
-                        160
-                    )
-                )
-                .side(SubMenuSide::Left),
-                sub_menu(
-                    "Transform",
-                    styled_menu(
-                        column![menu_item("Crop", EditMsg::Add(ModifierType::Crop).into()),],
-                        160
-                    )
-                )
-                .side(SubMenuSide::Left),
-                sub_menu(
-                    "Create",
-                    styled_menu(
-                        column![
-                            menu_item("Text", EditMsg::Add(ModifierType::Text).into()),
-                            menu_item("Drawing", EditMsg::Add(ModifierType::Drawing).into()),
-                        ],
-                        160
-                    )
-                )
-                .side(SubMenuSide::Left),
-            ],
-            180,
-        ),
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(28.0))
-    .style(modifier_add_button_style)
-    .align(MenuAlign::TopStart)
-    .into()
+    ModifierPicker::new(|t| EditMsg::Add(t).into())
+        .width(Length::Fill)
+        .into()
 }

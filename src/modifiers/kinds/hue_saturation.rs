@@ -21,7 +21,7 @@ pub struct HueSaturation {
 
 impl ModifierImpl for HueSaturation {
     fn name(&self) -> &'static str {
-        "Hue / Saturation"
+        "Hue & Saturation"
     }
 
     fn has_effect(&self) -> bool {

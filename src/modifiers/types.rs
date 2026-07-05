@@ -131,10 +131,26 @@ impl Modifier {
 }
 
 macro_rules! define_modifiers {
-    ($($variant:ident),* $(,)?) => {
+    ($($variant:ident => $label:literal @ $category:literal),* $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub enum ModifierType {
             $($variant,)*
+        }
+
+        impl ModifierType {
+            pub const ALL: &'static [ModifierType] = &[$(ModifierType::$variant,)*];
+
+            pub fn label(&self) -> &'static str {
+                match self {
+                    $(ModifierType::$variant => $label,)*
+                }
+            }
+
+            pub fn category(&self) -> &'static str {
+                match self {
+                    $(ModifierType::$variant => $category,)*
+                }
+            }
         }
 
         #[derive(Debug, Clone)]
@@ -167,31 +183,31 @@ macro_rules! define_modifiers {
 }
 
 define_modifiers!(
-    Levels,
-    BrightnessContrast,
-    HueSaturation,
-    Exposure,
-    Vibrance,
-    ColorBalance,
-    Temperature,
-    Grayscale,
-    Invert,
-    Sepia,
-    Duotone,
-    Solarize,
-    GaussianBlur,
-    MotionBlur,
-    RadialBlur,
-    Halftone,
-    PixelSort,
-    Vignette,
-    ChromaticAberration,
-    Posterize,
-    Threshold,
-    Grain,
-    Crop,
-    Text,
-    Drawing,
+    Levels => "Levels" @ "Adjustments",
+    BrightnessContrast => "Brightness & Contrast" @ "Adjustments",
+    HueSaturation => "Hue & Saturation" @ "Adjustments",
+    Exposure => "Exposure" @ "Adjustments",
+    Vibrance => "Vibrance" @ "Adjustments",
+    ColorBalance => "Color Balance" @ "Adjustments",
+    Temperature => "Temperature" @ "Adjustments",
+    Grayscale => "Grayscale" @ "Adjustments",
+    Invert => "Invert" @ "Adjustments",
+    Posterize => "Posterize" @ "Adjustments",
+    Threshold => "Threshold" @ "Adjustments",
+    Sepia => "Sepia" @ "Stylize",
+    Duotone => "Duotone" @ "Stylize",
+    Solarize => "Solarize" @ "Stylize",
+    Vignette => "Vignette" @ "Stylize",
+    ChromaticAberration => "Chromatic Aberration" @ "Stylize",
+    Grain => "Grain" @ "Stylize",
+    GaussianBlur => "Gaussian Blur" @ "Blur",
+    MotionBlur => "Motion Blur" @ "Blur",
+    RadialBlur => "Radial Blur" @ "Blur",
+    Halftone => "Halftone" @ "Distort",
+    PixelSort => "Pixel Sort" @ "Distort",
+    Crop => "Crop" @ "Transform",
+    Text => "Text" @ "Create",
+    Drawing => "Drawing" @ "Create",
 );
 
 impl ModifierKind {

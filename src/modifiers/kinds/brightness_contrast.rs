@@ -19,7 +19,7 @@ pub struct BrightnessContrast {
 
 impl ModifierImpl for BrightnessContrast {
     fn name(&self) -> &'static str {
-        "Brightness / Contrast"
+        "Brightness & Contrast"
     }
 
     fn has_effect(&self) -> bool {
