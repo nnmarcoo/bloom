@@ -25,8 +25,17 @@ pub const VIDEO_EXTENSIONS: &[&str] = &[
 
 pub const VIDEO_SCRUB_STEPS: usize = 1000;
 
-const FRAME_BUFFER: usize = 8;
 const MAX_FRAMES: usize = 16;
+
+const FRAME_BUFFER_MIN: usize = 8;
+const FRAME_BUFFER_MAX: usize = 48;
+const FRAME_BUFFER_BUDGET_BYTES: usize = 384 * 1024 * 1024;
+
+fn frame_buffer_len(width: u32, height: u32) -> usize {
+    let frame_bytes = (width as usize * height as usize * 4).max(1);
+    let by_budget = FRAME_BUFFER_BUDGET_BYTES / frame_bytes;
+    by_budget.clamp(FRAME_BUFFER_MIN, FRAME_BUFFER_MAX)
+}
 
 fn err(e: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> ImageError {
     ImageError::IoError(Error::other(e))
@@ -129,7 +138,8 @@ pub struct VideoState {
 
 impl VideoState {
     pub fn new(info: VideoInfo) -> Result<Self, ImageError> {
-        let (frame_tx, frame_rx) = crossbeam_channel::bounded(FRAME_BUFFER);
+        let (frame_tx, frame_rx) =
+            crossbeam_channel::bounded(frame_buffer_len(info.width, info.height));
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
 
         let (audio, audio_params) = match info.has_audio.then(AudioOutput::new) {
