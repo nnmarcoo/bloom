@@ -311,7 +311,9 @@ fn keybind_row<'a>(
             .padding([4.0, 8.0])
             .into()
     } else {
-        let label = binding.map(|kb| kb.display()).unwrap_or_else(|| "—".into());
+        let label = binding
+            .map(|kb| kb.display_pretty())
+            .unwrap_or_else(|| "—".into());
         with_tooltip(
             button(text(label).size(11))
                 .style(key_chip_style)

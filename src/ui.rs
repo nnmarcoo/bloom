@@ -1,14 +1,16 @@
 use std::time::Duration;
 
+use iced::alignment::Vertical;
 use iced::widget::svg::Handle;
 use iced::widget::tooltip::Position;
-use iced::widget::{button, container, svg, text, tooltip};
+use iced::widget::{button, container, row, svg, text, tooltip};
 use iced::{Element, Length};
 
 use crate::app::Message;
+use crate::keybinds::{Action, Keymap};
 use crate::styles::{
     BUTTON_SIZE, PAD, TOOLTIP_DELAY, icon_button_active_style, icon_button_style,
-    plain_icon_button_style, svg_style, tooltip_style,
+    key_chip_container_style, plain_icon_button_style, svg_style, tooltip_style,
 };
 
 pub fn format_duration(d: Duration) -> String {
@@ -81,6 +83,36 @@ pub fn with_tooltip_delay<'a>(
         position,
     )
     .delay(delay)
+    .into()
+}
+
+pub fn with_tooltip_key<'a>(
+    content: impl Into<Element<'a, Message>>,
+    label: impl ToString,
+    position: Position,
+    keymap: &Keymap,
+    action: Action,
+) -> Element<'a, Message> {
+    let chip = keymap.binding_for(&action).map(|kb| {
+        container(text(kb.display_pretty()).size(11))
+            .padding([2.0, 5.0])
+            .style(key_chip_container_style)
+    });
+
+    let body: Element<'a, Message> = match chip {
+        Some(chip) => row![text(label.to_string()).size(12), chip]
+            .spacing(PAD * 1.5)
+            .align_y(Vertical::Center)
+            .into(),
+        None => text(label.to_string()).size(12).into(),
+    };
+
+    tooltip(
+        content,
+        container(body).padding(PAD).style(tooltip_style),
+        position,
+    )
+    .delay(TOOLTIP_DELAY)
     .into()
 }
 

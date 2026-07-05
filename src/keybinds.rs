@@ -197,7 +197,7 @@ impl KeyBinding {
         }
     }
 
-    pub fn display(&self) -> String {
+    fn display_with(&self, key: fn(key::Code) -> &'static str) -> String {
         let mut s = String::new();
         if self.ctrl {
             s.push_str("Ctrl+");
@@ -208,8 +208,16 @@ impl KeyBinding {
         if self.alt {
             s.push_str("Alt+");
         }
-        s.push_str(code_name(self.code));
+        s.push_str(key(self.code));
         s
+    }
+
+    pub fn display(&self) -> String {
+        self.display_with(code_name)
+    }
+
+    pub fn display_pretty(&self) -> String {
+        self.display_with(code_display)
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
@@ -325,6 +333,37 @@ fn code_name(code: key::Code) -> &'static str {
         .iter()
         .find(|(c, _)| *c == code)
         .map_or("Unknown", |(_, n)| n)
+}
+
+fn code_display(code: key::Code) -> &'static str {
+    match code {
+        key::Code::ArrowRight => "Right",
+        key::Code::ArrowLeft => "Left",
+        key::Code::ArrowUp => "Up",
+        key::Code::ArrowDown => "Down",
+        key::Code::Equal => "=",
+        key::Code::Minus => "-",
+        key::Code::BracketLeft => "[",
+        key::Code::BracketRight => "]",
+        key::Code::Backslash => "\\",
+        key::Code::Semicolon => ";",
+        key::Code::Quote => "'",
+        key::Code::Comma => ",",
+        key::Code::Period => ".",
+        key::Code::Slash => "/",
+        key::Code::Backquote => "`",
+        key::Code::Digit0 => "0",
+        key::Code::Digit1 => "1",
+        key::Code::Digit2 => "2",
+        key::Code::Digit3 => "3",
+        key::Code::Digit4 => "4",
+        key::Code::Digit5 => "5",
+        key::Code::Digit6 => "6",
+        key::Code::Digit7 => "7",
+        key::Code::Digit8 => "8",
+        key::Code::Digit9 => "9",
+        _ => code_name(code),
+    }
 }
 
 fn name_to_code(s: &str) -> Option<key::Code> {

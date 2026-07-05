@@ -4,9 +4,10 @@ use iced::{Element, Length};
 
 use crate::app::{EditMsg, Message, Tool};
 use crate::components::modifier_stack;
+use crate::keybinds::{Action, Keymap};
 use crate::modifiers::Modifier;
 use crate::styles::{EDIT_PANEL_WIDTH, PAD, bar_style, panel_divider_style};
-use crate::ui::{svg_button_active, svg_button_plain, with_tooltip};
+use crate::ui::{svg_button_active, svg_button_plain, with_tooltip_key};
 
 fn tool_button<'a>(icon: &'static [u8], tool: Tool, selected_tool: &Tool) -> Element<'a, Message> {
     let msg = EditMsg::SelectTool(tool.clone()).into();
@@ -17,8 +18,10 @@ fn tool_button<'a>(icon: &'static [u8], tool: Tool, selected_tool: &Tool) -> Ele
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn view<'a>(
     selected_tool: &Tool,
+    keymap: &Keymap,
     modifiers: &'a [Modifier],
     active_modifier: Option<usize>,
     dragging_modifier: Option<usize>,
@@ -30,7 +33,7 @@ pub fn view<'a>(
 
     let tool_strip = container(
         column![
-            with_tooltip(
+            with_tooltip_key(
                 tool_button(
                     include_bytes!("../../assets/icons/cursor.svg"),
                     Tool::Select,
@@ -38,8 +41,10 @@ pub fn view<'a>(
                 ),
                 "Select",
                 Position::Left,
+                keymap,
+                Action::ToolSelect,
             ),
-            with_tooltip(
+            with_tooltip_key(
                 tool_button(
                     include_bytes!("../../assets/icons/crop.svg"),
                     Tool::Crop,
@@ -47,8 +52,10 @@ pub fn view<'a>(
                 ),
                 "Crop",
                 Position::Left,
+                keymap,
+                Action::ToolCrop,
             ),
-            with_tooltip(
+            with_tooltip_key(
                 tool_button(
                     include_bytes!("../../assets/icons/text.svg"),
                     Tool::Text,
@@ -56,8 +63,10 @@ pub fn view<'a>(
                 ),
                 "Text",
                 Position::Left,
+                keymap,
+                Action::ToolText,
             ),
-            with_tooltip(
+            with_tooltip_key(
                 tool_button(
                     include_bytes!("../../assets/icons/pencil.svg"),
                     Tool::Draw,
@@ -65,6 +74,8 @@ pub fn view<'a>(
                 ),
                 "Draw",
                 Position::Left,
+                keymap,
+                Action::ToolDraw,
             ),
         ]
         .spacing(2),

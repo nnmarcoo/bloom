@@ -688,6 +688,7 @@ impl App {
             notifs: &self.notifications,
             pixel_preview_size: self.config.pixel_preview_size,
             selected_tool: &self.edit.selected_tool,
+            keymap: &self.config.keymap,
             modifiers: &self.program.modifiers,
             active_modifier: self.edit.active,
             dragging_modifier: self.edit.dragging,
@@ -724,6 +725,7 @@ impl App {
                 self.transport.playback_active(&self.program),
                 self.program.fit_active(),
                 self.export_progress,
+                &self.config.keymap,
             ));
         }
 

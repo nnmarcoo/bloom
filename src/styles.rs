@@ -229,6 +229,20 @@ pub fn key_chip_style(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+pub fn key_chip_container_style(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(palette.background.strong.color)),
+        border: Border {
+            color: palette.background.strong.color,
+            width: 1.0,
+            radius: radius().into(),
+        },
+        text_color: Some(palette.background.base.text),
+        ..Default::default()
+    }
+}
+
 pub fn capturing_chip_style(theme: &Theme, _status: button::Status) -> button::Style {
     let palette = theme.extended_palette();
     button::Style {

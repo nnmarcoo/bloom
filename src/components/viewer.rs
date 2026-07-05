@@ -12,6 +12,7 @@ use crate::{
     components::notifications::NotificationEntry,
     components::{edit_panel, info_panel, notifications},
     gallery::Gallery,
+    keybinds::Keymap,
     modifiers::{Modifier, kinds::Text},
     styles::{PAD, spinner_bg_style},
     wgpu::view_program::{Histogram, ViewProgram},
@@ -37,6 +38,7 @@ pub struct ViewerCtx<'a> {
     pub notifs: &'a [NotificationEntry],
     pub pixel_preview_size: u32,
     pub selected_tool: &'a Tool,
+    pub keymap: &'a Keymap,
     pub modifiers: &'a [Modifier],
     pub active_modifier: Option<usize>,
     pub dragging_modifier: Option<usize>,
@@ -205,6 +207,7 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
     if ctx.show_edit {
         content = content.push(edit_panel::view(
             ctx.selected_tool,
+            ctx.keymap,
             ctx.modifiers,
             ctx.active_modifier,
             ctx.dragging_modifier,

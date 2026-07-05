@@ -7,10 +7,11 @@ use iced::window::Mode;
 use iced::{Border, Element, Length};
 
 use crate::app::Message;
+use crate::keybinds::{Action, Keymap};
 use crate::styles::{
     BAR_HEIGHT, BUTTON_SIZE, PAD, bar_style, icon_button_style, panel_divider_style, svg_style,
 };
-use crate::ui::{svg_button, svg_button_toggle, with_tooltip};
+use crate::ui::{svg_button, svg_button_toggle, with_tooltip, with_tooltip_key};
 use crate::widgets::menu::{menu_item, menu_item_enabled, menu_separator, styled_menu};
 use crate::widgets::menu_button::{MenuAlign, MenuButton};
 use crate::widgets::scale_entry::ScaleEntry;
@@ -28,6 +29,7 @@ pub fn view<'a>(
     is_animation: bool,
     fit_active: bool,
     export_progress: Option<f32>,
+    keymap: &Keymap,
 ) -> Element<'a, Message> {
     let is_fullscreen = matches!(mode, Mode::Fullscreen);
     let (fullscreen_icon, fullscreen_tooltip): (&'static [u8], &str) = if is_fullscreen {
@@ -54,28 +56,34 @@ pub fn view<'a>(
     let rotation = rotation as usize % 4;
 
     let left_buttons = row![
-        with_tooltip(
+        with_tooltip_key(
             svg_button(
                 include_bytes!("../../assets/icons/left.svg"),
                 Message::Previous
             ),
             "Previous media",
             Position::Top,
+            keymap,
+            Action::Previous,
         ),
-        with_tooltip(
+        with_tooltip_key(
             svg_button(
                 include_bytes!("../../assets/icons/right.svg"),
                 Message::Next
             ),
             "Next media",
             Position::Top,
+            keymap,
+            Action::Next,
         ),
-        with_tooltip(
+        with_tooltip_key(
             ScaleEntry::new(scale, Message::Scale).focused(focus_scale),
             "Scale",
             Position::Top,
+            keymap,
+            Action::FocusScale,
         ),
-        with_tooltip(
+        with_tooltip_key(
             svg_button_toggle(
                 include_bytes!("../../assets/icons/fit.svg"),
                 Message::Fit,
@@ -83,8 +91,10 @@ pub fn view<'a>(
             ),
             "Fit to viewport",
             Position::Top,
+            keymap,
+            Action::ZoomFit,
         ),
-        with_tooltip(
+        with_tooltip_key(
             svg_button(rotation_icon, Message::RotateCw),
             [
                 "Rotate view (0°)",
@@ -93,13 +103,15 @@ pub fn view<'a>(
                 "Rotate view (270°)"
             ][rotation],
             Position::Top,
+            keymap,
+            Action::RotateCw,
         ),
     ]
     .spacing(2)
     .align_y(Vertical::Center);
 
     let right_buttons = row![
-        with_tooltip(
+        with_tooltip_key(
             svg_button_toggle(
                 include_bytes!("../../assets/icons/info.svg"),
                 Message::ToggleInfoColumn,
@@ -107,8 +119,10 @@ pub fn view<'a>(
             ),
             "Information",
             Position::Top,
+            keymap,
+            Action::ToggleInfoPanel,
         ),
-        with_tooltip(
+        with_tooltip_key(
             svg_button_toggle(
                 include_bytes!("../../assets/icons/pencil.svg"),
                 Message::ToggleEditPanel,
@@ -116,6 +130,8 @@ pub fn view<'a>(
             ),
             "Edit",
             Position::Top,
+            keymap,
+            Action::ToggleEditPanel,
         ),
         with_tooltip(
             svg_button_toggle(
@@ -126,10 +142,12 @@ pub fn view<'a>(
             "Checkerboard background",
             Position::Top,
         ),
-        with_tooltip(
+        with_tooltip_key(
             svg_button(fullscreen_icon, Message::ToggleFullscreen),
             fullscreen_tooltip,
             Position::Top,
+            keymap,
+            Action::ToggleFullscreen,
         ),
         with_tooltip(
             svg_button(
