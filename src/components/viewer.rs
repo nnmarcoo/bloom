@@ -174,8 +174,6 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
                 menu_item_enabled("Copy Image", Message::CopyImage, has_media),
                 menu_item_enabled("Copy File Path", Message::CopyPath, has_media),
                 menu_separator(),
-                menu_item_enabled("Rotate Left", Message::RotateCcw, has_media),
-                menu_item_enabled("Rotate Right", Message::RotateCw, has_media),
                 menu_item_enabled("Export Image", Message::ExportImage, has_media),
                 menu_separator(),
                 menu_item(bottom_bar_label, Message::ToggleBottomBar),
