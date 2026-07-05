@@ -4,8 +4,8 @@ use iced::widget::svg::Handle;
 use iced::widget::{button, column, container, row, svg, text};
 use iced::{Alignment, Color, Element, Length, Padding};
 
-use crate::animation::{ease_in_cubic, ease_out_cubic};
 use crate::app::Message;
+use crate::easing::{ease_in_cubic, ease_out_cubic};
 use crate::styles::{BUTTON_SIZE, PAD, TOAST_WIDTH, toast_container_style, toast_dismiss_style};
 use crate::widgets::slide_in::SlideIn;
 

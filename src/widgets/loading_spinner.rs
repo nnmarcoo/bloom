@@ -11,7 +11,7 @@ use iced::{Background, Color, Element, Event, Length, Radians, Rectangle, Render
 use std::f32::consts::PI;
 use std::time::Duration;
 
-use crate::animation::ease_in_out_cubic;
+use crate::easing::ease_in_out_cubic;
 
 pub struct Circular<Theme = iced::Theme>
 where

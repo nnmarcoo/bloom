@@ -1,10 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod animation;
 mod app;
 mod clipboard;
 mod components;
 mod config;
+mod easing;
 mod export;
 mod gallery;
 mod keybinds;
