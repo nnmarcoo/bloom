@@ -31,6 +31,7 @@ pub enum Action {
     TogglePlayback,
     ToggleInfoPanel,
     ToggleEditPanel,
+    ToggleCheckerboard,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +88,7 @@ impl Action {
             Self::TogglePlayback => "Toggle playback".into(),
             Self::ToggleInfoPanel => "Toggle info panel".into(),
             Self::ToggleEditPanel => "Toggle edit panel".into(),
+            Self::ToggleCheckerboard => "Toggle checkerboard".into(),
         }
     }
 
@@ -115,6 +117,7 @@ impl Action {
             Self::TogglePlayback => "Pause or resume animation playback",
             Self::ToggleInfoPanel => "Show or hide the image info panel",
             Self::ToggleEditPanel => "Show or hide the edit panel",
+            Self::ToggleCheckerboard => "Show or hide the checkerboard background",
         }
     }
 
@@ -134,7 +137,8 @@ impl Action {
             | Self::UiScaleDown
             | Self::UiScaleReset
             | Self::ToggleInfoPanel
-            | Self::ToggleEditPanel => KeyCategory::View,
+            | Self::ToggleEditPanel
+            | Self::ToggleCheckerboard => KeyCategory::View,
             Self::ToolSelect
             | Self::ToolCrop
             | Self::ToolDraw
@@ -166,6 +170,7 @@ impl Action {
             Action::UiScaleReset,
             Action::ToggleInfoPanel,
             Action::ToggleEditPanel,
+            Action::ToggleCheckerboard,
             Action::ToolSelect,
             Action::ToolCrop,
             Action::ToolDraw,
@@ -420,6 +425,7 @@ impl Default for Keymap {
         m.insert(Action::TogglePlayback, n(key::Code::Space));
         m.insert(Action::ToggleInfoPanel, n(key::Code::KeyI));
         m.insert(Action::ToggleEditPanel, n(key::Code::KeyE));
+        m.insert(Action::ToggleCheckerboard, n(key::Code::KeyB));
         let digit_codes = [
             key::Code::Digit1,
             key::Code::Digit2,
@@ -506,6 +512,7 @@ pub(crate) struct KeymapFile {
     pub toggle_playback: Option<String>,
     pub toggle_info_panel: Option<String>,
     pub toggle_edit_panel: Option<String>,
+    pub toggle_checkerboard: Option<String>,
 }
 
 impl From<&Keymap> for KeymapFile {
@@ -550,6 +557,7 @@ impl From<&Keymap> for KeymapFile {
             toggle_playback: bind(Action::TogglePlayback),
             toggle_info_panel: bind(Action::ToggleInfoPanel),
             toggle_edit_panel: bind(Action::ToggleEditPanel),
+            toggle_checkerboard: bind(Action::ToggleCheckerboard),
         }
     }
 }
@@ -596,6 +604,7 @@ impl From<KeymapFile> for Keymap {
             resolve(f.toggle_playback, Action::TogglePlayback),
             resolve(f.toggle_info_panel, Action::ToggleInfoPanel),
             resolve(f.toggle_edit_panel, Action::ToggleEditPanel),
+            resolve(f.toggle_checkerboard, Action::ToggleCheckerboard),
         ]
         .into_iter()
         .flatten()

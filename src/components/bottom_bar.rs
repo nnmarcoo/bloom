@@ -133,7 +133,7 @@ pub fn view<'a>(
             keymap,
             Action::ToggleEditPanel,
         ),
-        with_tooltip(
+        with_tooltip_key(
             svg_button_toggle(
                 include_bytes!("../../assets/icons/checkerboard.svg"),
                 Message::ToggleCheckerboard,
@@ -141,6 +141,8 @@ pub fn view<'a>(
             ),
             "Checkerboard background",
             Position::Top,
+            keymap,
+            Action::ToggleCheckerboard,
         ),
         with_tooltip_key(
             svg_button(fullscreen_icon, Message::ToggleFullscreen),

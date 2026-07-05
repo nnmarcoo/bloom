@@ -633,6 +633,7 @@ impl App {
             }
             Some(Action::ToggleInfoPanel) => Task::done(Message::ToggleInfoColumn),
             Some(Action::ToggleEditPanel) => Task::done(Message::ToggleEditPanel),
+            Some(Action::ToggleCheckerboard) => Task::done(Message::ToggleCheckerboard),
             None => Task::none(),
         }
     }
