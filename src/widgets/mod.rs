@@ -8,6 +8,7 @@ pub mod font_picker;
 pub mod histogram;
 pub mod hover_row;
 pub mod loading_spinner;
+pub mod logo_bloom;
 pub mod menu;
 pub mod menu_button;
 pub mod modifier_picker;

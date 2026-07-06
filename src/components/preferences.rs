@@ -23,6 +23,7 @@ use crate::styles::{
 };
 use crate::ui::{svg_button_plain, with_tooltip};
 use crate::widgets::hover_row::HoverRow;
+use crate::widgets::logo_bloom::LogoBloom;
 use crate::widgets::scale_entry::ScaleEntry;
 use crate::widgets::theme_picker::ThemePicker;
 
@@ -690,9 +691,7 @@ fn about_pane<'a>(theme: &Theme) -> Element<'a, Message> {
 
     column![
         row![
-            image(logo_handle())
-                .width(Length::Fixed(64.0))
-                .height(Length::Fixed(64.0)),
+            LogoBloom::new(logo_handle(), 64.0),
             column![
                 text("Bloom").size(24).font(Font {
                     weight: Weight::Semibold,
