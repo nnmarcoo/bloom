@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.87"
 authors = ["Marco Todorov"]
-description = "A hardware accelerated image viewer"
+description = "A hardware accelerated media viewer"
 homepage = "https://github.com/nnmarcoo/bloom"
 repository = "https://github.com/nnmarcoo/bloom"
 license = "GPL-3.0-only"
 readme = "README.md"
-keywords = ["image", "viewer", "gpu", "media", "gui"]
+keywords = ["image", "video", "viewer", "gpu", "media", "gui"]
 categories = ["multimedia::images", "multimedia::video", "gui"]
 exclude = [
     "assets/demo/**",
