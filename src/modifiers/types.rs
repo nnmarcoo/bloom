@@ -152,7 +152,7 @@ macro_rules! define_modifiers {
                 }
             }
 
-            pub fn implemented(&self) -> bool {
+            pub fn in_menu(&self) -> bool {
                 !matches!(self, ModifierType::RadialBlur)
             }
         }
