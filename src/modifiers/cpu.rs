@@ -2,7 +2,7 @@ use rayon::prelude::*;
 
 use crate::modifiers::drawing_raster::LayerView;
 use crate::modifiers::text_raster::TextRaster;
-use crate::modifiers::{Modifier, ModifierKind};
+use crate::modifiers::{Modifier, ModifierKind, motion_blur_samples};
 
 pub(crate) fn render_full(
     modifiers: &[Modifier],
@@ -41,6 +41,10 @@ pub(crate) fn render_full(
             ModifierKind::ChromaticAberration(ca) => {
                 flush_segment(&mut cur, &mut segment);
                 cur = chromatic_aberration_full(&cur, img_w, img_h, ca.amount);
+            }
+            ModifierKind::MotionBlur(mb) => {
+                flush_segment(&mut cur, &mut segment);
+                cur = motion_blur_full(&cur, img_w, img_h, mb.angle, mb.distance);
             }
             ModifierKind::Text(_) => {
                 flush_segment(&mut cur, &mut segment);
@@ -166,6 +170,73 @@ fn chromatic_aberration_full(src: &[u8], img_w: u32, img_h: u32, amount: f32) ->
     out
 }
 
+fn motion_blur_full(src: &[u8], img_w: u32, img_h: u32, angle: f32, distance: f32) -> Vec<u8> {
+    let w = img_w as usize;
+    let rad = angle.to_radians();
+    let du = rad.cos() * distance;
+    let dv = rad.sin() * distance;
+    let n = motion_blur_samples(distance) as i32;
+    let mut out = vec![0u8; src.len()];
+    out.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
+        let cy = y as f32 + 0.5;
+        for x in 0..w {
+            let cx = x as f32 + 0.5;
+            let mut acc = [0.0f32; 4];
+            for i in 0..n {
+                let t = i as f32 / (n - 1) as f32 - 0.5;
+                let s = sample_bilinear(src, img_w, img_h, cx + du * t, cy + dv * t);
+                acc[0] += s[0];
+                acc[1] += s[1];
+                acc[2] += s[2];
+                acc[3] += s[3];
+            }
+            let inv = 1.0 / n as f32;
+            let o = x * 4;
+            row[o..o + 4].copy_from_slice(&f32_to_pixel([
+                acc[0] * inv,
+                acc[1] * inv,
+                acc[2] * inv,
+                acc[3] * inv,
+            ]));
+        }
+    });
+    out
+}
+
+fn sample_bilinear(pixels: &[u8], w: u32, h: u32, fx: f32, fy: f32) -> [f32; 4] {
+    let px = fx - 0.5;
+    let py = fy - 0.5;
+    let x0 = px.floor();
+    let y0 = py.floor();
+    let tx = px - x0;
+    let ty = py - y0;
+    let load = |x: f32, y: f32| -> [f32; 4] {
+        let cx = (x.max(0.0) as u32).min(w - 1);
+        let cy = (y.max(0.0) as u32).min(h - 1);
+        let base = (cy as usize * w as usize + cx as usize) * 4;
+        match pixels.get(base..base + 4) {
+            Some(p) => [
+                p[0] as f32 / 255.0,
+                p[1] as f32 / 255.0,
+                p[2] as f32 / 255.0,
+                p[3] as f32 / 255.0,
+            ],
+            None => [0.0; 4],
+        }
+    };
+    let c00 = load(x0, y0);
+    let c10 = load(x0 + 1.0, y0);
+    let c01 = load(x0, y0 + 1.0);
+    let c11 = load(x0 + 1.0, y0 + 1.0);
+    let mut o = [0.0f32; 4];
+    for i in 0..4 {
+        let top = c00[i] + (c10[i] - c00[i]) * tx;
+        let bot = c01[i] + (c11[i] - c01[i]) * tx;
+        o[i] = top + (bot - top) * ty;
+    }
+    o
+}
+
 fn drawing_full(buf: &mut [u8], img_w: u32, raster: &LayerView<'_>) {
     let w = img_w as usize;
     buf.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
@@ -255,6 +326,38 @@ pub(crate) fn apply_modifiers_with_layers(
                 );
                 c[0] = cr[0];
                 c[2] = cb[2];
+            }
+            ModifierKind::MotionBlur(mb) => {
+                let prior = &modifiers[..i];
+                let prior_text = &text_layers[..i.min(text_layers.len())];
+                let prior_drawing = &drawing_layers[..i.min(drawing_layers.len())];
+                let rad = mb.angle.to_radians();
+                let du = rad.cos() * mb.distance / img_w as f32;
+                let dv = rad.sin() * mb.distance / img_h as f32;
+                let n = motion_blur_samples(mb.distance) as i32;
+                let mut acc = [0.0f32; 4];
+                for s in 0..n {
+                    let t = s as f32 / (n - 1) as f32 - 0.5;
+                    let s_uv = [
+                        (uv[0] + du * t).clamp(0.0, 1.0),
+                        (uv[1] + dv * t).clamp(0.0, 1.0),
+                    ];
+                    let sc = apply_prior(
+                        prior,
+                        prior_text,
+                        prior_drawing,
+                        img_w,
+                        img_h,
+                        s_uv,
+                        sample_pixel(pixels, img_w, img_h, s_uv[0], s_uv[1]),
+                    );
+                    acc[0] += sc[0];
+                    acc[1] += sc[1];
+                    acc[2] += sc[2];
+                    acc[3] += sc[3];
+                }
+                let inv = 1.0 / n as f32;
+                c = [acc[0] * inv, acc[1] * inv, acc[2] * inv, acc[3] * inv];
             }
             ModifierKind::GaussianBlur(gb) => {
                 let prior = &modifiers[..i];
@@ -650,5 +753,131 @@ mod pointwise_tests {
             [0.3, 0.7, 0.2, 1.0],
         );
         assert!((neutral[0] - 0.3).abs() < 1e-5, "amount 0 is identity");
+    }
+}
+
+#[cfg(test)]
+mod motion_blur_tests {
+    use super::render_full;
+    use crate::modifiers::kinds::MotionBlur;
+    use crate::modifiers::{Modifier, ModifierKind};
+
+    fn checker(w: u32, h: u32) -> Vec<u8> {
+        let mut px = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let o = ((y * w + x) * 4) as usize;
+                let on = (x + y) % 2 == 0;
+                let v = if on { 255 } else { 0 };
+                px[o] = v;
+                px[o + 1] = v;
+                px[o + 2] = v;
+                px[o + 3] = 255;
+            }
+        }
+        px
+    }
+
+    fn gpu_math_reference(src: &[u8], w: u32, h: u32, angle: f32, distance: f32) -> Vec<u8> {
+        let (wi, hi) = (w as i32, h as i32);
+        let rad = angle.to_radians();
+        let du = rad.cos() * distance;
+        let dv = rad.sin() * distance;
+        let n = crate::modifiers::motion_blur_samples(distance) as i32;
+        let load = |x: i32, y: i32| -> [f32; 4] {
+            let cx = x.clamp(0, wi - 1);
+            let cy = y.clamp(0, hi - 1);
+            let o = ((cy * wi + cx) * 4) as usize;
+            [
+                src[o] as f32 / 255.0,
+                src[o + 1] as f32 / 255.0,
+                src[o + 2] as f32 / 255.0,
+                src[o + 3] as f32 / 255.0,
+            ]
+        };
+        let bilinear = |fx: f32, fy: f32| -> [f32; 4] {
+            let px = fx - 0.5;
+            let py = fy - 0.5;
+            let x0 = px.floor() as i32;
+            let y0 = py.floor() as i32;
+            let tx = px - x0 as f32;
+            let ty = py - y0 as f32;
+            let c00 = load(x0, y0);
+            let c10 = load(x0 + 1, y0);
+            let c01 = load(x0, y0 + 1);
+            let c11 = load(x0 + 1, y0 + 1);
+            let mut o = [0.0f32; 4];
+            for i in 0..4 {
+                let top = c00[i] + (c10[i] - c00[i]) * tx;
+                let bot = c01[i] + (c11[i] - c01[i]) * tx;
+                o[i] = top + (bot - top) * ty;
+            }
+            o
+        };
+        let mut out = vec![0u8; src.len()];
+        for y in 0..hi {
+            for x in 0..wi {
+                let cx = x as f32 + 0.5;
+                let cy = y as f32 + 0.5;
+                let mut acc = [0.0f32; 4];
+                for i in 0..n {
+                    let t = i as f32 / (n - 1) as f32 - 0.5;
+                    let s = bilinear(cx + du * t, cy + dv * t);
+                    for c in 0..4 {
+                        acc[c] += s[c];
+                    }
+                }
+                let o = ((y * wi + x) * 4) as usize;
+                for c in 0..4 {
+                    out[o + c] = ((acc[c] / n as f32).clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn export_matches_gpu_sample_math() {
+        let (w, h) = (24u32, 18u32);
+        let src = checker(w, h);
+        for &(angle, dist) in &[(0.0, 20.0), (90.0, 16.0), (33.0, 25.0)] {
+            let mods = vec![Modifier::new(ModifierKind::MotionBlur(MotionBlur {
+                angle,
+                distance: dist,
+            }))];
+            let bulk = render_full(&mods, &[], &[], &src, w, h);
+            let reference = gpu_math_reference(&src, w, h, angle, dist);
+            for (a, b) in bulk.iter().zip(&reference) {
+                assert!(
+                    (*a as i32 - *b as i32).abs() <= 1,
+                    "angle {angle} dist {dist}: export vs gpu-math differ"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn horizontal_blur_smears_across_vertical_edge() {
+        let (w, h) = (9u32, 1u32);
+        let mut src = vec![0u8; (w * h * 4) as usize];
+        for x in 0..w {
+            let o = (x * 4) as usize;
+            let v = if x < w / 2 { 0 } else { 255 };
+            src[o] = v;
+            src[o + 1] = v;
+            src[o + 2] = v;
+            src[o + 3] = 255;
+        }
+        let mods = vec![Modifier::new(ModifierKind::MotionBlur(MotionBlur {
+            angle: 0.0,
+            distance: 40.0,
+        }))];
+        let out = render_full(&mods, &[], &[], &src, w, h);
+        let mid = ((w / 2) * 4) as usize;
+        assert!(
+            out[mid] > 10 && out[mid] < 245,
+            "pixel at the edge should be a blend, got {}",
+            out[mid]
+        );
     }
 }

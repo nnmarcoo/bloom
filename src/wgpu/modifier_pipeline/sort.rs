@@ -119,7 +119,7 @@ impl ModifierPipeline {
                 };
                 for &ti in group {
                     let (sx0, sy0, sw, sh) = stile(ti);
-                    let tex = self.sort_in_tex(ti, prev_in_a);
+                    let tex = self.bank_in_tex(ti, prev_in_a);
                     enc.copy_texture_to_buffer(
                         tex_copy_info(tex, copy_origin),
                         iced::wgpu::TexelCopyBufferInfo {
@@ -141,7 +141,7 @@ impl ModifierPipeline {
 
                 for &ti in group {
                     let (sx0, sy0, sw, sh) = stile(ti);
-                    let tex = self.sort_out_tex(ti, last, prev_in_a);
+                    let tex = self.bank_out_tex(ti, last, prev_in_a);
                     enc.copy_buffer_to_texture(
                         iced::wgpu::TexelCopyBufferInfo {
                             buffer: dst_buf,
@@ -163,7 +163,7 @@ impl ModifierPipeline {
         end >= total
     }
 
-    fn sort_in_tex(&self, ti: usize, prev_in_a: bool) -> &Texture {
+    pub(super) fn bank_in_tex(&self, ti: usize, prev_in_a: bool) -> &Texture {
         if prev_in_a {
             &self.bank_a[ti].as_ref().unwrap()._tex
         } else {
@@ -171,7 +171,7 @@ impl ModifierPipeline {
         }
     }
 
-    fn sort_out_tex(&self, ti: usize, last: bool, prev_in_a: bool) -> &Texture {
+    pub(super) fn bank_out_tex(&self, ti: usize, last: bool, prev_in_a: bool) -> &Texture {
         if last {
             &self.tile_outputs[ti].as_ref().unwrap()._tex
         } else if prev_in_a {
@@ -234,7 +234,7 @@ impl ModifierPipeline {
 
         for &ti in proc_set {
             let (sx0, sy0, sw, sh) = stile(ti);
-            let tex = self.sort_in_tex(ti, prev_in_a);
+            let tex = self.bank_in_tex(ti, prev_in_a);
             enc.copy_texture_to_buffer(
                 tex_copy_info(tex, iced::wgpu::Origin3d::ZERO),
                 iced::wgpu::TexelCopyBufferInfo {
@@ -256,7 +256,7 @@ impl ModifierPipeline {
 
         for &ti in proc_set {
             let (sx0, sy0, sw, sh) = stile(ti);
-            let tex = self.sort_out_tex(ti, last, prev_in_a);
+            let tex = self.bank_out_tex(ti, last, prev_in_a);
             enc.copy_buffer_to_texture(
                 iced::wgpu::TexelCopyBufferInfo {
                     buffer: dst_buf,

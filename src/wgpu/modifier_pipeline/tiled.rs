@@ -14,7 +14,10 @@ impl ModifierPipeline {
         dirty: bool,
         has_pixel_sort: bool,
     ) {
-        if has_pixel_sort {
+        let has_motion_blur = plan.iter().any(
+            |p| matches!(p, PlanItem::Step(_, m) if matches!(m.kind, ModifierKind::MotionBlur(_))),
+        );
+        if has_pixel_sort || has_motion_blur {
             self.prepare_tiled_scanlines(device, queue, source, plan, proc_scale, dirty);
             return;
         }
@@ -285,6 +288,7 @@ impl ModifierPipeline {
                         item,
                         &tile_info,
                         source.full_width as f32,
+                        source.full_height as f32,
                         proc,
                         src_rect,
                         &prev,
@@ -348,15 +352,20 @@ impl ModifierPipeline {
         let mut has_h = false;
         let mut has_v = false;
         let mut has_diag = false;
+        let mut has_full = false;
         for p in plan {
-            if let PlanItem::Step(_, m) = p
-                && let ModifierKind::PixelSort(ps) = &m.kind
-                && m.kind.effect_class().is_compute_scanline()
-            {
-                match SortMode::from_angle(ps.angle) {
-                    SortMode::Cardinal(SortAxis::Horizontal { .. }) => has_h = true,
-                    SortMode::Cardinal(SortAxis::Vertical { .. }) => has_v = true,
-                    SortMode::Diagonal { .. } => has_diag = true,
+            if let PlanItem::Step(_, m) = p {
+                if let ModifierKind::PixelSort(ps) = &m.kind
+                    && m.kind.effect_class().is_compute_scanline()
+                {
+                    match SortMode::from_angle(ps.angle) {
+                        SortMode::Cardinal(SortAxis::Horizontal { .. }) => has_h = true,
+                        SortMode::Cardinal(SortAxis::Vertical { .. }) => has_v = true,
+                        SortMode::Diagonal { .. } => has_diag = true,
+                    }
+                }
+                if matches!(m.kind, ModifierKind::MotionBlur(_)) {
+                    has_full = true;
                 }
             }
         }
@@ -369,7 +378,7 @@ impl ModifierPipeline {
             process_vram_budget(device),
             proc_scale,
         );
-        if has_diag {
+        if has_diag || has_full {
             let max_bytes = sort_buffer_limit(device);
             while scale > 1.0 / 4096.0 {
                 let sw = scaled(source.full_width, scale).max(1) as u64;
@@ -406,7 +415,7 @@ impl ModifierPipeline {
             .iter()
             .any(|p| matches!(p, PlanItem::Step(_, m) if m.kind.effect_class().separable_apron().is_some()));
 
-        let mut in_set = vec![has_diag; n_tiles];
+        let mut in_set = vec![has_diag || has_full; n_tiles];
         for &v in &visible {
             let (vx, vy) = (source.tiles[v].x, source.tiles[v].y);
             for (ti, slot) in in_set.iter_mut().enumerate() {
@@ -587,6 +596,13 @@ impl ModifierPipeline {
             for (k, item) in plan.iter().enumerate() {
                 let last = k == plan_steps - 1;
                 let is_sort = matches!(item, PlanItem::Step(_, m) if m.kind.effect_class().is_compute_scanline());
+                let mb_params = match item {
+                    PlanItem::Step(_, m) => match &m.kind {
+                        ModifierKind::MotionBlur(mb) => Some((mb.angle, mb.distance)),
+                        _ => None,
+                    },
+                    _ => None,
+                };
                 let blur_radius = match item {
                     PlanItem::Step(_, m) => m.kind.effect_class().separable_apron(),
                     _ => None,
@@ -601,7 +617,16 @@ impl ModifierPipeline {
                     continue;
                 }
 
-                if let Some(radius) = blur_radius {
+                if let Some((angle, distance)) = mb_params {
+                    queue.submit([encoder.finish()]);
+                    self.motion_blur_full_buffer(
+                        device, queue, source, &proc_set, last, prev_in_a, angle, distance, scale,
+                    );
+                    encoder =
+                        device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
+                            label: Some("motion-blur-multitile-encoder"),
+                        });
+                } else if let Some(radius) = blur_radius {
                     self.run_separable_step(
                         device,
                         queue,
@@ -646,6 +671,7 @@ impl ModifierPipeline {
                             item,
                             &tile_info,
                             source.full_width as f32,
+                            source.full_height as f32,
                             whole.proc,
                             whole.src,
                             &prev,
@@ -738,6 +764,7 @@ impl ModifierPipeline {
         item: &PlanItem,
         tile_info: &TileInfo,
         full_w: f32,
+        full_h: f32,
         proc: UvRect,
         src: UvRect,
         prev: &TextureView,
@@ -776,6 +803,28 @@ impl ModifierPipeline {
                     pools.ca += 1;
                     self.chromatic_aberration.record(
                         device, queue, encoder, buffer, ca.amount, full_w, proc, src, prev, out,
+                    );
+                }
+                ModifierKind::MotionBlur(mb) => {
+                    if pools.mb == self.mb_uniform_pool.len() {
+                        self.mb_uniform_pool
+                            .push(self.motion_blur.uniform_buffer(device));
+                    }
+                    let buffer = &self.mb_uniform_pool[pools.mb];
+                    pools.mb += 1;
+                    self.motion_blur.record(
+                        device,
+                        queue,
+                        encoder,
+                        buffer,
+                        mb.angle,
+                        mb.distance,
+                        full_w,
+                        full_h,
+                        proc,
+                        src,
+                        prev,
+                        out,
                     );
                 }
                 ModifierKind::Text(_) => {
@@ -826,6 +875,117 @@ impl ModifierPipeline {
                 }
             },
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn motion_blur_full_buffer(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        source: &TiledSource,
+        proc_set: &[usize],
+        last: bool,
+        prev_in_a: bool,
+        angle: f32,
+        distance: f32,
+        scale: f32,
+    ) -> bool {
+        let full_w = scaled(source.full_width, scale).max(1);
+        let full_h = scaled(source.full_height, scale).max(1);
+        let row_bytes = (full_w * 4).div_ceil(256) * 256;
+        let row_words = row_bytes / 4;
+        let bytes = row_bytes as u64 * full_h as u64;
+        if bytes > sort_buffer_limit(device) {
+            return false;
+        }
+        let need_new = self
+            .mb_buffers
+            .as_ref()
+            .is_none_or(|(s, _)| s.size() < bytes);
+        if need_new {
+            self.mb_buffers = Some((
+                gpu::storage_buffer(device, bytes, Some("motion-blur-src")),
+                gpu::storage_buffer(device, bytes, Some("motion-blur-dst")),
+            ));
+        }
+        if self.mb_compute_uniform_pool.is_empty() {
+            self.mb_compute_uniform_pool
+                .push(self.motion_blur_compute.uniform_buffer(device));
+        }
+
+        let stile = |ti: usize| -> (u32, u32, u32, u32) {
+            let t = &source.tiles[ti];
+            let sx0 = scaled(t.x, scale);
+            let sy0 = scaled(t.y, scale);
+            (
+                sx0,
+                sy0,
+                (scaled(t.x + t.width, scale) - sx0).max(1),
+                (scaled(t.y + t.height, scale) - sy0).max(1),
+            )
+        };
+        let tile_layout = |x0: u32, y0: u32, h: u32| iced::wgpu::TexelCopyBufferLayout {
+            offset: y0 as u64 * row_bytes as u64 + x0 as u64 * 4,
+            bytes_per_row: Some(row_bytes),
+            rows_per_image: Some(h),
+        };
+
+        let mut enc = device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
+            label: Some("motion-blur-full"),
+        });
+        let (src_buf, dst_buf) = self.mb_buffers.as_ref().unwrap();
+        let uniform = &self.mb_compute_uniform_pool[0];
+
+        for &ti in proc_set {
+            let (sx0, sy0, sw, sh) = stile(ti);
+            let tex = self.bank_in_tex(ti, prev_in_a);
+            enc.copy_texture_to_buffer(
+                tex_copy_info(tex, iced::wgpu::Origin3d::ZERO),
+                iced::wgpu::TexelCopyBufferInfo {
+                    buffer: src_buf,
+                    layout: tile_layout(sx0, sy0, sh),
+                },
+                iced::wgpu::Extent3d {
+                    width: sw,
+                    height: sh,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
+        self.motion_blur_compute.record(
+            device,
+            queue,
+            &mut enc,
+            uniform,
+            src_buf,
+            dst_buf,
+            full_w,
+            full_h,
+            row_words,
+            angle,
+            distance * scale,
+        );
+
+        for &ti in proc_set {
+            let (sx0, sy0, sw, sh) = stile(ti);
+            let tex = self.bank_out_tex(ti, last, prev_in_a);
+            enc.copy_buffer_to_texture(
+                iced::wgpu::TexelCopyBufferInfo {
+                    buffer: dst_buf,
+                    layout: tile_layout(sx0, sy0, sh),
+                },
+                tex_copy_info(tex, iced::wgpu::Origin3d::ZERO),
+                iced::wgpu::Extent3d {
+                    width: sw,
+                    height: sh,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
+        queue.submit([enc.finish()]);
+        true
     }
 
     fn step_input_view(&self, ti: usize, prev_in_a: bool) -> &TextureView {

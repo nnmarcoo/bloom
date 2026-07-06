@@ -38,7 +38,7 @@ pub use halftone::Halftone;
 pub use hue_saturation::HueSaturation;
 pub use invert::Invert;
 pub use levels::Levels;
-pub use motion_blur::MotionBlur;
+pub use motion_blur::{MotionBlur, motion_blur_samples};
 pub use pixel_sort::PixelSort;
 pub use posterize::Posterize;
 pub use radial_blur::RadialBlur;

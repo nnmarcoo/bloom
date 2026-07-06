@@ -16,6 +16,7 @@ use crate::{
             chromatic_aberration::ChromaticAberrationPass,
             drawing::{DrawingLayer, DrawingPass},
             gaussian_blur::{GaussianBlurPass, TileRect},
+            motion_blur::{MotionBlurCompute, MotionBlurPass},
             pixel_sort::PixelSortCompute,
             text::{TextLayer, TextPass},
         },
@@ -164,6 +165,7 @@ impl Scheduler {
 struct StepPools {
     fused: usize,
     ca: usize,
+    mb: usize,
     text: usize,
     drawing: usize,
 }
@@ -218,6 +220,9 @@ pub struct ModifierPipeline {
 
     uniform_pool: Vec<iced::wgpu::Buffer>,
     ca_uniform_pool: Vec<iced::wgpu::Buffer>,
+    mb_uniform_pool: Vec<iced::wgpu::Buffer>,
+    mb_compute_uniform_pool: Vec<iced::wgpu::Buffer>,
+    mb_buffers: Option<(iced::wgpu::Buffer, iced::wgpu::Buffer)>,
     blur_uniform_pool: Vec<iced::wgpu::Buffer>,
     text_uniform_pool: Vec<iced::wgpu::Buffer>,
     pixel_sort_uniform_pool: Vec<iced::wgpu::Buffer>,
@@ -232,6 +237,8 @@ pub struct ModifierPipeline {
     drawing_uniform_pool: Vec<iced::wgpu::Buffer>,
     combined: CombinedPass,
     chromatic_aberration: ChromaticAberrationPass,
+    motion_blur: MotionBlurPass,
+    motion_blur_compute: MotionBlurCompute,
     gaussian_blur: GaussianBlurPass,
     pixel_sort: PixelSortCompute,
     text: TextPass,
@@ -298,6 +305,9 @@ impl ModifierPipeline {
             reprocess_pending: false,
             uniform_pool: Vec::new(),
             ca_uniform_pool: Vec::new(),
+            mb_uniform_pool: Vec::new(),
+            mb_compute_uniform_pool: Vec::new(),
+            mb_buffers: None,
             blur_uniform_pool: Vec::new(),
             text_uniform_pool: Vec::new(),
             pixel_sort_uniform_pool: Vec::new(),
@@ -312,6 +322,8 @@ impl ModifierPipeline {
             drawing_uniform_pool: Vec::new(),
             combined: CombinedPass::new(device, format),
             chromatic_aberration: ChromaticAberrationPass::new(device, format),
+            motion_blur: MotionBlurPass::new(device, format),
+            motion_blur_compute: MotionBlurCompute::new(device),
             gaussian_blur: GaussianBlurPass::new(device, format),
             pixel_sort: PixelSortCompute::new(device),
             text: TextPass::new(device, format),
@@ -495,8 +507,11 @@ impl ModifierPipeline {
         let has_pixel_sort = plan_vec.iter().any(
             |p| matches!(p, PlanItem::Step(_, m) if m.kind.effect_class().is_compute_scanline()),
         );
+        let has_motion_blur = plan_vec.iter().any(
+            |p| matches!(p, PlanItem::Step(_, m) if matches!(m.kind, ModifierKind::MotionBlur(_))),
+        );
 
-        if n_tiles > 1 && (has_blur || has_pixel_sort) {
+        if n_tiles > 1 && (has_blur || has_pixel_sort || has_motion_blur) {
             self.prepare_tiled(
                 device,
                 queue,
@@ -519,6 +534,7 @@ impl ModifierPipeline {
         let mut encoder: Option<CommandEncoder> = None;
         let mut pool_used = 0usize;
         let mut ca_pool_used = 0usize;
+        let mut mb_pool_used = 0usize;
         let mut blur_pool_used = 0usize;
         let mut text_pool_used = 0usize;
         let mut drawing_pool_used = 0usize;
@@ -766,6 +782,36 @@ impl ModifierPipeline {
                                     buffer,
                                     amount,
                                     source.full_width as f32,
+                                    pr.proc,
+                                    src_rect,
+                                    &prev,
+                                    out,
+                                );
+                            }
+                            ModifierKind::MotionBlur(mb) => {
+                                if mb_pool_used == self.mb_uniform_pool.len() {
+                                    self.mb_uniform_pool
+                                        .push(self.motion_blur.uniform_buffer(device));
+                                }
+                                let buffer = &self.mb_uniform_pool[mb_pool_used];
+                                mb_pool_used += 1;
+                                let enc = encoder.get_or_insert_with(|| {
+                                    device.create_command_encoder(
+                                        &iced::wgpu::CommandEncoderDescriptor {
+                                            label: Some("modifier-pipeline-encoder"),
+                                        },
+                                    )
+                                });
+                                let src_rect = if k == 0 { pr.src } else { pr.proc };
+                                self.motion_blur.record(
+                                    device,
+                                    queue,
+                                    enc,
+                                    buffer,
+                                    mb.angle,
+                                    mb.distance,
+                                    source.full_width as f32,
+                                    source.full_height as f32,
                                     pr.proc,
                                     src_rect,
                                     &prev,

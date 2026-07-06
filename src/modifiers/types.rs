@@ -151,6 +151,10 @@ macro_rules! define_modifiers {
                     $(ModifierType::$variant => $category,)*
                 }
             }
+
+            pub fn implemented(&self) -> bool {
+                !matches!(self, ModifierType::RadialBlur)
+            }
         }
 
         #[derive(Debug, Clone)]
@@ -336,7 +340,9 @@ pub enum ModifierParam {
 #[cfg(test)]
 mod effect_class_tests {
     use super::*;
-    use crate::modifiers::kinds::{ChromaticAberration, Exposure, GaussianBlur, PixelSort, Text};
+    use crate::modifiers::kinds::{
+        ChromaticAberration, Exposure, GaussianBlur, MotionBlur, PixelSort, Text,
+    };
 
     fn class(k: ModifierKind) -> EffectClass {
         k.effect_class()
@@ -352,6 +358,13 @@ mod effect_class_tests {
             .is_fragment()
         );
         assert!(class(ModifierKind::Text(Text::default())).is_fragment());
+        assert!(
+            class(ModifierKind::MotionBlur(MotionBlur {
+                angle: 0.0,
+                distance: 20.0,
+            }))
+            .is_fragment()
+        );
 
         let blur = ModifierKind::GaussianBlur(GaussianBlur { radius: 7.0 });
         assert_eq!(blur.effect_class().separable_apron(), Some(7.0));

@@ -15,7 +15,7 @@ use iced::{
 
 use crate::modifiers::ModifierType;
 use crate::styles::radius;
-use crate::widgets::menu::{SubMenuSide, menu_item, styled_menu, sub_menu};
+use crate::widgets::menu::{SubMenuSide, menu_item_enabled, styled_menu, sub_menu};
 
 const TRIGGER_H: f32 = 28.0;
 const SUBMENU_W: f32 = 210.0;
@@ -295,7 +295,11 @@ fn submenu_body<'a>() -> Element<'a, Op, Theme, Renderer> {
     for (cat, items) in categories() {
         let mut group = column![].spacing(2);
         for t in items {
-            group = group.push(menu_item(t.label(), Op::Pick(t.clone())));
+            group = group.push(menu_item_enabled(
+                t.label(),
+                Op::Pick(t.clone()),
+                t.implemented(),
+            ));
         }
         col = col.push(sub_menu(cat, styled_menu(group, SUBMENU_W)).side(SubMenuSide::Left));
     }
@@ -343,7 +347,8 @@ fn filtered_body<'a>(query_lower: &str) -> Element<'a, Op, Theme, Renderer> {
 }
 
 fn result_row<'a>(t: &'static ModifierType) -> Element<'a, Op, Theme, Renderer> {
-    button(
+    let enabled = t.implemented();
+    let mut b = button(
         text_widget(t.label())
             .size(TEXT_SIZE)
             .wrapping(text::Wrapping::None)
@@ -354,17 +359,24 @@ fn result_row<'a>(t: &'static ModifierType) -> Element<'a, Op, Theme, Renderer> 
     .width(Length::Fill)
     .height(Length::Fixed(ITEM_HEIGHT))
     .padding([0.0, ITEM_PADDING_H])
-    .style(result_row_style)
-    .on_press(Op::Pick(t.clone()))
-    .into()
+    .style(move |theme, status| result_row_style(theme, status, enabled));
+    if enabled {
+        b = b.on_press(Op::Pick(t.clone()));
+    }
+    b.into()
 }
 
-fn result_row_style(theme: &Theme, status: button::Status) -> button::Style {
+fn result_row_style(theme: &Theme, status: button::Status, enabled: bool) -> button::Style {
     let palette = theme.extended_palette();
-    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    let hovered = enabled && matches!(status, button::Status::Hovered | button::Status::Pressed);
+    let text_color = if enabled {
+        palette.background.base.text
+    } else {
+        palette.background.base.text.scale_alpha(0.3)
+    };
     button::Style {
         background: hovered.then_some(Background::Color(palette.background.strong.color)),
-        text_color: palette.background.base.text,
+        text_color,
         border: Border {
             radius: radius().into(),
             ..Border::default()

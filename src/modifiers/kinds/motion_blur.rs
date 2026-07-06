@@ -5,10 +5,14 @@ use iced::Element;
 use iced::widget::column;
 
 use crate::app::{EditMsg, Message};
-use crate::modifiers::{ModifierImpl, ModifierParam};
+use crate::modifiers::{InputRequest, ModifierImpl, ModifierParam};
 use crate::widgets::value_slider::Fmt;
 
 use super::{angle_row, finish, hash_f32, value_row};
+
+pub fn motion_blur_samples(distance: f32) -> u32 {
+    (distance.abs().round() as u32).clamp(2, 128)
+}
 
 #[derive(Debug, Clone)]
 pub struct MotionBlur {
@@ -31,7 +35,11 @@ impl ModifierImpl for MotionBlur {
     }
 
     fn has_effect(&self) -> bool {
-        false
+        self.distance > 0.0
+    }
+
+    fn input_request(&self) -> InputRequest {
+        InputRequest::FullFrame
     }
 
     fn apply_param(&mut self, param: ModifierParam, _img_size: Option<(u32, u32)>) {
@@ -61,7 +69,7 @@ impl ModifierImpl for MotionBlur {
             value_row(
                 "Distance",
                 self.distance,
-                0.0..=200.0,
+                0.0..=500.0,
                 0.5,
                 Fmt::num(0),
                 move |v| EditMsg::Update(index, ModifierParam::MotionBlurDistance(v)).into(),
