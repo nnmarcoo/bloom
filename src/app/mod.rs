@@ -639,6 +639,17 @@ impl App {
                     Task::none()
                 }
             }
+            Some(Action::FrameFirst) => self.transport_key(TransportMsg::FrameFirst),
+            Some(Action::FrameLast) => self.transport_key(TransportMsg::FrameLast),
+            Some(Action::FrameNext) => self.transport_key(TransportMsg::FrameNext),
+            Some(Action::FramePrev) => self.transport_key(TransportMsg::FramePrev),
+            Some(Action::ToggleMute) => {
+                if self.transport.volume_indicator().0.is_some() {
+                    Task::done(TransportMsg::ToggleMute.into())
+                } else {
+                    Task::none()
+                }
+            }
             Some(Action::ToggleInfoPanel) => Task::done(Message::ToggleInfoColumn),
             Some(Action::ToggleEditPanel) => Task::done(Message::ToggleEditPanel),
             Some(Action::ToggleCheckerboard) => Task::done(Message::ToggleCheckerboard),
@@ -647,6 +658,14 @@ impl App {
             Some(Action::CopyImage) => Task::done(Message::CopyImage),
             Some(Action::ExportImage) => Task::done(Message::ExportImage),
             None => Task::none(),
+        }
+    }
+
+    fn transport_key(&self, msg: TransportMsg) -> Task<Message> {
+        if self.transport.playback_active(&self.program) {
+            Task::done(msg.into())
+        } else {
+            Task::none()
         }
     }
 
@@ -723,6 +742,7 @@ impl App {
                 timestamp,
                 volume,
                 muted,
+                &self.config.keymap,
             ));
         }
 

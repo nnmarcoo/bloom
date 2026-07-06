@@ -6,8 +6,9 @@ use iced::widget::{container, row, text};
 use iced::{Element, Font, Length};
 
 use crate::app::{Message, TransportMsg};
+use crate::keybinds::{Action, Keymap};
 use crate::styles::{BAR_HEIGHT, PAD, bar_style};
-use crate::ui::{format_duration, svg_button, with_tooltip};
+use crate::ui::{format_duration, svg_button, with_tooltip_key};
 use crate::widgets::timeline::Timeline;
 use crate::widgets::value_slider::{Fmt, ValueSlider};
 
@@ -18,6 +19,7 @@ pub fn view<'a>(
     timestamp: Option<(Duration, Duration)>,
     volume: Option<f32>,
     muted: bool,
+    keymap: &Keymap,
 ) -> Element<'a, Message> {
     let (play_pause_icon, play_pause_tooltip): (&'static [u8], &str) = if playing {
         (include_bytes!("../../assets/icons/pause.svg"), "Pause")
@@ -26,42 +28,52 @@ pub fn view<'a>(
     };
 
     let controls = row![
-        with_tooltip(
+        with_tooltip_key(
             svg_button(
                 include_bytes!("../../assets/icons/first.svg"),
                 TransportMsg::FrameFirst.into()
             ),
             "First frame",
             Position::Top,
+            keymap,
+            Action::FrameFirst,
         ),
-        with_tooltip(
+        with_tooltip_key(
             svg_button(
                 include_bytes!("../../assets/icons/left.svg"),
                 TransportMsg::FramePrev.into()
             ),
             "Previous frame",
             Position::Top,
+            keymap,
+            Action::FramePrev,
         ),
-        with_tooltip(
+        with_tooltip_key(
             svg_button(play_pause_icon, TransportMsg::TogglePlayback.into()),
             play_pause_tooltip,
             Position::Top,
+            keymap,
+            Action::TogglePlayback,
         ),
-        with_tooltip(
+        with_tooltip_key(
             svg_button(
                 include_bytes!("../../assets/icons/right.svg"),
                 TransportMsg::FrameNext.into()
             ),
             "Next frame",
             Position::Top,
+            keymap,
+            Action::FrameNext,
         ),
-        with_tooltip(
+        with_tooltip_key(
             svg_button(
                 include_bytes!("../../assets/icons/last.svg"),
                 TransportMsg::FrameLast.into()
             ),
             "Last frame",
             Position::Top,
+            keymap,
+            Action::FrameLast,
         ),
     ]
     .align_y(Vertical::Center)
@@ -109,10 +121,12 @@ pub fn view<'a>(
         };
         let shown = if muted { 0.0 } else { level };
         let volume_control = row![
-            with_tooltip(
+            with_tooltip_key(
                 svg_button(icon, TransportMsg::ToggleMute.into()),
                 tooltip,
                 Position::Top,
+                keymap,
+                Action::ToggleMute,
             ),
             container(
                 ValueSlider::new(shown * 100.0, 0.0..=200.0, |v| TransportMsg::SetVolume(

@@ -29,6 +29,11 @@ pub enum Action {
     BrushSizeUp,
     BrushSizeDown,
     TogglePlayback,
+    FrameFirst,
+    FrameLast,
+    FrameNext,
+    FramePrev,
+    ToggleMute,
     ToggleInfoPanel,
     ToggleEditPanel,
     ToggleCheckerboard,
@@ -90,6 +95,11 @@ impl Action {
             Self::BrushSizeUp => "Brush size up".into(),
             Self::BrushSizeDown => "Brush size down".into(),
             Self::TogglePlayback => "Toggle playback".into(),
+            Self::FrameFirst => "First frame".into(),
+            Self::FrameLast => "Last frame".into(),
+            Self::FrameNext => "Next frame".into(),
+            Self::FramePrev => "Previous frame".into(),
+            Self::ToggleMute => "Toggle mute".into(),
             Self::ToggleInfoPanel => "Toggle info panel".into(),
             Self::ToggleEditPanel => "Toggle edit panel".into(),
             Self::ToggleCheckerboard => "Toggle checkerboard".into(),
@@ -123,6 +133,11 @@ impl Action {
             Self::BrushSizeUp => "Increase the draw tool brush size",
             Self::BrushSizeDown => "Decrease the draw tool brush size",
             Self::TogglePlayback => "Pause or resume animation playback",
+            Self::FrameFirst => "Jump to the first frame",
+            Self::FrameLast => "Jump to the last frame",
+            Self::FrameNext => "Step forward one frame",
+            Self::FramePrev => "Step back one frame",
+            Self::ToggleMute => "Mute or unmute audio",
             Self::ToggleInfoPanel => "Show or hide the image info panel",
             Self::ToggleEditPanel => "Show or hide the edit panel",
             Self::ToggleCheckerboard => "Show or hide the checkerboard background",
@@ -162,7 +177,12 @@ impl Action {
             | Self::ToolText
             | Self::BrushSizeUp
             | Self::BrushSizeDown => KeyCategory::Tools,
-            Self::TogglePlayback => KeyCategory::Playback,
+            Self::TogglePlayback
+            | Self::FrameFirst
+            | Self::FrameLast
+            | Self::FrameNext
+            | Self::FramePrev
+            | Self::ToggleMute => KeyCategory::Playback,
         }
     }
 
@@ -199,6 +219,11 @@ impl Action {
             Action::BrushSizeUp,
             Action::BrushSizeDown,
             Action::TogglePlayback,
+            Action::FrameFirst,
+            Action::FramePrev,
+            Action::FrameNext,
+            Action::FrameLast,
+            Action::ToggleMute,
         ]
     }
 }
@@ -444,6 +469,11 @@ impl Default for Keymap {
         m.insert(Action::BrushSizeUp, n(key::Code::BracketRight));
         m.insert(Action::BrushSizeDown, n(key::Code::BracketLeft));
         m.insert(Action::TogglePlayback, n(key::Code::Space));
+        m.insert(Action::FrameFirst, n(key::Code::Home));
+        m.insert(Action::FrameLast, n(key::Code::End));
+        m.insert(Action::FrameNext, n(key::Code::Period));
+        m.insert(Action::FramePrev, n(key::Code::Comma));
+        m.insert(Action::ToggleMute, n(key::Code::KeyM));
         m.insert(Action::ToggleInfoPanel, n(key::Code::KeyI));
         m.insert(Action::ToggleEditPanel, n(key::Code::KeyE));
         m.insert(Action::ToggleCheckerboard, n(key::Code::KeyB));
@@ -535,6 +565,11 @@ pub(crate) struct KeymapFile {
     pub brush_size_up: Option<String>,
     pub brush_size_down: Option<String>,
     pub toggle_playback: Option<String>,
+    pub frame_first: Option<String>,
+    pub frame_last: Option<String>,
+    pub frame_next: Option<String>,
+    pub frame_prev: Option<String>,
+    pub toggle_mute: Option<String>,
     pub toggle_info_panel: Option<String>,
     pub toggle_edit_panel: Option<String>,
     pub toggle_checkerboard: Option<String>,
@@ -584,6 +619,11 @@ impl From<&Keymap> for KeymapFile {
             brush_size_up: bind(Action::BrushSizeUp),
             brush_size_down: bind(Action::BrushSizeDown),
             toggle_playback: bind(Action::TogglePlayback),
+            frame_first: bind(Action::FrameFirst),
+            frame_last: bind(Action::FrameLast),
+            frame_next: bind(Action::FrameNext),
+            frame_prev: bind(Action::FramePrev),
+            toggle_mute: bind(Action::ToggleMute),
             toggle_info_panel: bind(Action::ToggleInfoPanel),
             toggle_edit_panel: bind(Action::ToggleEditPanel),
             toggle_checkerboard: bind(Action::ToggleCheckerboard),
@@ -635,6 +675,11 @@ impl From<KeymapFile> for Keymap {
             resolve(f.brush_size_up, Action::BrushSizeUp),
             resolve(f.brush_size_down, Action::BrushSizeDown),
             resolve(f.toggle_playback, Action::TogglePlayback),
+            resolve(f.frame_first, Action::FrameFirst),
+            resolve(f.frame_last, Action::FrameLast),
+            resolve(f.frame_next, Action::FrameNext),
+            resolve(f.frame_prev, Action::FramePrev),
+            resolve(f.toggle_mute, Action::ToggleMute),
             resolve(f.toggle_info_panel, Action::ToggleInfoPanel),
             resolve(f.toggle_edit_panel, Action::ToggleEditPanel),
             resolve(f.toggle_checkerboard, Action::ToggleCheckerboard),
