@@ -9,6 +9,8 @@ use iced::time::Instant;
 use iced::{Element, Event, Length, Radians, Rectangle, Renderer, Size};
 use iced::{mouse, window};
 
+use crate::easing::{ease_in_cubic, ease_out_cubic};
+
 const DURATION: Duration = Duration::from_millis(1100);
 const ECHOES: usize = 5;
 const REACH: f32 = 1.0;
@@ -41,21 +43,13 @@ struct State {
     press: Option<Instant>,
 }
 
-fn ease_out(t: f32) -> f32 {
-    1.0 - (1.0 - t).powi(3)
-}
-
-fn ease_in(t: f32) -> f32 {
-    t * t * t
-}
-
 fn spread(t: f32) -> f32 {
     if t < FAN_OUT {
-        ease_out(t / FAN_OUT)
+        ease_out_cubic(t / FAN_OUT)
     } else if t < HOLD {
         1.0
     } else {
-        1.0 - ease_in((t - HOLD) / (1.0 - HOLD))
+        1.0 - ease_in_cubic((t - HOLD) / (1.0 - HOLD))
     }
 }
 
