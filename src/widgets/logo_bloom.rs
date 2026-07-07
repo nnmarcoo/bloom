@@ -164,9 +164,8 @@ impl<Message, Theme> Widget<Message, Theme, Renderer> for LogoBloom {
 
         let press_scale = match state.press {
             Some(start) => {
-                let p = (now.duration_since(start).as_secs_f32()
-                    / PRESS_DURATION.as_secs_f32())
-                .clamp(0.0, 1.0);
+                let p = (now.duration_since(start).as_secs_f32() / PRESS_DURATION.as_secs_f32())
+                    .clamp(0.0, 1.0);
                 let dip = (p * std::f32::consts::PI).sin();
                 1.0 - PRESS_SHRINK * dip
             }
