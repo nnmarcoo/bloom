@@ -670,7 +670,7 @@ fn keybindings_pane<'a>(
 fn logo_handle() -> image::Handle {
     static LOGO: OnceLock<image::Handle> = OnceLock::new();
     LOGO.get_or_init(|| {
-        image::Handle::from_bytes(include_bytes!("../../assets/logo/bloom64.png").as_slice())
+        image::Handle::from_bytes(include_bytes!("../../assets/logo/bloom256.png").as_slice())
     })
     .clone()
 }
@@ -691,7 +691,7 @@ fn about_pane<'a>(theme: &Theme) -> Element<'a, Message> {
 
     column![
         row![
-            LogoBloom::new(logo_handle(), 64.0),
+            LogoBloom::new(logo_handle(), 80.0),
             column![
                 text("Bloom").size(24).font(Font {
                     weight: Weight::Semibold,

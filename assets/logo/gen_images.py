@@ -115,6 +115,29 @@ def render_icon(svg_content: str, size: int) -> Image.Image:
     return hi_bg.resize((size, size), Image.LANCZOS)
 
 
+def render_padded_icon(svg_content: str, size: int, pad_ratio: float) -> Image.Image:
+    """Like render_icon, but the icon is inset inside a transparent margin.
+
+    Leaving a transparent border on each side means the icon's visible edge is
+    an antialiased alpha silhouette rather than the image's hard quad boundary,
+    so it stays smooth when the About-pane widget rotates it.
+    """
+    SCALE = 4
+    hi = size * SCALE
+    pad = round(hi * pad_ratio)
+    inner = hi - 2 * pad
+
+    hi_bg = blue_rounded_rect(inner, inner)
+    glyph_hi = round(inner * ICON_GLYPH_RATIO)
+    hi_glyph = render_svg(svg_content, glyph_hi)
+    goff = (inner - glyph_hi) // 2
+    hi_bg.paste(hi_glyph, (goff, goff), hi_glyph)
+
+    canvas = Image.new("RGBA", (hi, hi), (0, 0, 0, 0))
+    canvas.paste(hi_bg, (pad, pad), hi_bg)
+    return canvas.resize((size, size), Image.LANCZOS)
+
+
 def render_banner(svg_content: str, font: ImageFont.FreeTypeFont) -> Image.Image:
     """Blue rounded-rect with the glyph and 'loom' text side by side."""
     SCALE = 4
@@ -181,12 +204,19 @@ if __name__ == "__main__":
     images[0].save(ICO_PATH, format="ICO", append_images=images[1:])
     print(f"Written {ICO_PATH}")
 
-    # PNGs — render_icon internally upscales 4x then downscales for best quality
+    # PNGs — render_icon internally upscales 4x then downscales for best quality.
     for size in (32, 64):
         render_icon(svg_content, size).save(
             DIR / f"bloom{size}.png", format="PNG", optimize=True
         )
         print(f"Written {DIR / f'bloom{size}.png'}")
+
+    # bloom256 is the rotating About-pane logo; the transparent margin keeps its
+    # edges antialiased under rotation.
+    render_padded_icon(svg_content, 256, pad_ratio=0.10).save(
+        DIR / "bloom256.png", format="PNG", optimize=True
+    )
+    print(f"Written {DIR / 'bloom256.png'}")
 
     # Banner
     font_path = next((p for p in BANNER_FONT_PATHS if Path(p).exists()), None)

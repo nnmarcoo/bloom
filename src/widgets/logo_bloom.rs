@@ -9,15 +9,20 @@ use iced::time::Instant;
 use iced::{Element, Event, Length, Radians, Rectangle, Renderer, Size};
 use iced::{mouse, window};
 
-const DURATION: Duration = Duration::from_millis(1000);
+const DURATION: Duration = Duration::from_millis(1100);
 const ECHOES: usize = 5;
 const REACH: f32 = 1.0;
+const MAX_ANGLE: f32 = 5.0 * std::f32::consts::PI / 180.0;
 const OPACITY: f32 = 0.92;
 const FADE_EXPONENT: f32 = 1.6;
 const LAG: f32 = 0.18;
+const MIN_OPACITY: f32 = 1.0 / 255.0;
 const FAN_OUT: f32 = 0.4;
 const HOLD: f32 = 0.6;
-const MIN_OPACITY: f32 = 1.0 / 255.0;
+const MAIN_WOBBLE: f32 = 2.5 * std::f32::consts::PI / 180.0;
+
+const PRESS_DURATION: Duration = Duration::from_millis(220);
+const PRESS_SHRINK: f32 = 0.12;
 
 pub struct LogoBloom {
     handle: image::Handle,
@@ -32,7 +37,8 @@ impl LogoBloom {
 
 #[derive(Default)]
 struct State {
-    playing: Option<Instant>,
+    wave: Option<Instant>,
+    press: Option<Instant>,
 }
 
 fn ease_out(t: f32) -> f32 {
@@ -95,17 +101,30 @@ impl<Message, Theme> Widget<Message, Theme, Renderer> for LogoBloom {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
                 if cursor.is_over(layout.bounds()) =>
             {
-                state.playing = Some(Instant::now());
+                let now = Instant::now();
+                state.wave = Some(now);
+                state.press = Some(now);
                 shell.request_redraw();
                 shell.capture_event();
             }
             Event::Window(window::Event::RedrawRequested(now)) => {
-                if let Some(start) = state.playing {
+                let mut animating = false;
+                if let Some(start) = state.wave {
                     if now.duration_since(start) >= DURATION {
-                        state.playing = None;
+                        state.wave = None;
                     } else {
-                        shell.request_redraw();
+                        animating = true;
                     }
+                }
+                if let Some(start) = state.press {
+                    if now.duration_since(start) >= PRESS_DURATION {
+                        state.press = None;
+                    } else {
+                        animating = true;
+                    }
+                }
+                if animating {
+                    shell.request_redraw();
                 }
             }
             _ => {}
@@ -140,38 +159,54 @@ impl<Message, Theme> Widget<Message, Theme, Renderer> for LogoBloom {
         use iced::advanced::image::Renderer as _;
 
         let state = tree.state.downcast_ref::<State>();
+        let now = Instant::now();
         let bounds = layout.bounds();
 
-        let draw_copy = |renderer: &mut Renderer, dx: f32, opacity: f32| {
+        let press_scale = match state.press {
+            Some(start) => {
+                let p = (now.duration_since(start).as_secs_f32()
+                    / PRESS_DURATION.as_secs_f32())
+                .clamp(0.0, 1.0);
+                let dip = (p * std::f32::consts::PI).sin();
+                1.0 - PRESS_SHRINK * dip
+            }
+            None => 1.0,
+        };
+
+        let inset = bounds.width * (1.0 - press_scale) * 0.5;
+        let stage = Rectangle {
+            x: bounds.x + inset,
+            y: bounds.y + inset,
+            width: bounds.width * press_scale,
+            height: bounds.height * press_scale,
+        };
+
+        let draw_copy = |renderer: &mut Renderer, dx: f32, angle: f32, opacity: f32| {
             renderer.draw_image(
                 Image {
                     handle: self.handle.clone(),
                     filter_method: FilterMethod::Linear,
-                    rotation: Radians(0.0),
+                    rotation: Radians(angle),
                     border_radius: iced::border::Radius::default(),
                     opacity,
                     snap: false,
                 },
                 Rectangle {
-                    x: bounds.x + dx,
-                    ..bounds
+                    x: stage.x + dx,
+                    ..stage
                 },
                 *viewport,
             );
         };
 
-        let spread = match state.playing {
-            Some(start) => {
-                let t = (Instant::now().duration_since(start).as_secs_f32()
-                    / DURATION.as_secs_f32())
-                .clamp(0.0, 1.0);
-                spread(t)
-            }
-            None => 0.0,
-        };
+        let t = state.wave.map(|start| {
+            (now.duration_since(start).as_secs_f32() / DURATION.as_secs_f32()).clamp(0.0, 1.0)
+        });
 
-        if spread > 0.0 {
-            let travel = bounds.width * REACH * spread;
+        if let Some(t) = t {
+            let spread = spread(t);
+            let travel = stage.width * REACH * spread;
+
             for i in (1..=ECHOES).rev() {
                 let f = i as f32 / ECHOES as f32;
                 let opacity = OPACITY * (1.0 - f).powf(FADE_EXPONENT) * spread;
@@ -179,11 +214,15 @@ impl<Message, Theme> Widget<Message, Theme, Renderer> for LogoBloom {
                     continue;
                 }
                 let dx = -travel * f * (1.0 - LAG * (1.0 - f));
-                draw_copy(renderer, dx, opacity);
+                let angle = MAX_ANGLE * spread * (std::f32::consts::TAU * (t - f)).sin();
+                draw_copy(renderer, dx, angle, opacity);
             }
-        }
 
-        draw_copy(renderer, 0.0, 1.0);
+            let main_angle = MAIN_WOBBLE * spread * (std::f32::consts::TAU * t).sin();
+            draw_copy(renderer, 0.0, main_angle, 1.0);
+        } else {
+            draw_copy(renderer, 0.0, 0.0, 1.0);
+        }
     }
 }
 
