@@ -57,17 +57,6 @@ pub fn view<'a>(
             ),
             with_tooltip_key(
                 tool_button(
-                    include_bytes!("../../assets/icons/text.svg"),
-                    Tool::Text,
-                    selected_tool,
-                ),
-                "Text",
-                Position::Left,
-                keymap,
-                Action::ToolText,
-            ),
-            with_tooltip_key(
-                tool_button(
                     include_bytes!("../../assets/icons/pencil.svg"),
                     Tool::Draw,
                     selected_tool,
@@ -76,6 +65,17 @@ pub fn view<'a>(
                 Position::Left,
                 keymap,
                 Action::ToolDraw,
+            ),
+            with_tooltip_key(
+                tool_button(
+                    include_bytes!("../../assets/icons/text.svg"),
+                    Tool::Text,
+                    selected_tool,
+                ),
+                "Text",
+                Position::Left,
+                keymap,
+                Action::ToolText,
             ),
         ]
         .spacing(2),
