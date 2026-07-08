@@ -144,6 +144,7 @@ pub enum Message {
     Exit,
     ToggleEditPanel,
     ToggleCheckerboard,
+    TogglePixelGrid,
     Transport(TransportMsg),
     UiScaleUp,
     UiScaleDown,
@@ -453,6 +454,11 @@ impl App {
                 }
                 self.config_dirty = true;
             }
+            Message::TogglePixelGrid => {
+                self.program.show_pixel_grid = !self.program.show_pixel_grid;
+                self.config.show_pixel_grid = self.program.show_pixel_grid;
+                self.config_dirty = true;
+            }
             Message::Notify(n) => {
                 self.notifications.push(NotificationEntry::new(n));
             }
@@ -653,6 +659,7 @@ impl App {
             Some(Action::ToggleInfoPanel) => Task::done(Message::ToggleInfoColumn),
             Some(Action::ToggleEditPanel) => Task::done(Message::ToggleEditPanel),
             Some(Action::ToggleCheckerboard) => Task::done(Message::ToggleCheckerboard),
+            Some(Action::TogglePixelGrid) => Task::done(Message::TogglePixelGrid),
             Some(Action::ToggleBottomBar) => Task::done(Message::ToggleBottomBar),
             Some(Action::OpenMedia) => Task::done(Message::SelectMedia),
             Some(Action::CopyImage) => Task::done(Message::CopyImage),

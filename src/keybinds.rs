@@ -37,6 +37,7 @@ pub enum Action {
     ToggleInfoPanel,
     ToggleEditPanel,
     ToggleCheckerboard,
+    TogglePixelGrid,
     ToggleBottomBar,
     OpenMedia,
     CopyImage,
@@ -103,6 +104,7 @@ impl Action {
             Self::ToggleInfoPanel => "Toggle info panel".into(),
             Self::ToggleEditPanel => "Toggle edit panel".into(),
             Self::ToggleCheckerboard => "Toggle checkerboard".into(),
+            Self::TogglePixelGrid => "Toggle pixel grid".into(),
             Self::ToggleBottomBar => "Toggle bottom bar".into(),
             Self::OpenMedia => "Open media".into(),
             Self::CopyImage => "Copy image".into(),
@@ -141,6 +143,7 @@ impl Action {
             Self::ToggleInfoPanel => "Show or hide the image info panel",
             Self::ToggleEditPanel => "Show or hide the edit panel",
             Self::ToggleCheckerboard => "Show or hide the checkerboard background",
+            Self::TogglePixelGrid => "Show or hide the pixel grid",
             Self::ToggleBottomBar => "Show or hide the bottom toolbar",
             Self::OpenMedia => "Open a media file from disk",
             Self::CopyImage => "Copy the current image to the clipboard",
@@ -170,6 +173,7 @@ impl Action {
             | Self::ToggleInfoPanel
             | Self::ToggleEditPanel
             | Self::ToggleCheckerboard
+            | Self::TogglePixelGrid
             | Self::ToggleBottomBar => KeyCategory::View,
             Self::ToolSelect
             | Self::ToolCrop
@@ -211,6 +215,7 @@ impl Action {
             Action::ToggleInfoPanel,
             Action::ToggleEditPanel,
             Action::ToggleCheckerboard,
+            Action::TogglePixelGrid,
             Action::ToggleBottomBar,
             Action::ToolSelect,
             Action::ToolCrop,
@@ -477,6 +482,7 @@ impl Default for Keymap {
         m.insert(Action::ToggleInfoPanel, n(key::Code::KeyI));
         m.insert(Action::ToggleEditPanel, n(key::Code::KeyE));
         m.insert(Action::ToggleCheckerboard, n(key::Code::KeyB));
+        m.insert(Action::TogglePixelGrid, n(key::Code::KeyG));
         m.insert(Action::ToggleBottomBar, n(key::Code::KeyH));
         m.insert(Action::OpenMedia, c(key::Code::KeyO));
         m.insert(Action::CopyImage, c(key::Code::KeyC));
@@ -573,6 +579,7 @@ pub(crate) struct KeymapFile {
     pub toggle_info_panel: Option<String>,
     pub toggle_edit_panel: Option<String>,
     pub toggle_checkerboard: Option<String>,
+    pub toggle_pixel_grid: Option<String>,
     pub toggle_bottom_bar: Option<String>,
     pub open_media: Option<String>,
     pub copy_image: Option<String>,
@@ -627,6 +634,7 @@ impl From<&Keymap> for KeymapFile {
             toggle_info_panel: bind(Action::ToggleInfoPanel),
             toggle_edit_panel: bind(Action::ToggleEditPanel),
             toggle_checkerboard: bind(Action::ToggleCheckerboard),
+            toggle_pixel_grid: bind(Action::TogglePixelGrid),
             toggle_bottom_bar: bind(Action::ToggleBottomBar),
             open_media: bind(Action::OpenMedia),
             copy_image: bind(Action::CopyImage),
@@ -683,6 +691,7 @@ impl From<KeymapFile> for Keymap {
             resolve(f.toggle_info_panel, Action::ToggleInfoPanel),
             resolve(f.toggle_edit_panel, Action::ToggleEditPanel),
             resolve(f.toggle_checkerboard, Action::ToggleCheckerboard),
+            resolve(f.toggle_pixel_grid, Action::TogglePixelGrid),
             resolve(f.toggle_bottom_bar, Action::ToggleBottomBar),
             resolve(f.open_media, Action::OpenMedia),
             resolve(f.copy_image, Action::CopyImage),
