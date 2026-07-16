@@ -308,11 +308,10 @@ impl VideoState {
         if forward {
             if self.cursor + 1 < self.frames.len() {
                 self.cursor += 1;
-            } else if let Some(f) = self.recv_until(Duration::from_millis(150)) {
+            } else {
+                let f = self.recv_until(Duration::from_millis(150))?;
                 self.push_frame(f);
                 self.cursor = self.frames.len() - 1;
-            } else {
-                return None;
             }
         } else if self.cursor > 0 {
             self.cursor -= 1;
