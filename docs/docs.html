@@ -6,14 +6,12 @@
 <title>bloom / docs</title>
 <meta name="description" content="bloom documentation: features, keyboard shortcuts, supported formats, and modifiers.">
 <link rel="icon" type="image/png" href="img/bloom32.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
-<div class="glow">
-  <div class="blob one"></div>
-  <div class="blob two"></div>
-</div>
 
 <nav class="nav">
   <a class="brand" href="index.html"><img src="img/bloom32.png" alt="">bloom</a>
@@ -87,6 +85,9 @@
           <div class="keygroup">
             <h3>Playback</h3>
             <div class="krow"><span>Play / pause</span><span class="kbds"><kbd>Space</kbd></span></div>
+            <div class="krow"><span>Next / previous frame</span><span class="kbds"><kbd>.</kbd><span class="sep">/</span><kbd>,</kbd></span></div>
+            <div class="krow"><span>First / last frame</span><span class="kbds"><kbd>Home</kbd><span class="sep">/</span><kbd>End</kbd></span></div>
+            <div class="krow"><span>Toggle mute</span><span class="kbds"><kbd>M</kbd></span></div>
           </div>
         </div>
         <div class="keycolumn">
@@ -102,6 +103,7 @@
             <div class="krow"><span>Toggle info panel</span><span class="kbds"><kbd>I</kbd></span></div>
             <div class="krow"><span>Toggle edit panel</span><span class="kbds"><kbd>E</kbd></span></div>
             <div class="krow"><span>Toggle checkerboard</span><span class="kbds"><kbd>B</kbd></span></div>
+            <div class="krow"><span>Toggle pixel grid</span><span class="kbds"><kbd>G</kbd></span></div>
             <div class="krow"><span>Toggle bottom bar</span><span class="kbds"><kbd>H</kbd></span></div>
           </div>
         </div>
@@ -115,7 +117,7 @@
           <div class="keygroup">
             <h3>Gestures</h3>
             <div class="krow"><span>Zoom in / out</span><span class="kbds"><kbd>Scroll</kbd></span></div>
-            <div class="krow"><span>Pan</span><span class="kbds"><kbd>Drag</kbd><span class="sep">/</span><kbd>Middle-drag</kbd></span></div>
+            <div class="krow"><span>Pan</span><span class="kbds"><kbd>Drag</kbd><span class="sep">/</span><kbd>Middle-drag</kbd><span class="sep">/</span><kbd>Space</kbd><kbd>Drag</kbd></span></div>
             <div class="krow"><span>Open a file</span><span class="kbds"><kbd>Drag &amp; drop</kbd></span></div>
             <div class="krow"><span>Context menu</span><span class="kbds"><kbd>Right-click</kbd></span></div>
           </div>
@@ -297,21 +299,6 @@ cargo build --release --features av</pre>
 </footer>
 
 <script>
-  /* drifting glow */
-  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    document.querySelectorAll('.blob').forEach(b => {
-      (function drift(first) {
-        const x = Math.random() * 100 - 50;
-        const y = Math.random() * 100 - 50;
-        const s = 0.9 + Math.random() * 0.45;
-        const d = first ? 0 : 8 + Math.random() * 8;
-        b.style.transitionDuration = d + 's';
-        b.style.transform = 'translate(' + x + 'vw, ' + y + 'vh) scale(' + s + ')';
-        setTimeout(() => drift(false), first ? 50 : d * 1000);
-      })(true);
-    });
-  }
-
   /* searchable lists (formats, modifiers) */
   function wireSearch(section, count, word, noMatch) {
     const root = document.querySelector(section);

@@ -6,6 +6,9 @@
 <title>bloom</title>
 <meta name="description" content="bloom is a hardware-accelerated media viewer built with Rust. GPU rendering, 80+ formats, video, animation, draw and text tools, and non-destructive modifiers. Windows, macOS, Linux.">
 <link rel="icon" type="image/png" href="img/bloom32.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 <meta property="og:title" content="bloom: hardware-accelerated media viewer">
 <meta property="og:description" content="GPU-rendered media viewer built with Rust.">
@@ -13,11 +16,6 @@
 <meta property="og:type" content="website">
 </head>
 <body>
-
-<div class="glow">
-  <div class="blob one"></div>
-  <div class="blob two"></div>
-</div>
 
 <nav class="nav">
   <a class="brand" href="index.html"><img src="img/bloom32.png" alt="">bloom</a>
@@ -27,10 +25,10 @@
   </span>
 </nav>
 
-<div class="fold">
+<div class="page">
   <header class="hero">
-    <img class="banner" src="img/banner.png" alt="bloom">
-    <p class="tag">A hardware-accelerated media viewer built with Rust.</p>
+    <h1>A hardware-accelerated media&nbsp;viewer.</h1>
+    <p class="tag">83 formats, video, and non-destructive modifiers. Rust&nbsp;+&nbsp;GPU, entirely local.</p>
     <div class="cta">
       <span class="download">
         <a class="btn btn-primary dl-main" href="https://github.com/nnmarcoo/bloom/releases">Download</a>
@@ -41,100 +39,72 @@
     </div>
   </header>
 
-  <main class="carousel">
-    <div class="stage">
-      <figure class="slide active">
-        <img src="demo/camera.png" alt="bloom viewing an image at full resolution">
-      </figure>
-      <figure class="slide">
-        <img src="demo/pigeon.png" alt="bloom viewing a high-resolution photo">
-      </figure>
-      <figure class="slide">
-        <video src="demo/gif.mp4" autoplay loop muted playsinline></video>
-      </figure>
-      <figure class="slide">
-        <video src="demo/bird.mp4" autoplay loop muted playsinline></video>
-      </figure>
-      <button class="zone prev" aria-label="Previous"></button>
-      <button class="zone next" aria-label="Next"></button>
+  <figure class="shot">
+    <img src="demo/camera.png" alt="bloom viewing a photo, with the info panel showing EXIF data, pixel color, and a histogram">
+  </figure>
+
+  <section class="stats">
+    <div class="stat"><a href="docs.html#formats"><span class="n">83</span><span class="l">formats</span></a></div>
+    <div class="stat"><span class="n">2,500&nbsp;MP</span><span class="l">opens smoothly</span></div>
+    <div class="stat"><a href="docs.html#modifiers"><span class="n">22</span><span class="l">modifiers</span></a></div>
+    <div class="stat"><span class="n">0</span><span class="l">network requests</span></div>
+  </section>
+
+  <section class="section">
+    <div class="copy">
+      <h2>Non-destructive modifiers</h2>
+      <p>Stack, reorder, retune. The file is never touched &mdash; the preview is what exports.</p>
+      <p>Drag the handle: pixel sort.</p>
+      <p class="more"><a href="docs.html#modifiers">All 22 &rarr;</a></p>
     </div>
-    <div class="dots"></div>
-  </main>
+    <div class="compare">
+      <img src="demo/sort-before.jpg" alt="Original photo of daisies on a vintage camera">
+      <img class="over" src="demo/sort-after.jpg" alt="The same photo with bloom's pixel sort modifier applied" style="clip-path: inset(0 0 0 50%)">
+      <div class="divider"><span class="knob">&harr;</span></div>
+      <span class="tag-chip before">Original</span>
+      <span class="tag-chip after">Pixel Sort</span>
+      <input type="range" min="0" max="100" step="0.1" value="50" aria-label="Compare original and pixel-sorted image">
+    </div>
+  </section>
+
+  <section class="section">
+    <video src="demo/bird.mp4" autoplay loop muted playsinline></video>
+    <div class="copy">
+      <h2>Video &amp; animation</h2>
+      <p>MP4, MKV, WebM with audio and frame stepping. GIF, APNG and WebP scrub the same way.</p>
+      <p class="more"><a href="docs.html#formats">All formats &rarr;</a></p>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="cell"><h3>GPU rendering</h3><p>wgpu + mipmaps. Smooth at any zoom.</p></div>
+    <div class="cell"><h3>Draw &amp; text</h3><p>Straight onto the canvas.</p></div>
+    <div class="cell"><h3>Info panel</h3><p>EXIF, pixel color, histogram.</p></div>
+    <div class="cell"><h3>Export</h3><p>PNG, JPEG, WebP &mdash; everything applied.</p></div>
+    <div class="cell"><h3>Customizable</h3><p>22 themes, rebindable keys.</p></div>
+    <div class="cell"><h3>100% local</h3><p>No telemetry. No network.</p></div>
+  </section>
 </div>
 
+<footer>
+  <div class="flinks">
+    <a href="https://github.com/nnmarcoo/bloom">GitHub</a>
+    <a href="https://github.com/nnmarcoo/bloom/releases">Releases</a>
+    <a href="https://github.com/nnmarcoo/bloom/blob/main/LICENSE">License (GPL-3.0)</a>
+  </div>
+  <div>Entirely local &middot; no telemetry &middot; built with Rust</div>
+</footer>
+
 <script>
-  /* carousel */
-  const slides = Array.from(document.querySelectorAll('.slide'));
-  const dotsWrap = document.querySelector('.dots');
-  const carousel = document.querySelector('.carousel');
-  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let i = 0, timer, paused = false;
-
-  const dots = slides.map((_, n) => {
-    const d = document.createElement('button');
-    d.className = 'dot' + (n === 0 ? ' active' : '');
-    d.setAttribute('aria-label', 'Go to slide ' + (n + 1));
-    d.addEventListener('click', () => go(n, true));
-    dotsWrap.appendChild(d);
-    return d;
+  /* before/after compare slider */
+  const cmp = document.querySelector('.compare');
+  const over = cmp.querySelector('.over');
+  const divider = cmp.querySelector('.divider');
+  cmp.querySelector('input[type="range"]').addEventListener('input', e => {
+    const pct = e.target.value;
+    over.style.clipPath = 'inset(0 0 0 ' + pct + '%)';
+    divider.style.left = pct + '%';
   });
-
-  const ANIM = ['enter-next', 'enter-prev', 'exit-next', 'exit-prev'];
-
-  function go(n, reset, dir) {
-    const next = (n + slides.length) % slides.length;
-    if (next !== i) {
-      if (dir === undefined) dir = n > i ? 1 : -1;
-      const cur = slides[i], inc = slides[next];
-      dots[i].classList.remove('active');
-      dots[next].classList.add('active');
-      cur.classList.remove('active', ...ANIM);
-      inc.classList.remove(...ANIM);
-      inc.classList.add('active');
-      if (!reduce) {
-        cur.classList.add(dir === 1 ? 'exit-next' : 'exit-prev');
-        inc.classList.add(dir === 1 ? 'enter-next' : 'enter-prev');
-      }
-      i = next;
-    }
-    if (reset) restart();
-  }
-
-  function restart() {
-    clearInterval(timer);
-    if (reduce || paused) return;
-    timer = setInterval(() => go(i + 1), 3000);
-  }
-
-  document.querySelector('.zone.prev').addEventListener('click', () => go(i - 1, true));
-  document.querySelector('.zone.next').addEventListener('click', () => go(i + 1, true));
-
-  ['mouseenter', 'focusin'].forEach(e =>
-    carousel.addEventListener(e, () => { paused = true; clearInterval(timer); }));
-  ['mouseleave', 'focusout'].forEach(e =>
-    carousel.addEventListener(e, () => { paused = false; restart(); }));
-
-  document.addEventListener('keydown', e => {
-    if (e.target.closest('.dl-menu')) return;
-    if (e.key === 'ArrowLeft') go(i - 1, true);
-    else if (e.key === 'ArrowRight') go(i + 1, true);
-  });
-
-  restart();
-
-  if (!reduce) {
-    document.querySelectorAll('.blob').forEach(b => {
-      (function drift(first) {
-        const x = Math.random() * 100 - 50;
-        const y = Math.random() * 100 - 50;
-        const s = 0.9 + Math.random() * 0.45;
-        const d = first ? 0 : 8 + Math.random() * 8;
-        b.style.transitionDuration = d + 's';
-        b.style.transform = 'translate(' + x + 'vw, ' + y + 'vh) scale(' + s + ')';
-        setTimeout(() => drift(false), first ? 50 : d * 1000);
-      })(true);
-    });
-  }
 
   /* smart download: resolves the latest release's assets per platform.
      matches by file extension so it survives asset renames, and falls
