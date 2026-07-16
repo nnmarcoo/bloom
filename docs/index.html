@@ -32,7 +32,7 @@
     <div class="cta">
       <span class="download">
         <a class="btn btn-primary dl-main" href="https://github.com/nnmarcoo/bloom/releases">Download</a>
-        <button class="dl-caret" aria-label="Other platforms" hidden>&#9662;</button>
+        <button class="dl-caret" aria-label="Other platforms" hidden></button>
         <div class="dl-menu" hidden></div>
       </span>
       <a class="btn btn-ghost" href="docs.html">Docs</a>
@@ -55,12 +55,12 @@
       <h2>Non-destructive modifiers</h2>
       <p>Stack, reorder, retune. The file is never touched &mdash; the preview is what exports.</p>
       <p>Drag the handle: pixel sort.</p>
-      <p class="more"><a href="docs.html#modifiers">All 22 &rarr;</a></p>
+      <p class="more"><a href="docs.html#modifiers">All 22 modifiers</a></p>
     </div>
     <div class="compare">
       <img src="demo/sort-before.jpg" alt="Original photo of daisies on a vintage camera">
       <img class="over" src="demo/sort-after.jpg" alt="The same photo with bloom's pixel sort modifier applied" style="clip-path: inset(0 0 0 50%)">
-      <div class="divider"><span class="knob">&harr;</span></div>
+      <div class="divider"><span class="knob">&lt;&gt;</span></div>
       <span class="tag-chip before">Original</span>
       <span class="tag-chip after">Pixel Sort</span>
       <input type="range" min="0" max="100" step="0.1" value="50" aria-label="Compare original and pixel-sorted image">
@@ -72,7 +72,7 @@
     <div class="copy">
       <h2>Video &amp; animation</h2>
       <p>MP4, MKV, WebM with audio and frame stepping. GIF, APNG and WebP scrub the same way.</p>
-      <p class="more"><a href="docs.html#formats">All formats &rarr;</a></p>
+      <p class="more"><a href="docs.html#formats">All formats</a></p>
     </div>
   </section>
 
@@ -161,7 +161,7 @@
       const all = document.createElement('a');
       all.href = rel.html_url;
       all.className = 'dl-item dl-all';
-      all.textContent = 'All builds & checksums →';
+      all.textContent = 'All builds & checksums';
       menu.appendChild(all);
 
       caret.hidden = false;
