@@ -16,7 +16,7 @@ use crate::{
             chromatic_aberration::ChromaticAberrationPass,
             drawing::{DrawingLayer, DrawingPass},
             gaussian_blur::{GaussianBlurPass, TileRect},
-            motion_blur::{MotionBlurCompute, MotionBlurPass},
+            motion_blur::MotionBlurPass,
             pixel_sort::PixelSortCompute,
             text::{TextLayer, TextPass},
         },
@@ -25,10 +25,12 @@ use crate::{
     },
 };
 
-mod blur;
+mod executor;
 mod geom;
-mod sort;
-mod tiled;
+#[cfg(test)]
+mod goldens;
+#[allow(dead_code)]
+mod slab;
 
 use geom::*;
 
@@ -57,6 +59,15 @@ impl CombinedPass {
     }
 
     fn run(&self, encoder: &mut CommandEncoder, bind_group: &BindGroup, dst: &TextureView) {
+        self.run_pieces(encoder, dst, std::iter::once((bind_group, None)));
+    }
+
+    fn run_pieces<'a>(
+        &self,
+        encoder: &mut CommandEncoder,
+        dst: &TextureView,
+        pieces: impl IntoIterator<Item = (&'a BindGroup, Option<[u32; 4]>)>,
+    ) {
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("combined-modifiers-pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
@@ -73,8 +84,13 @@ impl CombinedPass {
             occlusion_query_set: None,
         });
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, bind_group, &[]);
-        pass.draw(0..4, 0..1);
+        for (bind_group, scissor) in pieces {
+            pass.set_bind_group(0, bind_group, &[]);
+            if let Some([x, y, w, h]) = scissor {
+                pass.set_scissor_rect(x, y, w, h);
+            }
+            pass.draw(0..4, 0..1);
+        }
     }
 }
 
@@ -86,7 +102,6 @@ struct TileOutput {
     height: u32,
     proc_px: Option<[f32; 4]>,
     proc_scale: f32,
-    band_y: u32,
 }
 
 struct ScratchTarget {
@@ -124,13 +139,6 @@ enum PlanItem<'a> {
     Step(usize, &'a Modifier),
 }
 
-#[derive(Clone, Copy)]
-enum SortTarget {
-    ScratchA,
-    ScratchB,
-    Output,
-}
-
 const TILE_BUDGET: usize = 2;
 
 struct Scheduler {
@@ -161,20 +169,8 @@ impl Scheduler {
     }
 }
 
-#[derive(Default)]
-struct StepPools {
-    fused: usize,
-    ca: usize,
-    mb: usize,
-    text: usize,
-    drawing: usize,
-}
-
 const ROI_MARGIN_PX: f32 = 256.0;
 
-const PIXEL_SORT_BUF_BUDGET: u64 = 64 * 1024 * 1024;
-const PIXEL_SORT_LINES_PER_BAND: u32 = 64;
-const PIXEL_SORT_BANDS_PER_FRAME: u32 = 4;
 const PROCESS_VRAM_BUDGET_MIN: u64 = 512 * 1024 * 1024;
 const PROCESS_VRAM_BUDGET_MAX: u64 = 4 * 1024 * 1024 * 1024;
 
@@ -182,16 +178,7 @@ const BLUR_WORK_BUDGET: u32 = 24_000_000;
 const BLUR_MIN_BAND_H: u32 = 8;
 const BLUR_MAX_BAND_H: u32 = 1024;
 
-#[derive(Default, Clone, Copy)]
-struct Neighbors {
-    left: Option<usize>,
-    right: Option<usize>,
-    up: Option<usize>,
-    down: Option<usize>,
-}
-
 use crate::modifiers::gpu::UvRect;
-use crate::modifiers::pixel_sort::{SortAxis, SortMode};
 
 pub(super) struct ProcRect {
     px: [f32; 4],
@@ -206,30 +193,17 @@ pub struct ModifierPipeline {
     tile_display_bgs_linear: Vec<Option<BindGroup>>,
     tile_display_bgs_nearest: Vec<Option<BindGroup>>,
 
-    scratch_a: Option<ScratchTarget>,
-    scratch_b: Option<ScratchTarget>,
-
-    scratch_blur: Option<ScratchTarget>,
-    bank_a: Vec<Option<ScratchTarget>>,
-    bank_b: Vec<Option<ScratchTarget>>,
-    blur_hmid: Vec<Option<ScratchTarget>>,
-    blur_vstrip_top: Vec<Option<ScratchTarget>>,
-    blur_vstrip_bot: Vec<Option<ScratchTarget>>,
     roi_display_uniforms: Vec<Option<iced::wgpu::Buffer>>,
     reprocess_pending: bool,
 
     uniform_pool: Vec<iced::wgpu::Buffer>,
     ca_uniform_pool: Vec<iced::wgpu::Buffer>,
     mb_uniform_pool: Vec<iced::wgpu::Buffer>,
-    mb_compute_uniform_pool: Vec<iced::wgpu::Buffer>,
-    mb_buffers: Option<(iced::wgpu::Buffer, iced::wgpu::Buffer)>,
     blur_uniform_pool: Vec<iced::wgpu::Buffer>,
     text_uniform_pool: Vec<iced::wgpu::Buffer>,
     pixel_sort_uniform_pool: Vec<iced::wgpu::Buffer>,
     pixel_sort_diag_uniform_pool: Vec<iced::wgpu::Buffer>,
     sort_buffers: Option<(iced::wgpu::Buffer, iced::wgpu::Buffer)>,
-    sort_band_cursor: u32,
-    sort_progress_sig: u64,
     text_layers: Vec<Option<TextLayer>>,
     text_sigs: Vec<Option<u64>>,
     drawing_layers: Vec<Option<DrawingLayer>>,
@@ -238,7 +212,6 @@ pub struct ModifierPipeline {
     combined: CombinedPass,
     chromatic_aberration: ChromaticAberrationPass,
     motion_blur: MotionBlurPass,
-    motion_blur_compute: MotionBlurCompute,
     gaussian_blur: GaussianBlurPass,
     pixel_sort: PixelSortCompute,
     text: TextPass,
@@ -247,6 +220,9 @@ pub struct ModifierPipeline {
     trilinear_sampler: Sampler,
     linear_sampler: Sampler,
     nearest_sampler: Sampler,
+    exec_band_cursor: u32,
+    exec_sig: u64,
+    exec_slab_pool: Vec<Option<ScratchTarget>>,
 
     format: TextureFormat,
     pub width: u32,
@@ -293,28 +269,16 @@ impl ModifierPipeline {
             tile_outputs: Vec::new(),
             tile_display_bgs_linear: Vec::new(),
             tile_display_bgs_nearest: Vec::new(),
-            scratch_a: None,
-            scratch_b: None,
-            scratch_blur: None,
-            bank_a: Vec::new(),
-            bank_b: Vec::new(),
-            blur_hmid: Vec::new(),
-            blur_vstrip_top: Vec::new(),
-            blur_vstrip_bot: Vec::new(),
             roi_display_uniforms: Vec::new(),
             reprocess_pending: false,
             uniform_pool: Vec::new(),
             ca_uniform_pool: Vec::new(),
             mb_uniform_pool: Vec::new(),
-            mb_compute_uniform_pool: Vec::new(),
-            mb_buffers: None,
             blur_uniform_pool: Vec::new(),
             text_uniform_pool: Vec::new(),
             pixel_sort_uniform_pool: Vec::new(),
             pixel_sort_diag_uniform_pool: Vec::new(),
             sort_buffers: None,
-            sort_band_cursor: 0,
-            sort_progress_sig: 0,
             text_layers: Vec::new(),
             text_sigs: Vec::new(),
             drawing_layers: Vec::new(),
@@ -323,7 +287,6 @@ impl ModifierPipeline {
             combined: CombinedPass::new(device, format),
             chromatic_aberration: ChromaticAberrationPass::new(device, format),
             motion_blur: MotionBlurPass::new(device, format),
-            motion_blur_compute: MotionBlurCompute::new(device),
             gaussian_blur: GaussianBlurPass::new(device, format),
             pixel_sort: PixelSortCompute::new(device),
             text: TextPass::new(device, format),
@@ -332,6 +295,9 @@ impl ModifierPipeline {
             trilinear_sampler,
             linear_sampler,
             nearest_sampler,
+            exec_band_cursor: 0,
+            exec_sig: 0,
+            exec_slab_pool: Vec::new(),
             format,
             width,
             height,
@@ -347,20 +313,6 @@ impl ModifierPipeline {
             self.tile_display_bgs_nearest.get(i)?.as_ref()
         } else {
             self.tile_display_bgs_linear.get(i)?.as_ref()
-        }
-    }
-
-    fn ensure_scratch(&mut self, device: &Device, w: u32, h: u32) {
-        let stale =
-            |s: &Option<ScratchTarget>| s.as_ref().is_none_or(|t| t.width != w || t.height != h);
-        if stale(&self.scratch_a) {
-            self.scratch_a = Some(ScratchTarget::new(device, self.format, w, h));
-        }
-        if stale(&self.scratch_b) {
-            self.scratch_b = Some(ScratchTarget::new(device, self.format, w, h));
-        }
-        if stale(&self.scratch_blur) {
-            self.scratch_blur = Some(ScratchTarget::new(device, self.format, w, h));
         }
     }
 
@@ -501,473 +453,31 @@ impl ModifierPipeline {
         }
 
         let plan_vec = plan_modifiers(modifiers);
-        let has_blur = plan_vec
-            .iter()
-            .any(|p| matches!(p, PlanItem::Step(_, m) if m.kind.effect_class().separable_apron().is_some()));
-        let has_pixel_sort = plan_vec.iter().any(
-            |p| matches!(p, PlanItem::Step(_, m) if m.kind.effect_class().is_compute_scanline()),
-        );
-        let has_motion_blur = plan_vec.iter().any(
-            |p| matches!(p, PlanItem::Step(_, m) if matches!(m.kind, ModifierKind::MotionBlur(_))),
-        );
 
-        if n_tiles > 1 && (has_blur || has_pixel_sort || has_motion_blur) {
-            self.prepare_tiled(
-                device,
-                queue,
-                source,
-                &plan_vec,
-                proc_scale,
-                downscale,
-                dirty,
-                has_pixel_sort,
-            );
+        if plan_vec.is_empty() {
             return;
         }
 
-        let roi_ok = plan_vec.iter().all(|p| match p {
-            PlanItem::Fused(_) => true,
-            PlanItem::Step(_, m) => matches!(m.kind, ModifierKind::Drawing(_)),
-        });
-
-        let mut plan: Option<Vec<PlanItem>> = Some(plan_vec);
-        let mut encoder: Option<CommandEncoder> = None;
-        let mut pool_used = 0usize;
-        let mut ca_pool_used = 0usize;
-        let mut mb_pool_used = 0usize;
-        let mut blur_pool_used = 0usize;
-        let mut text_pool_used = 0usize;
-        let mut drawing_pool_used = 0usize;
-        let mut scheduler = Scheduler::new();
-
-        for ti in 0..n_tiles {
-            let tile = &source.tiles[ti];
-
-            if tile_ndc_culled(tile.last_ndc_rect) {
-                self.tile_outputs[ti] = None;
-                self.tile_display_bgs_linear[ti] = None;
-                self.tile_display_bgs_nearest[ti] = None;
-                continue;
+        let mut n_proc = 0u64;
+        let (mut tw, mut th) = (1u32, 1u32);
+        for t in &source.tiles {
+            if !tile_ndc_culled(t.last_ndc_rect) {
+                n_proc += 1;
+                tw = tw.max(t.width);
+                th = th.max(t.height);
             }
-
-            let cur_scale = if downscale { proc_scale } else { 1.0 };
-            let visible_roi = if roi_ok { tile.proc_rect_px } else { None };
-            let reuse = match (self.tile_outputs[ti].as_ref(), visible_roi) {
-                (Some(o), Some(roi)) => {
-                    o.proc_px.is_some_and(|p| rect_contains(p, roi))
-                        && (o.proc_scale - cur_scale).abs() < 1e-4
-                }
-                (Some(o), None) => o.proc_px.is_none() && (o.proc_scale - cur_scale).abs() < 1e-4,
-                _ => false,
-            };
-
-            let pr = if reuse {
-                let o = self.tile_outputs[ti].as_ref().unwrap();
-                proc_rect_from_px(
-                    o.proc_px,
-                    tile,
-                    source.full_width as f32,
-                    source.full_height as f32,
-                    o.width,
-                    o.height,
-                )
-            } else {
-                tile_proc_rect(
-                    tile,
-                    source.full_width as f32,
-                    source.full_height as f32,
-                    proc_scale,
-                    downscale,
-                    0.0,
-                    roi_ok,
-                )
-            };
-            let (eff_w, eff_h) = (pr.w, pr.h);
-
-            if !reuse {
-                let tex = gpu::texture_2d(
-                    device,
-                    eff_w,
-                    eff_h,
-                    self.format,
-                    TextureUsages::RENDER_ATTACHMENT
-                        | TextureUsages::TEXTURE_BINDING
-                        | TextureUsages::COPY_SRC
-                        | TextureUsages::COPY_DST,
-                    Some(&format!("modifier-tile{ti}-output")),
-                );
-                let view = tex.create_view(&Default::default());
-                self.tile_outputs[ti] = Some(TileOutput {
-                    _tex: tex,
-                    view,
-                    valid: false,
-                    width: eff_w,
-                    height: eff_h,
-                    proc_px: if roi_ok { Some(pr.px) } else { None },
-                    proc_scale: cur_scale,
-                    band_y: 0,
-                });
-                self.tile_display_bgs_linear[ti] = None;
-                self.tile_display_bgs_nearest[ti] = None;
-            }
-
-            let needs_reprocess = !self.tile_outputs[ti].as_ref().unwrap().valid;
-            let roi_active = roi_ok && tile.isec_px.is_some();
-            let needs_bg_rebuild =
-                self.tile_display_bgs_linear[ti].is_none() || needs_reprocess || roi_active;
-
-            if !needs_bg_rebuild {
-                continue;
-            }
-
-            if needs_reprocess && !scheduler.admit() {
-                continue;
-            }
-
-            if needs_reprocess {
-                let tile_info = TileInfo {
-                    tile_x: tile.x,
-                    tile_y: tile.y,
-                    tile_w: tile.width,
-                    tile_h: tile.height,
-                    full_w: source.full_width,
-                    full_h: source.full_height,
-                };
-
-                let plan = plan.get_or_insert_with(|| plan_modifiers(modifiers));
-                let n_items = plan.len();
-                let plan_has_blur = plan.iter().any(|p| {
-                    matches!(p, PlanItem::Step(_, m) if m.kind.effect_class().separable_apron().is_some())
-                });
-                if n_items > 1 || plan_has_blur {
-                    self.ensure_scratch(device, eff_w, eff_h);
-                }
-
-                let mut prev: TextureView = tile.source_view.clone();
-                for (k, item) in plan.iter().enumerate() {
-                    let out: TextureView = if k == n_items - 1 {
-                        self.tile_outputs[ti].as_ref().unwrap().view.clone()
-                    } else if k % 2 == 0 {
-                        self.scratch_a.as_ref().unwrap().view.clone()
-                    } else {
-                        self.scratch_b.as_ref().unwrap().view.clone()
-                    };
-                    let out = &out;
-
-                    let src_rect = if k == 0 { pr.src } else { pr.proc };
-
-                    match item {
-                        PlanItem::Fused(seg) => {
-                            let uniforms =
-                                build_segment_uniforms(seg, &tile_info, pr.proc, src_rect);
-                            if pool_used == self.uniform_pool.len() {
-                                self.uniform_pool.push(gpu::uniform_buffer::<ModUniforms>(
-                                    device,
-                                    Some("combined-modifiers-uniform"),
-                                ));
-                            }
-                            let buffer = &self.uniform_pool[pool_used];
-                            pool_used += 1;
-                            gpu::write_uniform(queue, buffer, &uniforms);
-                            let bg = gpu::standard_bind_group(
-                                device,
-                                &self.combined.bgl,
-                                buffer,
-                                &prev,
-                                &self.trilinear_sampler,
-                                Some("combined-modifiers-bg"),
-                            );
-
-                            let enc = encoder.get_or_insert_with(|| {
-                                device.create_command_encoder(
-                                    &iced::wgpu::CommandEncoderDescriptor {
-                                        label: Some("modifier-pipeline-encoder"),
-                                    },
-                                )
-                            });
-                            self.combined.run(enc, &bg, out);
-                        }
-                        PlanItem::Step(idx, m)
-                            if m.kind.effect_class().separable_apron().is_some() =>
-                        {
-                            let radius = m.kind.effect_class().separable_apron().unwrap();
-                            {
-                                while self.blur_uniform_pool.len() < blur_pool_used + 2 {
-                                    self.blur_uniform_pool
-                                        .push(self.gaussian_blur.uniform_buffer(device));
-                                }
-                                let radius_px = radius * eff_w as f32 / tile.width.max(1) as f32;
-                                let sigma = (radius_px / 3.0).max(0.5);
-                                let step_x = tile.width.max(1) as f32 / eff_w as f32;
-                                let step_y = tile.height.max(1) as f32 / eff_h as f32;
-                                let mid = &self.scratch_blur.as_ref().unwrap().view;
-                                let enc = encoder.get_or_insert_with(|| {
-                                    device.create_command_encoder(
-                                        &iced::wgpu::CommandEncoderDescriptor {
-                                            label: Some("modifier-pipeline-encoder"),
-                                        },
-                                    )
-                                });
-                                let (h_pool, v_pool) =
-                                    self.blur_uniform_pool.split_at(blur_pool_used + 1);
-                                let h_buffer = &h_pool[blur_pool_used];
-                                let v_buffer = &v_pool[0];
-                                blur_pool_used += 2;
-                                let proc = TileRect {
-                                    origin: pr.proc.origin,
-                                    size: pr.proc.size,
-                                };
-                                let src0 = TileRect {
-                                    origin: pr.src.origin,
-                                    size: pr.src.size,
-                                };
-                                let src_lod = step_x.max(1.0).log2();
-                                self.gaussian_blur.record(
-                                    device,
-                                    queue,
-                                    enc,
-                                    h_buffer,
-                                    [step_x / source.full_width as f32, 0.0],
-                                    radius_px,
-                                    sigma,
-                                    proc,
-                                    src0,
-                                    None,
-                                    None,
-                                    &prev,
-                                    mid,
-                                    None,
-                                    src_lod,
-                                );
-                                self.gaussian_blur.record(
-                                    device,
-                                    queue,
-                                    enc,
-                                    v_buffer,
-                                    [0.0, step_y / source.full_height as f32],
-                                    radius_px,
-                                    sigma,
-                                    proc,
-                                    proc,
-                                    None,
-                                    None,
-                                    mid,
-                                    out,
-                                    None,
-                                    0.0,
-                                );
-                            }
-                        }
-                        PlanItem::Step(idx, m) => match &m.kind {
-                            ModifierKind::ChromaticAberration(ca) => {
-                                let amount = ca.amount;
-                                if ca_pool_used == self.ca_uniform_pool.len() {
-                                    self.ca_uniform_pool
-                                        .push(self.chromatic_aberration.uniform_buffer(device));
-                                }
-                                let buffer = &self.ca_uniform_pool[ca_pool_used];
-                                ca_pool_used += 1;
-                                let enc = encoder.get_or_insert_with(|| {
-                                    device.create_command_encoder(
-                                        &iced::wgpu::CommandEncoderDescriptor {
-                                            label: Some("modifier-pipeline-encoder"),
-                                        },
-                                    )
-                                });
-                                let src_rect = if k == 0 { pr.src } else { pr.proc };
-                                self.chromatic_aberration.record(
-                                    device,
-                                    queue,
-                                    enc,
-                                    buffer,
-                                    amount,
-                                    source.full_width as f32,
-                                    pr.proc,
-                                    src_rect,
-                                    &prev,
-                                    out,
-                                );
-                            }
-                            ModifierKind::MotionBlur(mb) => {
-                                if mb_pool_used == self.mb_uniform_pool.len() {
-                                    self.mb_uniform_pool
-                                        .push(self.motion_blur.uniform_buffer(device));
-                                }
-                                let buffer = &self.mb_uniform_pool[mb_pool_used];
-                                mb_pool_used += 1;
-                                let enc = encoder.get_or_insert_with(|| {
-                                    device.create_command_encoder(
-                                        &iced::wgpu::CommandEncoderDescriptor {
-                                            label: Some("modifier-pipeline-encoder"),
-                                        },
-                                    )
-                                });
-                                let src_rect = if k == 0 { pr.src } else { pr.proc };
-                                self.motion_blur.record(
-                                    device,
-                                    queue,
-                                    enc,
-                                    buffer,
-                                    mb.angle,
-                                    mb.distance,
-                                    source.full_width as f32,
-                                    source.full_height as f32,
-                                    pr.proc,
-                                    src_rect,
-                                    &prev,
-                                    out,
-                                );
-                            }
-                            ModifierKind::Text(_) => {
-                                if let Some(layer) =
-                                    self.text_layers.get(*idx).and_then(|l| l.as_ref())
-                                {
-                                    if text_pool_used == self.text_uniform_pool.len() {
-                                        self.text_uniform_pool
-                                            .push(self.text.uniform_buffer(device));
-                                    }
-                                    let buffer = &self.text_uniform_pool[text_pool_used];
-                                    text_pool_used += 1;
-                                    let enc = encoder.get_or_insert_with(|| {
-                                        device.create_command_encoder(
-                                            &iced::wgpu::CommandEncoderDescriptor {
-                                                label: Some("modifier-pipeline-encoder"),
-                                            },
-                                        )
-                                    });
-                                    let src_rect = if k == 0 { pr.src } else { pr.proc };
-                                    self.text.record(
-                                        device, queue, enc, buffer, layer, &tile_info, pr.proc,
-                                        src_rect, &prev, out,
-                                    );
-                                }
-                            }
-                            ModifierKind::Drawing(_) => {
-                                if let Some(layer) =
-                                    self.drawing_layers.get(*idx).and_then(|l| l.as_ref())
-                                {
-                                    if drawing_pool_used == self.drawing_uniform_pool.len() {
-                                        self.drawing_uniform_pool
-                                            .push(self.drawing.uniform_buffer(device));
-                                    }
-                                    let buffer = &self.drawing_uniform_pool[drawing_pool_used];
-                                    drawing_pool_used += 1;
-                                    let enc = encoder.get_or_insert_with(|| {
-                                        device.create_command_encoder(
-                                            &iced::wgpu::CommandEncoderDescriptor {
-                                                label: Some("modifier-pipeline-encoder"),
-                                            },
-                                        )
-                                    });
-                                    let src_rect = if k == 0 { pr.src } else { pr.proc };
-                                    self.drawing.record(
-                                        device, queue, enc, buffer, layer, pr.proc, src_rect,
-                                        &prev, out,
-                                    );
-                                }
-                            }
-                            ModifierKind::PixelSort(ps) => {
-                                let (threshold, angle) = (ps.threshold, ps.angle);
-                                let src_rect = if k == 0 { pr.src } else { pr.proc };
-                                let uniforms =
-                                    build_segment_uniforms(&[], &tile_info, pr.proc, src_rect);
-                                if pool_used == self.uniform_pool.len() {
-                                    self.uniform_pool.push(gpu::uniform_buffer::<ModUniforms>(
-                                        device,
-                                        Some("combined-modifiers-uniform"),
-                                    ));
-                                }
-                                let buffer = &self.uniform_pool[pool_used];
-                                pool_used += 1;
-                                gpu::write_uniform(queue, buffer, &uniforms);
-                                let bg = gpu::standard_bind_group(
-                                    device,
-                                    &self.combined.bgl,
-                                    buffer,
-                                    &prev,
-                                    &self.trilinear_sampler,
-                                    Some("pixel-sort-copy-bg"),
-                                );
-                                let enc = encoder.get_or_insert_with(|| {
-                                    device.create_command_encoder(
-                                        &iced::wgpu::CommandEncoderDescriptor {
-                                            label: Some("modifier-pipeline-encoder"),
-                                        },
-                                    )
-                                });
-                                self.combined.run(enc, &bg, out);
-                                if n_tiles == 1 {
-                                    if let Some(enc) = encoder.take() {
-                                        queue.submit([enc.finish()]);
-                                    }
-                                    let target = if k == n_items - 1 {
-                                        SortTarget::Output
-                                    } else if k % 2 == 0 {
-                                        SortTarget::ScratchA
-                                    } else {
-                                        SortTarget::ScratchB
-                                    };
-                                    self.sort_target(
-                                        device, queue, ti, target, eff_w, eff_h, threshold, angle,
-                                    );
-                                }
-                            }
-                            _ => {}
-                        },
-                    }
-
-                    prev = out.clone();
-                }
-
-                self.tile_outputs[ti].as_mut().unwrap().valid = true;
-            }
-
-            self.build_roi_display_bgs(device, queue, ti, tile, &pr, roi_ok);
         }
-
-        self.reprocess_pending |= scheduler.pending();
-
-        if let Some(encoder) = encoder {
-            queue.submit([encoder.finish()]);
-        }
-    }
-
-    pub(super) fn ensure_tile_output(
-        &mut self,
-        device: &Device,
-        ti: usize,
-        w: u32,
-        h: u32,
-        proc_px: Option<[f32; 4]>,
-    ) {
-        let needs_alloc = self.tile_outputs[ti]
-            .as_ref()
-            .is_none_or(|o| o.width != w || o.height != h);
-        if needs_alloc {
-            let tex = gpu::texture_2d(
-                device,
-                w,
-                h,
-                self.format,
-                TextureUsages::RENDER_ATTACHMENT
-                    | TextureUsages::TEXTURE_BINDING
-                    | TextureUsages::COPY_SRC
-                    | TextureUsages::COPY_DST,
-                Some(&format!("modifier-tile{ti}-output")),
-            );
-            let view = tex.create_view(&Default::default());
-            self.tile_outputs[ti] = Some(TileOutput {
-                _tex: tex,
-                view,
-                valid: false,
-                width: w,
-                height: h,
-                proc_px,
-                proc_scale: 1.0,
-                band_y: 0,
-            });
-            self.tile_display_bgs_linear[ti] = None;
-            self.tile_display_bgs_nearest[ti] = None;
+        let fit = fit_process_scale(tw, th, n_proc, 1, process_vram_budget(device), proc_scale);
+        let (ps, ds) = if fit < proc_scale {
+            (fit, true)
+        } else {
+            (proc_scale, downscale)
+        };
+        if let [PlanItem::Fused(seg)] = plan_vec.as_slice() {
+            let seg = seg.clone();
+            self.execute_pointwise(device, queue, source, &seg, ps, ds);
+        } else {
+            self.execute_kernel_chain(device, queue, source, &plan_vec, ps, ds);
         }
     }
 

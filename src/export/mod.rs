@@ -488,7 +488,7 @@ mod tests {
         assert_eq!((ow, oh), (w, h));
         assert_eq!(
             fnv1a(&rgba),
-            0xb183c9457bb99f15,
+            0xfbe26999ac19e5be,
             "mixed-chain render output changed"
         );
     }

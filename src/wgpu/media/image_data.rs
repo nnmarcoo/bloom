@@ -799,6 +799,20 @@ impl ImageData {
     }
 
     pub fn load_media(path: &Path) -> Result<MediaData, ImageError> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Self::load_media_inner(path)))
+            .unwrap_or_else(|payload| {
+                let msg = payload
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| payload.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic".to_string());
+                Err(ImageError::IoError(Error::other(format!(
+                    "decoder panicked: {msg}"
+                ))))
+            })
+    }
+
+    fn load_media_inner(path: &Path) -> Result<MediaData, ImageError> {
         let ext = path
             .extension()
             .and_then(|e| e.to_str())

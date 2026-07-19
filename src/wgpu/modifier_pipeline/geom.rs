@@ -35,10 +35,6 @@ pub(super) fn fit_process_scale(
     scale
 }
 
-pub(super) fn scaled(coord: u32, scale: f32) -> u32 {
-    (coord as f32 * scale).round() as u32
-}
-
 pub(super) fn tile_proc_rect(
     tile: &crate::wgpu::tiled_source::Tile,
     full_w: f32,
@@ -147,39 +143,6 @@ pub(super) fn proc_rect_from_px(
     }
 }
 
-pub(super) fn full_rect(tile: &TileInfo) -> TileRect {
-    TileRect {
-        origin: [
-            tile.tile_x as f32 / tile.full_w as f32,
-            tile.tile_y as f32 / tile.full_h as f32,
-        ],
-        size: [
-            tile.tile_w as f32 / tile.full_w as f32,
-            tile.tile_h as f32 / tile.full_h as f32,
-        ],
-    }
-}
-
-pub(super) fn tile_neighbors(tiles: &[crate::wgpu::tiled_source::Tile], ti: usize) -> Neighbors {
-    let t = &tiles[ti];
-    let mut n = Neighbors::default();
-    for (j, o) in tiles.iter().enumerate() {
-        if j == ti {
-            continue;
-        }
-        if o.y == t.y && o.x + o.width == t.x {
-            n.left = Some(j);
-        } else if o.y == t.y && t.x + t.width == o.x {
-            n.right = Some(j);
-        } else if o.x == t.x && o.y + o.height == t.y {
-            n.up = Some(j);
-        } else if o.x == t.x && t.y + t.height == o.y {
-            n.down = Some(j);
-        }
-    }
-    n
-}
-
 pub(super) fn tex_copy_info(
     tex: &Texture,
     origin: iced::wgpu::Origin3d,
@@ -190,39 +153,6 @@ pub(super) fn tex_copy_info(
         origin,
         aspect: iced::wgpu::TextureAspect::All,
     }
-}
-
-pub(super) fn pixel_sort_groups(
-    source: &TiledSource,
-    proc_set: &[usize],
-    vertical: bool,
-) -> Vec<Vec<usize>> {
-    let mut groups: Vec<Vec<usize>> = Vec::new();
-    let mut keys: Vec<u32> = Vec::new();
-    for &ti in proc_set {
-        let key = if vertical {
-            source.tiles[ti].x
-        } else {
-            source.tiles[ti].y
-        };
-        let gi = match keys.iter().position(|&k| k == key) {
-            Some(i) => i,
-            None => {
-                keys.push(key);
-                groups.push(Vec::new());
-                groups.len() - 1
-            }
-        };
-        groups[gi].push(ti);
-    }
-    for g in &mut groups {
-        if vertical {
-            g.sort_by_key(|&ti| source.tiles[ti].y);
-        } else {
-            g.sort_by_key(|&ti| source.tiles[ti].x);
-        }
-    }
-    groups
 }
 
 pub(super) fn plan_modifiers(modifiers: &[Modifier]) -> Vec<PlanItem<'_>> {

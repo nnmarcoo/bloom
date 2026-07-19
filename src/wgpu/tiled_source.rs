@@ -143,6 +143,7 @@ impl TiledSource {
         mipmap_zoom_out: bool,
         blit_pipeline: &RenderPipeline,
         blit_bgl: &BindGroupLayout,
+        tile_dim: Option<u32>,
     ) -> Result<Self, ViewError> {
         let image_pixels = image.pixels_snapshot();
 
@@ -153,7 +154,8 @@ impl TiledSource {
             });
         }
 
-        let max_dim = device.limits().max_texture_dimension_2d;
+        let limit = device.limits().max_texture_dimension_2d;
+        let max_dim = tile_dim.map_or(limit, |d| d.clamp(1, limit));
         let cols = image.width.div_ceil(max_dim);
         let rows = image.height.div_ceil(max_dim);
 

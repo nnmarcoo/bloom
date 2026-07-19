@@ -160,9 +160,21 @@ fn chromatic_aberration_full(src: &[u8], img_w: u32, img_h: u32, amount: f32) ->
                 (u - (u - 0.5) * scale).clamp(0.0, 1.0),
                 (v - (v - 0.5) * scale).clamp(0.0, 1.0),
             ];
-            let cr = sample_pixel(src, img_w, img_h, r_uv[0], r_uv[1]);
+            let cr = sample_bilinear(
+                src,
+                img_w,
+                img_h,
+                r_uv[0] * img_w as f32,
+                r_uv[1] * img_h as f32,
+            );
             let cg = sample_pixel(src, img_w, img_h, u, v);
-            let cb = sample_pixel(src, img_w, img_h, b_uv[0], b_uv[1]);
+            let cb = sample_bilinear(
+                src,
+                img_w,
+                img_h,
+                b_uv[0] * img_w as f32,
+                b_uv[1] * img_h as f32,
+            );
             let o = x * 4;
             row[o..o + 4].copy_from_slice(&f32_to_pixel([cr[0], cg[1], cb[2], cg[3]]));
         }
