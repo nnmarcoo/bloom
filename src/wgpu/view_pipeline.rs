@@ -158,6 +158,7 @@ impl ViewPipeline {
             self.mipmap_zoom_out,
             &self.blit_pipeline,
             &self.blit_bgl,
+            None,
         )?);
         Ok(())
     }
