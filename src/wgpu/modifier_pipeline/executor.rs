@@ -76,12 +76,7 @@ fn pr_with_roi(
         full_w,
         full_h,
     );
-    let px = [
-        s[0].max(tl),
-        s[1].max(tt),
-        s[2].min(fw),
-        s[3].min(fh),
-    ];
+    let px = [s[0].max(tl), s[1].max(tt), s[2].min(fw), s[3].min(fh)];
     let w = (((px[2] - px[0]).max(1.0) * scale).round() as u32).max(1);
     let h = (((px[3] - px[1]).max(1.0) * scale).round() as u32).max(1);
     let proc = UvRect {
@@ -270,7 +265,12 @@ impl ModifierPipeline {
             return;
         }
 
-        let mut u_disp: RegionPx = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+        let mut u_disp: RegionPx = [
+            f32::INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+        ];
         let mut any_roi = false;
         for &ti in &visible {
             if let Some(r) = source.tiles[ti].proc_rect_px {
@@ -400,7 +400,12 @@ impl ModifierPipeline {
             return;
         }
 
-        let mut u_px: RegionPx = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+        let mut u_px: RegionPx = [
+            f32::INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+        ];
         for &ti in &procs {
             let p = prs[ti].as_ref().unwrap().px;
             u_px = [
@@ -514,9 +519,10 @@ impl ModifierPipeline {
             }
             let src_rect = cur;
 
-            let mut encoder = device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
-                label: Some("kernel-chain-executor"),
-            });
+            let mut encoder =
+                device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
+                    label: Some("kernel-chain-executor"),
+                });
             let mut pool_used = 0usize;
             let mut blur_pool_used = 0usize;
             let mut sort_pool_used = 0usize;
@@ -685,7 +691,8 @@ impl ModifierPipeline {
                         match &m.kind {
                             ModifierKind::Text(_) => {
                                 if text_pool_used == self.text_uniform_pool.len() {
-                                    self.text_uniform_pool.push(self.text.uniform_buffer(device));
+                                    self.text_uniform_pool
+                                        .push(self.text.uniform_buffer(device));
                                 }
                                 let buffer = &self.text_uniform_pool[text_pool_used];
                                 text_pool_used += 1;
@@ -791,7 +798,12 @@ impl ModifierPipeline {
                             .floor()
                             .exp2();
                         let hmid_r = snap_region(
-                            [out_r[0], out_r[1] - apron_img, out_r[2], out_r[3] + apron_img],
+                            [
+                                out_r[0],
+                                out_r[1] - apron_img,
+                                out_r[2],
+                                out_r[3] + apron_img,
+                            ],
                             pitch / ks,
                             full_w,
                             full_h,
@@ -939,10 +951,7 @@ impl ModifierPipeline {
             self.exec_slab_pool.resize_with(idx + 1, || None);
         }
         let entry = &mut self.exec_slab_pool[idx];
-        if entry
-            .as_ref()
-            .is_none_or(|t| t.width != w || t.height != h)
-        {
+        if entry.as_ref().is_none_or(|t| t.width != w || t.height != h) {
             *entry = Some(ScratchTarget::new(device, self.format, w, h));
         }
         let t = entry.as_ref().unwrap();

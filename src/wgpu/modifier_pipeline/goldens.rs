@@ -71,13 +71,15 @@ fn make_source(
     source
 }
 
-pub(super) fn read_texture(device: &Device, queue: &Queue, tex: &Texture, w: u32, h: u32) -> Vec<u8> {
+pub(super) fn read_texture(
+    device: &Device,
+    queue: &Queue,
+    tex: &Texture,
+    w: u32,
+    h: u32,
+) -> Vec<u8> {
     let row_bytes = (w * 4).div_ceil(256) * 256;
-    let buf = gpu::readback_buffer(
-        device,
-        row_bytes as u64 * h as u64,
-        Some("golden-readback"),
-    );
+    let buf = gpu::readback_buffer(device, row_bytes as u64 * h as u64, Some("golden-readback"));
     let mut enc = device.create_command_encoder(&CommandEncoderDescriptor {
         label: Some("golden-readback"),
     });
@@ -157,8 +159,7 @@ fn assemble_scaled(
             let cols = o.width.min(fw.saturating_sub(x0));
             let d = (((y0 + r) * fw + x0) * 4) as usize;
             let src = (r * o.width * 4) as usize;
-            full[d..d + (cols * 4) as usize]
-                .copy_from_slice(&data[src..src + (cols * 4) as usize]);
+            full[d..d + (cols * 4) as usize].copy_from_slice(&data[src..src + (cols * 4) as usize]);
         }
     }
     full
@@ -232,8 +233,7 @@ fn kernel_chain_handles_missing_tile_roi() {
     let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, GOLDEN_W, GOLDEN_H);
     converge(&mut mp, &device, &queue, &source, &chain, "missing-roi");
     let gpu_img = assemble(&device, &queue, &mp, &source);
-    let cpu_img =
-        crate::modifiers::cpu::render_full(&chain, &[], &[], &pixels, GOLDEN_W, GOLDEN_H);
+    let cpu_img = crate::modifiers::cpu::render_full(&chain, &[], &[], &pixels, GOLDEN_W, GOLDEN_H);
     let (max_d, pct) = diff_stats(&gpu_img, &cpu_img, 4);
     assert!(
         max_d <= 4,
@@ -429,7 +429,12 @@ fn golden_mixed_pointwise_blur_single_tile() {
 
 #[test]
 fn golden_mixed_pointwise_blur_multi_tile() {
-    run_golden("pointwise+blur/2x2", &mixed_chain(), Some(FORCED_TILE_DIM), 4);
+    run_golden(
+        "pointwise+blur/2x2",
+        &mixed_chain(),
+        Some(FORCED_TILE_DIM),
+        4,
+    );
 }
 
 #[test]

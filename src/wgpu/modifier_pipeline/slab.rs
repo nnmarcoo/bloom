@@ -19,7 +19,12 @@ pub(super) struct BufSlab {
 }
 
 fn isect(a: [u32; 4], b: [u32; 4]) -> Option<[u32; 4]> {
-    let r = [a[0].max(b[0]), a[1].max(b[1]), a[2].min(b[2]), a[3].min(b[3])];
+    let r = [
+        a[0].max(b[0]),
+        a[1].max(b[1]),
+        a[2].min(b[2]),
+        a[3].min(b[3]),
+    ];
     (r[2] > r[0] && r[3] > r[1]).then_some(r)
 }
 
@@ -82,7 +87,11 @@ pub(super) fn scatter_tex(encoder: &mut CommandEncoder, slab: &TexSlab, pieces: 
     }
 }
 
-fn buf_layout(slab_rect: [u32; 4], i: [u32; 4], row_bytes: u32) -> iced::wgpu::TexelCopyBufferLayout {
+fn buf_layout(
+    slab_rect: [u32; 4],
+    i: [u32; 4],
+    row_bytes: u32,
+) -> iced::wgpu::TexelCopyBufferLayout {
     iced::wgpu::TexelCopyBufferLayout {
         offset: (i[1] - slab_rect[1]) as u64 * row_bytes as u64 + (i[0] - slab_rect[0]) as u64 * 4,
         bytes_per_row: Some(row_bytes),
@@ -161,7 +170,12 @@ mod tests {
         v
     }
 
-    fn make_grid_textures(device: &Device, queue: &Queue, full: &[u8], zeroed: bool) -> Vec<Texture> {
+    fn make_grid_textures(
+        device: &Device,
+        queue: &Queue,
+        full: &[u8],
+        zeroed: bool,
+    ) -> Vec<Texture> {
         GRID.iter()
             .map(|r| {
                 let (w, h) = (r[2] - r[0], r[3] - r[1]);

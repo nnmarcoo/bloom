@@ -1,10 +1,8 @@
 use bytemuck::{Pod, Zeroable};
 use iced::wgpu::{
-    BindGroupLayout,
-    BlendState, Buffer, CommandEncoder,
-    Device, LoadOp, Operations, PrimitiveTopology, Queue,
-    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, Sampler, ShaderStages,
-    StoreOp, TextureFormat, TextureView,
+    BindGroupLayout, BlendState, Buffer, CommandEncoder, Device, LoadOp, Operations,
+    PrimitiveTopology, Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
+    Sampler, ShaderStages, StoreOp, TextureFormat, TextureView,
 };
 
 use crate::modifiers::motion_blur_samples;
@@ -122,5 +120,3 @@ impl MotionBlurPass {
         gpu::uniform_buffer::<MbUniforms>(device, Some("motion-blur-uniform"))
     }
 }
-
-
