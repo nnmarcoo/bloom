@@ -339,7 +339,7 @@ pub fn storage_buffer(device: &Device, bytes: u64, label: Option<&str>) -> Buffe
     })
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn readback_buffer(device: &Device, bytes: u64, label: Option<&str>) -> Buffer {
     device.create_buffer(&BufferDescriptor {
         label,
@@ -349,7 +349,7 @@ pub fn readback_buffer(device: &Device, bytes: u64, label: Option<&str>) -> Buff
     })
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn read_buffer_blocking(device: &Device, buffer: &Buffer) -> Vec<u8> {
     let slice = buffer.slice(..);
     let (tx, rx) = std::sync::mpsc::channel();

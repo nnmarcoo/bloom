@@ -29,8 +29,6 @@ mod executor;
 mod geom;
 #[cfg(test)]
 mod goldens;
-#[allow(dead_code)]
-mod slab;
 
 use geom::*;
 
