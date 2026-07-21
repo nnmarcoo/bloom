@@ -471,8 +471,10 @@ impl ModifierPipeline {
             let band_h = if single_band {
                 su_h.max(1)
             } else {
-                (BLUR_WORK_BUDGET / (su_w.max(1) * taps.max(1)))
-                    .clamp(BLUR_MIN_BAND_H, BLUR_MAX_BAND_H)
+                let budget_band = (BLUR_WORK_BUDGET / (su_w.max(1) * taps.max(1)))
+                    .clamp(BLUR_MIN_BAND_H, BLUR_MAX_BAND_H);
+                let frame_band = su_h.div_ceil(MAX_BLUR_FRAMES);
+                budget_band.max(frame_band)
             };
             if self.exec_band_cursor >= su_h {
                 self.exec_band_cursor = 0;

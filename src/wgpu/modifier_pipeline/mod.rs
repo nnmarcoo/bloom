@@ -175,6 +175,7 @@ const PROCESS_VRAM_BUDGET_MAX: u64 = 4 * 1024 * 1024 * 1024;
 const BLUR_WORK_BUDGET: u32 = 24_000_000;
 const BLUR_MIN_BAND_H: u32 = 8;
 const BLUR_MAX_BAND_H: u32 = 1024;
+const MAX_BLUR_FRAMES: u32 = 4;
 
 use crate::modifiers::gpu::UvRect;
 
