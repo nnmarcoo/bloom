@@ -1,7 +1,7 @@
 <div align="center">
   <a href="https://github.com/nnmarcoo/bloom/releases/latest"><img src="assets/logo/banner.png" width="200" alt="bloom"></a>
   <br><br>
-  <p><em>hardware-accelerated media viewer built with Rust</em></p>
+  <p><em>a hardware-accelerated media viewer built with Rust</em></p>
 
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0077aa?style=for-the-badge)
   ![License](https://img.shields.io/badge/license-GPL--3.0-0077aa?style=for-the-badge)
@@ -12,17 +12,21 @@
 
 ---
 
+## About
+
+Bloom is a fast, lightweight media viewer with GPU-accelerated rendering and a wide range of supported formats, from everyday JPEGs to camera RAW, HDR, scientific formats, animation, and video. It also includes a set of light, non-destructive editing tools for quick adjustments. It is a viewer first and not a full editor, focused on doing the simple things well.
+
 ## Features
 
-- **GPU rendering** — hardware-accelerated via [wgpu](https://wgpu.rs), with mipmaps and tiled textures for images beyond GPU limits
-- **Animation & video** — GIF, APNG, and WebP, plus MP4, MOV, MKV, WebM, and more with audio, scrubbing, and frame stepping
-- **Non-destructive modifiers** — 22 stackable effects, from color correction (levels, exposure, vibrance, …) to blur (Gaussian, motion, radial), halftone, grain, and pixel sort at any angle
-- **Draw & text tools** — paint freehand brush strokes and place text directly on the canvas
-- **Export** — PNG, JPEG, or WebP with crop, rotation, and modifiers applied
-- **Gallery** — browse every image in a folder; open files by drag and drop or clipboard paste
-- **Info panel** — dimensions, EXIF, RGB histogram, and pixel color under the cursor
-- **Themes** — 22 built-in, including Catppuccin, Tokyo Night, Nord, and Gruvbox
-- **Customizable keybindings** — rebind any action in preferences
+- **GPU rendering:** hardware-accelerated via [wgpu](https://wgpu.rs), with mipmaps and tiled textures for images beyond GPU limits
+- **Broad format support:** dozens of image formats plus animation (GIF, APNG, WebP) and video (MP4, MOV, MKV, WebM, and more) with audio, scrubbing, and frame stepping
+- **Non-destructive modifiers:** 22 stackable effects, from color correction (levels, exposure, vibrance, and more) to blur (Gaussian, motion, radial), halftone, grain, and pixel sort at any angle
+- **Draw and text tools:** paint freehand brush strokes and place text directly on the canvas
+- **Export:** PNG, JPEG, or WebP with crop, rotation, and modifiers applied
+- **Gallery:** browse every image in a folder, and open files by drag and drop or clipboard paste
+- **Info panel:** dimensions, EXIF, RGB histogram, and pixel color under the cursor
+- **Themes:** 22 built-in, including Catppuccin, Tokyo Night, Nord, and Gruvbox
+- **Customizable keybindings:** rebind any action in preferences
 
 ## Supported Formats
 
@@ -65,7 +69,7 @@
 
 ## Download
 
-Prebuilt [releases](https://github.com/nnmarcoo/bloom/releases/latest) come in three flavors per platform — pick based on which formats you need:
+Prebuilt [releases](https://github.com/nnmarcoo/bloom/releases/latest) come in three flavors per platform. Pick based on which formats you need:
 
 | Download | Includes | Size |
 | --- | --- | --- |
@@ -77,7 +81,7 @@ Video is the bulk of the size (it bundles FFmpeg), so grab `-heif` or `-minimal`
 
 ## Build
 
-> The feature flags below only matter when building from source — prebuilt downloads above already include them.
+> The feature flags below only matter when building from source. Prebuilt downloads above already include them.
 
 ```sh
 cargo build --release
@@ -103,13 +107,13 @@ For video playback, the `ffmpeg-next` bindings link against FFmpeg. A helper scr
 # macOS / Linux
 ./scripts/setup-av.sh
 
-# Windows (PowerShell) — downloads a prebuilt FFmpeg into vendor/ and sets FFMPEG_DIR
+# Windows (PowerShell): downloads a prebuilt FFmpeg into vendor/ and sets FFMPEG_DIR
 ./scripts/setup-av.ps1
 
 cargo build --release --features av
 ```
 
-On macOS and Linux the script installs the FFmpeg dev libraries via your package manager. On Windows it fetches a prebuilt FFmpeg into `vendor/ffmpeg` and installs LLVM — open a new terminal afterward so the environment changes take effect.
+On macOS and Linux the script installs the FFmpeg dev libraries via your package manager. On Windows it fetches a prebuilt FFmpeg into `vendor/ffmpeg` and installs LLVM. Open a new terminal afterward so the environment changes take effect.
 
 Requires a GPU with WebGPU support. On Windows, DX12 is used by default.
 
