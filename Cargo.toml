@@ -106,8 +106,6 @@ av = ["dep:ffmpeg-next", "dep:cpal", "dep:ringbuf", "dep:crossbeam-channel"]
 winres = "0.1"
 
 [profile.release]
-# panic = "unwind" (default) so a panic in a third-party decoder is caught in
-# load_media and becomes a graceful load error instead of aborting the app.
 codegen-units = 1
 lto = true
 opt-level = 3
