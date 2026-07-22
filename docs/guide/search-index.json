@@ -1,0 +1,80 @@
+[
+  {
+    "title": "Features",
+    "section": "Overview",
+    "url": "index.html",
+    "text": "GPU rendering wgpu mipmaps 80+ formats jpeg png webp heic jpeg xl psd svg dicom raw animation gif apng animated video mp4 mov mkv webm audio frame stepping modifiers non-destructive pipeline draw text brush strokes canvas huge images 2500 MP info panel exif dimensions pixel color rgb histogram export crop rotation 100% local no telemetry no accounts no network analytics"
+  },
+  {
+    "title": "Getting started",
+    "section": "Overview",
+    "url": "getting-started.html",
+    "text": "getting started open file drag and drop drag drop open dialog ctrl o paste ctrl v clipboard command line bloom path argument default viewer open with file association folder navigation next previous right left arrow alphabetical sorted wrap around in folder position remember last media launch empty"
+  },
+  {
+    "title": "Editing",
+    "section": "Using bloom",
+    "url": "editing.html",
+    "text": "editing non-destructive modifier stack add reorder drag remove retune compound edit panel toggle e on-canvas tools select crop draw text brush size preview is export never touch file"
+  },
+  {
+    "title": "Info panel",
+    "section": "Using bloom",
+    "url": "info-panel.html",
+    "text": "info panel toggle i file filename format in folder image dimensions aspect ratio scale bit depth profile dpi file size ram vram color eyedropper crosshair pixel rgba copy color histogram rgb exif camera lens exposure iso video codec frame rate duration bitrate pixel format color space rotation collapsible sections"
+  },
+  {
+    "title": "Export",
+    "section": "Using bloom",
+    "url": "export.html",
+    "text": "export ctrl e right-click save dialog file extension png jpg jpeg webp still images gif apng animation mp4 mkv mov quicktime matroska video bakes modifiers crop rotation draw text preview is export gif 65535 px limit build"
+  },
+  {
+    "title": "Preferences",
+    "section": "Using bloom",
+    "url": "preferences.html",
+    "text": "preferences settings appearance theme rounded corners window decorations always on top ui scale playback quality autoplay loop animations loop video remember last media zoom out filtering mipmapping zoom in filtering bilinear pixel grid pixel preview size keybindings rebind about version license config.toml appdata config directory windows macos linux reset defaults"
+  },
+  {
+    "title": "Keyboard shortcuts",
+    "section": "Reference",
+    "url": "shortcuts.html",
+    "text": "keyboard shortcuts rebindable preferences navigation next previous image toggle fullscreen open media copy paste export tools select crop draw text brush size playback play pause frame first last mute view zoom in out fit to viewport focus zoom entry ui scale rotate cw ccw toggle info panel edit panel checkerboard pixel grid bottom bar ctrl space home end"
+  },
+  {
+    "title": "Mouse",
+    "section": "Reference",
+    "url": "mouse.html",
+    "text": "mouse gestures zoom in out scroll pan drag middle-drag space open a file drag and drop context menu right-click right-click menu open file location copy color copy image copy file path export toggle bottom bar"
+  },
+  {
+    "title": "Supported formats",
+    "section": "Reference",
+    "url": "formats.html",
+    "text": "supported formats 83 animated png apng apple icon icns audio planned mp3 wav flac bmp bitmap dds dicom dcm medical eps postscript ghostscript farbfeld fits astronomy gif gimp xcf hdr radiance heic heif ico jpeg jpg jpeg 2000 jp2 jpeg xl jxl krita kra ktx2 openexr exr photoshop psd psb png portable bitmap pbm pgm ppm qoi camera raw cr2 cr3 nef arw dng svg tga targa tiff tif video mp4 mov mkv webm webp builds default heif minimal"
+  },
+  {
+    "title": "Modifiers",
+    "section": "Reference",
+    "url": "modifiers.html",
+    "text": "modifiers 22 non-destructive stack brightness contrast exposure levels hue saturation vibrance color balance temperature posterize threshold grayscale greyscale invert sepia duotone solarize gaussian blur motion blur radial blur chromatic aberration halftone pixel sort glitch grain noise vignette crop drawing brush text type font"
+  },
+  {
+    "title": "Themes",
+    "section": "Reference",
+    "url": "themes.html",
+    "text": "themes 22 built-in preferences light dark dracula nord solarized gruvbox catppuccin latte frappe macchiato mocha tokyo night storm kanagawa wave dragon lotus moonfly nightfly oxocarbon ferra"
+  },
+  {
+    "title": "Installation",
+    "section": "Get bloom",
+    "url": "install.html",
+    "text": "installation download releases windows msi exe installer macos dmg applications unsigned linux appimage chmod debian package dpkg deb package managers planned cargo aur"
+  },
+  {
+    "title": "Build from source",
+    "section": "Get bloom",
+    "url": "build.html",
+    "text": "build from source rust toolchain 1.87 edition 2024 cargo build release heic heif libheif setup-heif video ffmpeg av setup-av feature flags prebuilt downloads"
+  }
+]
