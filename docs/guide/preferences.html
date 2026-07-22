@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>bloom / preferences</title>
+<meta name="description" content="bloom preferences: appearance, playback and quality, keybindings, and the config.toml file.">
+<link rel="icon" type="image/png" href="../img/bloom32.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="../index.html"><img src="../img/bloom32.png" alt="">bloom</a>
+  <form class="guide-search" role="search" autocomplete="off">
+    <input type="search" class="guide-search-input" placeholder="Search docs…" aria-label="Search documentation">
+    <div class="guide-search-results" hidden></div>
+  </form>
+  <span class="links">
+    <a href="index.html" class="active">Docs</a>
+    <a class="iconlink" href="https://github.com/nnmarcoo/bloom" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .5C5.37.5 0 5.87 0 12.5c0 5.3 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58 0-.29-.01-1.04-.02-2.05-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5.99.11-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.24 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.62-5.49 5.92.43.37.81 1.1.81 2.22 0 1.6-.01 2.9-.01 3.29 0 .32.22.7.82.58A12 12 0 0 0 24 12.5C24 5.87 18.63.5 12 .5Z"/></svg></a>
+  </span>
+</nav>
+
+<div class="docwrap">
+  <aside class="sidebar">
+    <span class="navlabel">Overview</span>
+    <a href="index.html">Features</a>
+    <a href="getting-started.html">Getting started</a>
+    <span class="navlabel">Using bloom</span>
+    <a href="editing.html">Editing</a>
+    <a href="info-panel.html">Info panel</a>
+    <a href="export.html">Export</a>
+    <a href="preferences.html" class="active">Preferences</a>
+    <span class="navlabel">Reference</span>
+    <a href="shortcuts.html">Shortcuts</a>
+    <a href="mouse.html">Mouse</a>
+    <a href="formats.html">Formats</a>
+    <a href="modifiers.html">Modifiers</a>
+    <a href="themes.html">Themes</a>
+    <span class="navlabel">Get bloom</span>
+    <a href="install.html">Installation</a>
+    <a href="build.html">Build from source</a>
+  </aside>
+
+  <div class="content">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <a href="../index.html">bloom</a>
+      <span class="sep">/</span>
+      <a href="index.html">Docs</a>
+      <span class="sep">/</span>
+      <span class="here">Preferences</span>
+    </nav>
+    <section class="docsection" id="preferences">
+      <h2>Preferences</h2>
+      <p class="lead">Preferences open in a window with four sections. Changes are staged; Save applies them, Cancel discards. Each section has a Reset to defaults.</p>
+
+      <div class="keygroup" style="margin-bottom: 30px;">
+        <h3>Appearance</h3>
+        <dl class="deflist">
+          <div class="defrow"><dt>Theme</dt><dd>Color scheme, 22 built-in options</dd></div>
+          <div class="defrow"><dt>Rounded corners</dt><dd>Rounded corners on UI elements</dd></div>
+          <div class="defrow"><dt>Window decorations</dt><dd>Native title bar and window border</dd></div>
+          <div class="defrow"><dt>Always on top</dt><dd>Keep bloom above other windows</dd></div>
+          <div class="defrow"><dt>UI scale</dt><dd>0.5&times; to 3&times; interface scaling</dd></div>
+        </dl>
+      </div>
+
+      <div class="keygroup" style="margin-bottom: 30px;">
+        <h3>Playback &amp; Quality</h3>
+        <dl class="deflist">
+          <div class="defrow"><dt>Autoplay animations</dt><dd>Play automatically when opened</dd></div>
+          <div class="defrow"><dt>Loop animations</dt><dd>Restart GIF, APNG and WebP at the end</dd></div>
+          <div class="defrow"><dt>Loop video</dt><dd>Restart videos at the end</dd></div>
+          <div class="defrow"><dt>Remember last media</dt><dd>Reopen the last file when launched with none</dd></div>
+          <div class="defrow"><dt>Zoom out filtering</dt><dd>Trilinear mipmapping to reduce aliasing</dd></div>
+          <div class="defrow"><dt>Zoom in filtering</dt><dd>Bilinear blending above 100%</dd></div>
+          <div class="defrow"><dt>Pixel grid</dt><dd>Grid on pixel boundaries when zoomed in</dd></div>
+          <div class="defrow"><dt>Pixel preview size</dt><dd>Eyedropper grid size in the info panel</dd></div>
+        </dl>
+      </div>
+
+      <div class="keygroup">
+        <h3>Keybindings &amp; About</h3>
+        <p class="buildnote">The Keybindings section rebinds every action; conflicts are resolved for you and shown inline. About lists the version, license, and links to the repository. See <a href="shortcuts.html">Shortcuts</a> for the default keymap.</p>
+      </div>
+
+      <div class="infonote">
+        <span class="infonote-icon" aria-hidden="true">!</span>
+        <div>
+          <p>Preferences are written to <code>config.toml</code> in bloom's config directory:</p>
+          <ul class="infonote-list">
+            <li>Windows: <code>%APPDATA%\bloom\config.toml</code></li>
+            <li>macOS: <code>~/Library/Application Support/bloom/config.toml</code></li>
+            <li>Linux: <code>~/.config/bloom/config.toml</code></li>
+          </ul>
+          <p style="margin-top: 9px;">You can edit it directly; unknown or out-of-range values fall back to their defaults. Some rendering options note "restart required".</p>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<footer>
+  <div class="flinks">
+    <a href="https://github.com/nnmarcoo/bloom">GitHub</a>
+    <a href="https://github.com/nnmarcoo/bloom/releases">Releases</a>
+    <a href="https://github.com/nnmarcoo/bloom/blob/main/LICENSE">License (GPL-3.0)</a>
+  </div>
+  <div>Entirely local &middot; no telemetry &middot; built with Rust</div>
+</footer>
+
+<script src="guide.js"></script>
+
+</body>
+</html>
