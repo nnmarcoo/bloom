@@ -729,9 +729,9 @@ fn about_pane<'a>(theme: &Theme) -> Element<'a, Message> {
 
 pub fn view<'a>(
     pending: &'a Config,
-    theme: &Theme,
     preference_state: &'a PreferenceState,
 ) -> Element<'a, Message> {
+    let theme = &pending.theme;
     let header = bar(text("Preferences").size(16), false);
 
     let active = preference_state.section;
