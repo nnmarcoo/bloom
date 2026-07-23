@@ -706,7 +706,7 @@ impl App {
 
     pub fn view(&self) -> Element<'_, Message> {
         if let Some(pending) = &self.editing_config {
-            return preferences::view(pending, &self.config.theme, &self.preference_state);
+            return preferences::view(pending, &self.preference_state);
         }
         #[cfg(feature = "av")]
         let video_panel = self.transport.video_panel();
@@ -781,7 +781,11 @@ impl App {
     }
 
     pub fn theme(&self) -> Theme {
-        self.config.theme.clone()
+        self.editing_config
+            .as_ref()
+            .unwrap_or(&self.config)
+            .theme
+            .clone()
     }
 
     pub fn scale_factor(&self) -> f32 {
