@@ -381,7 +381,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for SubMenuItem<'
         tree: &'b mut Tree,
         layout: Layout<'b>,
         _renderer: &Renderer,
-        _viewport: &Rectangle,
+        viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
         if !tree.state.downcast_ref::<SubMenuState>().is_hovered {
@@ -401,6 +401,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for SubMenuItem<'
                 width: bounds.width,
                 height: bounds.height,
             },
+            panel_bounds: *viewport + translation,
             side: self.side,
         })))
     }
@@ -428,6 +429,7 @@ struct SubMenuOverlay<'a, 'b, Message> {
     widget_state: &'b mut tree::State,
     menu: &'b mut Element<'a, Message, Theme, Renderer>,
     trigger_bounds: Rectangle,
+    panel_bounds: Rectangle,
     side: SubMenuSide,
 }
 
@@ -539,8 +541,20 @@ impl<Message: Clone> Overlay<Message, Theme, Renderer> for SubMenuOverlay<'_, '_
         renderer: &Renderer,
     ) -> mouse::Interaction {
         let viewport = layout.bounds();
-        self.menu
-            .as_widget()
-            .mouse_interaction(self.menu_tree, layout, cursor, &viewport, renderer)
+        let interaction = self.menu.as_widget().mouse_interaction(
+            self.menu_tree,
+            layout,
+            cursor,
+            &viewport,
+            renderer,
+        );
+
+        if interaction == mouse::Interaction::None
+            && (cursor.is_over(viewport) || cursor.is_over(self.panel_bounds))
+        {
+            return mouse::Interaction::Idle;
+        }
+
+        interaction
     }
 }

@@ -539,7 +539,7 @@ impl<Message: Clone> Overlay<Message, Theme, Renderer> for PickerOverlay<'_, '_,
         renderer: &Renderer,
     ) -> mouse::Interaction {
         let viewport = layout.bounds();
-        if let (Some(content), Some(menu_tree)) =
+        let interaction = if let (Some(content), Some(menu_tree)) =
             (self.state.content.as_ref(), self.state.menu_tree.as_ref())
         {
             content
@@ -547,7 +547,13 @@ impl<Message: Clone> Overlay<Message, Theme, Renderer> for PickerOverlay<'_, '_,
                 .mouse_interaction(menu_tree, layout, cursor, &viewport, renderer)
         } else {
             mouse::Interaction::default()
+        };
+
+        if interaction == mouse::Interaction::None && cursor.is_over(viewport) {
+            return mouse::Interaction::Idle;
         }
+
+        interaction
     }
 
     fn overlay<'c>(
