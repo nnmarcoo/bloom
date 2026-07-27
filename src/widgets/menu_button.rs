@@ -373,9 +373,19 @@ impl<Message: Clone> Overlay<Message, Theme, Renderer> for MenuOverlay<'_, '_, M
         renderer: &Renderer,
     ) -> mouse::Interaction {
         let viewport = layout.bounds();
-        self.menu
-            .as_widget()
-            .mouse_interaction(self.menu_tree, layout, cursor, &viewport, renderer)
+        let interaction = self.menu.as_widget().mouse_interaction(
+            self.menu_tree,
+            layout,
+            cursor,
+            &viewport,
+            renderer,
+        );
+
+        if interaction == mouse::Interaction::None && cursor.is_over(viewport) {
+            return mouse::Interaction::Idle;
+        }
+
+        interaction
     }
 
     fn overlay<'c>(

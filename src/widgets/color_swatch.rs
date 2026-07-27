@@ -594,13 +594,19 @@ impl<Message: Clone> Overlay<Message, Theme, Renderer> for PickerOverlay<'_, '_,
         renderer: &Renderer,
     ) -> mouse::Interaction {
         let viewport = layout.bounds();
-        self.content.as_widget().mouse_interaction(
+        let interaction = self.content.as_widget().mouse_interaction(
             self.content_tree,
             layout,
             cursor,
             &viewport,
             renderer,
-        )
+        );
+
+        if interaction == mouse::Interaction::None && cursor.is_over(viewport) {
+            return mouse::Interaction::Idle;
+        }
+
+        interaction
     }
 }
 
