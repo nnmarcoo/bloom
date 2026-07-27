@@ -158,7 +158,7 @@ impl ModifierImpl for Drawing {
             value_row(
                 "Size",
                 self.size,
-                1.0..=300.0,
+                1.0..=65536.0,
                 0.5,
                 Fmt::num(0).suffix("px"),
                 move |v| EditMsg::Update(index, ModifierParam::DrawingSize(v)).into()

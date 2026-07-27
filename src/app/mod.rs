@@ -700,7 +700,7 @@ impl App {
             return Task::none();
         };
         let step = (d.size * 0.1).max(1.0);
-        let size = (d.size + dir * step).round().clamp(1.0, 300.0);
+        let size = (d.size + dir * step).round().clamp(1.0, 65536.0);
         Task::done(EditMsg::Update(idx, ModifierParam::DrawingSize(size)).into())
     }
 
