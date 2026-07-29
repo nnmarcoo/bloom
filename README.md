@@ -5,7 +5,7 @@
 
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0077aa?style=for-the-badge)
   ![License](https://img.shields.io/badge/license-GPL--3.0-0077aa?style=for-the-badge)
-  ![Status](https://img.shields.io/badge/status-alpha-0077aa?style=for-the-badge)
+  ![Status](https://img.shields.io/badge/status-beta-0077aa?style=for-the-badge)
 </div>
 
 <div align="center"><img src="docs/demo/camera.png" alt="bloom preview" width="800"></div>
