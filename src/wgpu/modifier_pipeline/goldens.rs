@@ -488,6 +488,7 @@ fn golden_drawing_multi_tile() {
         modifiers: chain,
         crop: None,
         rotation: 0,
+        trim: None,
     };
     let (_, _, cpu_img) = render_still_rgba(&data).expect("render");
     let (max_d, pct) = diff_stats(&gpu_img, &cpu_img, 4);
