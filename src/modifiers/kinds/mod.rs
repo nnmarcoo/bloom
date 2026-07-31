@@ -21,6 +21,7 @@ mod solarize;
 mod temperature;
 mod text;
 mod threshold;
+mod trim;
 mod vibrance;
 mod vignette;
 
@@ -47,6 +48,7 @@ pub use solarize::Solarize;
 pub use temperature::Temperature;
 pub use text::Text;
 pub use threshold::Threshold;
+pub use trim::Trim;
 pub use vibrance::Vibrance;
 pub use vignette::Vignette;
 

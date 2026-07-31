@@ -6,7 +6,7 @@ use iced::widget::column;
 
 use crate::app::{EditMsg, Message};
 use crate::modifiers::pixel_sort::SortAxis;
-use crate::modifiers::{Axis, InputRequest, ModifierImpl, ModifierParam};
+use crate::modifiers::{Axis, InputRequest, ModifierImpl, ModifierParam, ViewCtx};
 use crate::widgets::value_slider::Fmt;
 
 use super::{angle_row, finish, hash_f32, value_row};
@@ -57,12 +57,7 @@ impl ModifierImpl for PixelSort {
         hash_f32(self.angle, hasher);
     }
 
-    fn view(
-        &self,
-        index: usize,
-        _image_size: Option<(u32, u32)>,
-        _rotation: u8,
-    ) -> Element<'_, Message> {
+    fn view(&self, index: usize, _ctx: ViewCtx) -> Element<'_, Message> {
         finish(column![
             value_row(
                 "Threshold",

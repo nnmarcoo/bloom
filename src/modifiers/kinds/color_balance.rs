@@ -6,7 +6,7 @@ use iced::widget::column;
 
 use crate::app::{EditMsg, Message};
 use crate::modifiers::gpu::{ModEntry, TileInfo, make_entry};
-use crate::modifiers::{ModifierImpl, ModifierParam, ids};
+use crate::modifiers::{ModifierImpl, ModifierParam, ViewCtx, ids};
 use crate::widgets::value_slider::{Fmt, Track};
 
 use super::{finish, gradient_row, hash_f32};
@@ -57,12 +57,7 @@ impl ModifierImpl for ColorBalance {
         hash_f32(self.yellow_blue, hasher);
     }
 
-    fn view(
-        &self,
-        index: usize,
-        _image_size: Option<(u32, u32)>,
-        _rotation: u8,
-    ) -> Element<'_, Message> {
+    fn view(&self, index: usize, _ctx: ViewCtx) -> Element<'_, Message> {
         finish(column![
             gradient_row(
                 "Cyan / Red",

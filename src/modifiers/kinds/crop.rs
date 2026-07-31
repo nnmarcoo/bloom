@@ -5,7 +5,7 @@ use iced::Element;
 use iced::widget::column;
 
 use crate::app::{EditMsg, Message};
-use crate::modifiers::{ModifierImpl, ModifierParam};
+use crate::modifiers::{ModifierImpl, ModifierParam, ViewCtx};
 use crate::widgets::value_slider::Fmt;
 
 use super::{finish, hash_f32, value_row};
@@ -74,17 +74,13 @@ impl ModifierImpl for Crop {
         hash_f32(self.height, hasher);
     }
 
-    fn view(
-        &self,
-        index: usize,
-        image_size: Option<(u32, u32)>,
-        rotation: u8,
-    ) -> Element<'_, Message> {
+    fn view(&self, index: usize, ctx: ViewCtx) -> Element<'_, Message> {
         let (cx, cy, cw, ch) = (self.x, self.y, self.width, self.height);
-        let (iw, ih) = image_size
+        let (iw, ih) = ctx
+            .image_size
             .map(|(w, h)| (w as f32, h as f32))
             .unwrap_or((cx + cw, cy + ch));
-        let swapped = rotation % 2 == 1;
+        let swapped = ctx.rotation % 2 == 1;
         let (vis_w, vis_h) = if swapped { (ch, cw) } else { (cw, ch) };
         let (vis_w_max, vis_h_max) = if swapped { (ih, iw) } else { (iw, ih) };
         let w_msg = move |v| {

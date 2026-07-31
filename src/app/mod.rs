@@ -734,6 +734,7 @@ impl App {
             drag_hover_target: self.edit.drag_hover,
             histogram,
             context_menu: self.context_menu.map(|p| iced::Point::new(p.x, p.y)),
+            timing: self.transport.media_timing(&self.program),
             #[cfg(feature = "av")]
             video_panel,
         }));

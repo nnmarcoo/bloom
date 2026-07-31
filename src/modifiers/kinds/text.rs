@@ -5,7 +5,7 @@ use iced::Element;
 use iced::widget::{column, text_input};
 
 use crate::app::{EditMsg, Message};
-use crate::modifiers::{InputRequest, ModifierImpl, ModifierParam};
+use crate::modifiers::{InputRequest, ModifierImpl, ModifierParam, ViewCtx};
 use crate::widgets::number_entry::NumberEntry;
 use crate::widgets::value_slider::Fmt;
 
@@ -140,12 +140,7 @@ impl ModifierImpl for Text {
         hash_f32(self.b, hasher);
     }
 
-    fn view(
-        &self,
-        index: usize,
-        _image_size: Option<(u32, u32)>,
-        _rotation: u8,
-    ) -> Element<'_, Message> {
+    fn view(&self, index: usize, _ctx: ViewCtx) -> Element<'_, Message> {
         let font_picker =
             crate::widgets::font_picker::FontPicker::new(self.font.clone(), move |f| {
                 EditMsg::Update(index, ModifierParam::TextFont(f)).into()

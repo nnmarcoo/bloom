@@ -6,7 +6,7 @@ use iced::widget::{Space, button, column, container, mouse_area, row, scrollable
 use iced::{Element, Length, Padding, mouse};
 
 use crate::app::{EditMsg, Message};
-use crate::modifiers::Modifier;
+use crate::modifiers::{Modifier, ViewCtx};
 use crate::styles::{
     PAD, modifier_active_card_style, modifier_card_style, modifier_drop_indicator_style,
     plain_icon_button_style, svg_style,
@@ -18,8 +18,8 @@ pub fn view<'a>(
     active: Option<usize>,
     dragging: Option<usize>,
     drag_target: Option<usize>,
-    image_size: Option<(u32, u32)>,
-    rotation: u8,
+    ctx: ViewCtx,
+    timed: bool,
 ) -> Element<'a, Message> {
     let n = modifiers.len();
     let mut stack_col = column![];
@@ -32,8 +32,7 @@ pub fn view<'a>(
             modifier,
             active == Some(i),
             dragging.is_some(),
-            image_size,
-            rotation,
+            ctx,
         ));
     }
     let show_trailing = matches!((dragging, drag_target),
@@ -51,7 +50,7 @@ pub fn view<'a>(
                 .direction(Direction::Vertical(
                     Scrollbar::new().width(4).scroller_width(4),
                 )),
-            container(add_row()).padding(PAD).width(Length::Fill),
+            container(add_row(timed)).padding(PAD).width(Length::Fill),
         ]
         .height(Length::Fill),
     )
@@ -92,8 +91,7 @@ fn card<'a>(
     modifier: &'a Modifier,
     is_active: bool,
     dragging: bool,
-    image_size: Option<(u32, u32)>,
-    rotation: u8,
+    ctx: ViewCtx,
 ) -> Element<'a, Message> {
     let arrow_icon: &'static [u8] = if modifier.expanded {
         include_bytes!("../../assets/icons/down.svg")
@@ -144,7 +142,7 @@ fn card<'a>(
 
     if modifier.expanded {
         card_col = card_col.push(rule::horizontal(1));
-        card_col = card_col.push(modifier.kind.view(index, image_size, rotation));
+        card_col = card_col.push(modifier.kind.view(index, ctx));
     }
 
     let card_area = mouse_area(
@@ -167,8 +165,9 @@ fn card<'a>(
     }
 }
 
-fn add_row<'a>() -> Element<'a, Message> {
+fn add_row<'a>(timed: bool) -> Element<'a, Message> {
     ModifierPicker::new(|t| EditMsg::Add(t).into())
         .width(Length::Fill)
+        .timed(timed)
         .into()
 }

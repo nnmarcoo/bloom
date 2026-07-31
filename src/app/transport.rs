@@ -89,6 +89,28 @@ impl TransportState {
         }
     }
 
+    // timing for the loaded media, or None for stills; frame_count 0 means "unknown"
+    pub fn media_timing(&self, program: &ViewProgram) -> Option<crate::modifiers::MediaTiming> {
+        #[cfg(feature = "av")]
+        if let Some(video) = &self.video {
+            let duration = video.duration();
+            let frame_count = match video.frame_count() {
+                0 => (duration.as_secs_f64() * video.avg_fps()).round().max(0.0) as u64,
+                n => n,
+            };
+            return Some(crate::modifiers::MediaTiming {
+                duration,
+                frame_count,
+            });
+        }
+
+        let (_, total) = program.animation_info()?;
+        Some(crate::modifiers::MediaTiming {
+            duration: program.animation_duration().unwrap_or_default(),
+            frame_count: total as u64,
+        })
+    }
+
     pub fn playback_active(&self, program: &ViewProgram) -> bool {
         #[cfg(feature = "av")]
         if self.video.is_some() {

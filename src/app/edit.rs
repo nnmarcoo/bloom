@@ -133,6 +133,13 @@ pub fn update(state: &mut EditState, program: &mut ViewProgram, msg: EditMsg) ->
                     "Only one Crop modifier is allowed.",
                 )));
             }
+            let already_has_trim = matches!(t, ModifierType::Trim)
+                && program.modifiers.iter().any(|m| m.kind.as_trim().is_some());
+            if already_has_trim {
+                return Task::done(Message::Notify(Notification::warning(
+                    "Only one Trim modifier is allowed.",
+                )));
+            }
             let kind = if is_crop {
                 let (iw, ih) = program
                     .image_size()

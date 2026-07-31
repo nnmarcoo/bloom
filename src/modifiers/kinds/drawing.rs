@@ -5,7 +5,7 @@ use iced::widget::{button, column, row, text};
 use iced::{Element, Length};
 
 use crate::app::{EditMsg, Message};
-use crate::modifiers::{InputRequest, ModifierImpl, ModifierParam};
+use crate::modifiers::{InputRequest, ModifierImpl, ModifierParam, ViewCtx};
 use crate::widgets::color_swatch::ColorSwatch;
 use crate::widgets::value_slider::Fmt;
 
@@ -132,12 +132,7 @@ impl ModifierImpl for Drawing {
         self.strokes_sig().hash(hasher);
     }
 
-    fn view(
-        &self,
-        index: usize,
-        _image_size: Option<(u32, u32)>,
-        _rotation: u8,
-    ) -> Element<'_, Message> {
+    fn view(&self, index: usize, _ctx: ViewCtx) -> Element<'_, Message> {
         let small_button = |label: &'static str, msg: Message, enabled: bool| {
             let b = button(text(label).size(10))
                 .padding([2, 8])
