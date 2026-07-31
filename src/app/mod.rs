@@ -474,7 +474,8 @@ impl App {
                 self.notifications.retain(|entry| !entry.is_gone(now));
             }
             Message::Edit(msg) => {
-                let task = edit::update(&mut self.edit, &mut self.program, msg);
+                let timed = self.transport.media_timing(&self.program).is_some();
+                let task = edit::update(&mut self.edit, &mut self.program, timed, msg);
                 return Task::batch([task, self.maybe_request_histogram()]);
             }
             Message::ExportImage => {
@@ -556,6 +557,29 @@ impl App {
         )
     }
 
+    // the first enabled Trim, as timeline-relative fractions for its drag handles
+    fn trim_handles(&self) -> Option<timeline_bar::TrimHandles> {
+        let duration = self.transport.media_timing(&self.program)?.duration;
+        if duration.is_zero() {
+            return None;
+        }
+        let (index, trim) = self
+            .program
+            .modifiers
+            .iter()
+            .enumerate()
+            .find_map(|(i, m)| {
+                m.enabled
+                    .then(|| m.kind.as_trim())
+                    .flatten()
+                    .map(|t| (i, t))
+            })?;
+        let (start, end) = trim.resolve(duration);
+        let frac =
+            |d: std::time::Duration| (d.as_secs_f32() / duration.as_secs_f32()).clamp(0.0, 1.0);
+        Some((index, duration, (frac(start), frac(end))))
+    }
+
     fn suggested_export_name(&self, ext: &str) -> String {
         self.gallery
             .current()
@@ -574,7 +598,8 @@ impl App {
             #[cfg(feature = "av")]
             MediaData::Video(info) => self.transport.attach_video(*info, &mut self.program),
         }
-        self.transport.on_media_applied(self.config.autoplay);
+        self.transport
+            .on_media_applied(self.config.autoplay, &mut self.program);
         self.program.fit();
     }
 
@@ -734,6 +759,7 @@ impl App {
             drag_hover_target: self.edit.drag_hover,
             histogram,
             context_menu: self.context_menu.map(|p| iced::Point::new(p.x, p.y)),
+            timing: self.transport.media_timing(&self.program),
             #[cfg(feature = "av")]
             video_panel,
         }));
@@ -750,6 +776,7 @@ impl App {
                 volume,
                 muted,
                 &self.config.keymap,
+                self.trim_handles(),
             ));
         }
 

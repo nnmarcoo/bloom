@@ -6,7 +6,7 @@ use iced::widget::column;
 
 use crate::app::{EditMsg, Message};
 use crate::modifiers::gpu::{ModEntry, TileInfo, make_entry};
-use crate::modifiers::{ModifierImpl, ModifierParam, ids};
+use crate::modifiers::{ModifierImpl, ModifierParam, ViewCtx, ids};
 use crate::widgets::value_slider::Fmt;
 
 use super::{finish, hash_f32, value_row};
@@ -53,12 +53,7 @@ impl ModifierImpl for Solarize {
         hash_f32(self.threshold, hasher);
     }
 
-    fn view(
-        &self,
-        index: usize,
-        _image_size: Option<(u32, u32)>,
-        _rotation: u8,
-    ) -> Element<'_, Message> {
+    fn view(&self, index: usize, _ctx: ViewCtx) -> Element<'_, Message> {
         finish(column![value_row(
             "Threshold",
             self.threshold,

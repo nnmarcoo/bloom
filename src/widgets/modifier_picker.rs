@@ -7,7 +7,7 @@ use iced::alignment::Vertical;
 use iced::keyboard::key::Named;
 use iced::keyboard::{self, Key};
 use iced::widget::scrollable::{Direction, Scrollbar};
-use iced::widget::{button, column, container, text as text_widget, text_input};
+use iced::widget::{button, column, container, row, text as text_widget, text_input};
 use iced::{
     Background, Border, Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme,
     Vector, mouse, overlay,
@@ -15,7 +15,7 @@ use iced::{
 
 use crate::modifiers::ModifierType;
 use crate::styles::radius;
-use crate::widgets::menu::{SubMenuSide, menu_item, styled_menu, sub_menu};
+use crate::widgets::menu::{SubMenuSide, menu_item_enabled, styled_menu, sub_menu};
 
 const TRIGGER_H: f32 = 28.0;
 const SUBMENU_W: f32 = 210.0;
@@ -45,7 +45,7 @@ struct State {
     open: bool,
     needs_focus: bool,
     query: String,
-    built_for: Option<String>,
+    built_for: Option<(String, bool)>,
     content: Option<Element<'static, Op, Theme, Renderer>>,
     menu_tree: Option<Tree>,
     // fly-out picks reach the real shell directly; this flags a close on the next update
@@ -55,6 +55,7 @@ struct State {
 pub struct ModifierPicker<Message> {
     on_select: Box<dyn Fn(ModifierType) -> Message>,
     width: Length,
+    timed: bool,
 }
 
 impl<Message> ModifierPicker<Message> {
@@ -62,11 +63,18 @@ impl<Message> ModifierPicker<Message> {
         Self {
             on_select: Box::new(on_select),
             width: Length::Fill,
+            timed: false,
         }
     }
 
     pub fn width(mut self, width: impl Into<Length>) -> Self {
         self.width = width.into();
+        self
+    }
+
+    // time-based modifiers (Trim) are only offered for animations and video
+    pub fn timed(mut self, timed: bool) -> Self {
+        self.timed = timed;
         self
     }
 }
@@ -206,12 +214,13 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for ModifierPicker<Message
         let position = layout.position() + translation;
         let bounds = layout.bounds();
 
-        if state.built_for.as_ref() != Some(&state.query) {
-            let content = build_content(&state.query);
+        let key = (state.query.clone(), self.timed);
+        if state.built_for.as_ref() != Some(&key) {
+            let content = build_content(&state.query, self.timed);
             let tree = state.menu_tree.get_or_insert_with(|| Tree::new(&content));
             tree.diff(&content);
             state.content = Some(content);
-            state.built_for = Some(state.query.clone());
+            state.built_for = Some(key);
         }
 
         Some(overlay::Element::new(Box::new(PickerOverlay {
@@ -248,7 +257,7 @@ fn search_style(theme: &Theme, _status: text_input::Status) -> text_input::Style
     }
 }
 
-fn build_content<'a>(query: &str) -> Element<'a, Op, Theme, Renderer> {
+fn build_content<'a>(query: &str, timed: bool) -> Element<'a, Op, Theme, Renderer> {
     let search = text_input(SEARCH_PLACEHOLDER, query)
         .id(SEARCH_ID)
         .on_input(Op::Query)
@@ -257,9 +266,9 @@ fn build_content<'a>(query: &str) -> Element<'a, Op, Theme, Renderer> {
         .style(search_style);
 
     let body: Element<'a, Op, Theme, Renderer> = if query.is_empty() {
-        submenu_body()
+        submenu_body(timed)
     } else {
-        filtered_body(&query.to_lowercase())
+        filtered_body(&query.to_lowercase(), timed)
     };
 
     container(column![body, search].spacing(GAP).width(Length::Fill))
@@ -290,25 +299,29 @@ fn categories() -> Vec<(&'static str, Vec<&'static ModifierType>)> {
     cats
 }
 
-fn submenu_body<'a>() -> Element<'a, Op, Theme, Renderer> {
+fn submenu_body<'a>(timed: bool) -> Element<'a, Op, Theme, Renderer> {
     let mut col = column![].spacing(2).width(Length::Fill);
     for (cat, items) in categories() {
         let mut group = column![].spacing(2);
         for t in items {
-            group = group.push(menu_item(t.label(), Op::Pick(t.clone())));
+            group = group.push(menu_item_enabled(
+                t.label(),
+                Op::Pick(t.clone()),
+                t.enabled_for(timed),
+            ));
         }
         col = col.push(sub_menu(cat, styled_menu(group, SUBMENU_W)).side(SubMenuSide::Left));
     }
     col.into()
 }
 
-fn filtered_body<'a>(query_lower: &str) -> Element<'a, Op, Theme, Renderer> {
+fn filtered_body<'a>(query_lower: &str, timed: bool) -> Element<'a, Op, Theme, Renderer> {
     let mut col = column![].spacing(2).width(Length::Fill);
     let mut count = 0usize;
     for t in ModifierType::ALL.iter().filter(|t| t.in_menu()) {
         if t.label().to_lowercase().contains(query_lower) {
             count += 1;
-            col = col.push(result_row(t));
+            col = col.push(result_row(t, t.enabled_for(timed)));
         }
     }
     if count == 0 {
@@ -342,29 +355,50 @@ fn filtered_body<'a>(query_lower: &str) -> Element<'a, Op, Theme, Renderer> {
         .into()
 }
 
-fn result_row<'a>(t: &'static ModifierType) -> Element<'a, Op, Theme, Renderer> {
-    button(
-        text_widget(t.label())
-            .size(TEXT_SIZE)
-            .wrapping(text::Wrapping::None)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_y(Vertical::Center),
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(ITEM_HEIGHT))
-    .padding([0.0, ITEM_PADDING_H])
-    .style(result_row_style)
-    .on_press(Op::Pick(t.clone()))
-    .into()
+fn result_row<'a>(t: &'static ModifierType, enabled: bool) -> Element<'a, Op, Theme, Renderer> {
+    let label = text_widget(t.label())
+        .size(TEXT_SIZE)
+        .wrapping(text::Wrapping::None)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_y(Vertical::Center);
+
+    let row: Element<'a, Op, Theme, Renderer> = if enabled {
+        label.into()
+    } else {
+        row![
+            label,
+            text_widget(t.disabled_reason())
+                .size(TEXT_SIZE - 2.0)
+                .wrapping(text::Wrapping::None)
+                .height(Length::Fill)
+                .align_y(Vertical::Center),
+        ]
+        .spacing(ITEM_PADDING_H)
+        .into()
+    };
+
+    let mut btn = button(row)
+        .width(Length::Fill)
+        .height(Length::Fixed(ITEM_HEIGHT))
+        .padding([0.0, ITEM_PADDING_H])
+        .style(move |theme: &Theme, status| result_row_style(theme, status, enabled));
+    if enabled {
+        btn = btn.on_press(Op::Pick(t.clone()));
+    }
+    btn.into()
 }
 
-fn result_row_style(theme: &Theme, status: button::Status) -> button::Style {
+fn result_row_style(theme: &Theme, status: button::Status, enabled: bool) -> button::Style {
     let palette = theme.extended_palette();
-    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    let hovered = enabled && matches!(status, button::Status::Hovered | button::Status::Pressed);
     button::Style {
         background: hovered.then_some(Background::Color(palette.background.strong.color)),
-        text_color: palette.background.base.text,
+        text_color: if enabled {
+            palette.background.base.text
+        } else {
+            palette.background.base.text.scale_alpha(0.3)
+        },
         border: Border {
             radius: radius().into(),
             ..Border::default()

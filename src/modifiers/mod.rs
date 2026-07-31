@@ -10,5 +10,6 @@ mod types;
 
 pub use kinds::motion_blur_samples;
 pub use types::{
-    Axis, InputRequest, Modifier, ModifierImpl, ModifierKind, ModifierParam, ModifierType, ids,
+    Axis, InputRequest, MediaTiming, Modifier, ModifierImpl, ModifierKind, ModifierParam,
+    ModifierType, ViewCtx, ids,
 };

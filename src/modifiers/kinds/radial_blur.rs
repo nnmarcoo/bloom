@@ -5,7 +5,7 @@ use iced::Element;
 use iced::widget::column;
 
 use crate::app::{EditMsg, Message};
-use crate::modifiers::{ModifierImpl, ModifierParam};
+use crate::modifiers::{ModifierImpl, ModifierParam, ViewCtx};
 use crate::widgets::value_slider::Fmt;
 
 use super::{finish, hash_f32, value_row};
@@ -41,12 +41,7 @@ impl ModifierImpl for RadialBlur {
         hash_f32(self.amount, hasher);
     }
 
-    fn view(
-        &self,
-        index: usize,
-        _image_size: Option<(u32, u32)>,
-        _rotation: u8,
-    ) -> Element<'_, Message> {
+    fn view(&self, index: usize, _ctx: ViewCtx) -> Element<'_, Message> {
         finish(column![value_row(
             "Amount",
             self.amount,

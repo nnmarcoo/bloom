@@ -5,7 +5,7 @@ use iced::{Element, Length};
 use crate::app::{EditMsg, Message, Tool};
 use crate::components::modifier_stack;
 use crate::keybinds::{Action, Keymap};
-use crate::modifiers::Modifier;
+use crate::modifiers::{Modifier, ViewCtx};
 use crate::styles::{EDIT_PANEL_WIDTH, PAD, bar_style, panel_divider_style};
 use crate::ui::{svg_button_active, svg_button_plain, with_tooltip_key};
 
@@ -26,8 +26,8 @@ pub fn view<'a>(
     active_modifier: Option<usize>,
     dragging_modifier: Option<usize>,
     drag_hover_target: Option<usize>,
-    image_size: Option<(u32, u32)>,
-    rotation: u8,
+    ctx: ViewCtx,
+    timed: bool,
 ) -> Element<'a, Message> {
     use iced::widget::column;
 
@@ -94,8 +94,8 @@ pub fn view<'a>(
         active_modifier,
         dragging_modifier,
         drag_hover_target,
-        image_size,
-        rotation,
+        ctx,
+        timed,
     ))
     .width(Length::Fill)
     .height(Length::Fill);

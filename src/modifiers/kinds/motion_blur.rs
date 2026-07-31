@@ -5,7 +5,7 @@ use iced::Element;
 use iced::widget::column;
 
 use crate::app::{EditMsg, Message};
-use crate::modifiers::{InputRequest, ModifierImpl, ModifierParam};
+use crate::modifiers::{InputRequest, ModifierImpl, ModifierParam, ViewCtx};
 use crate::widgets::value_slider::Fmt;
 
 use super::{angle_row, finish, hash_f32, value_row};
@@ -56,12 +56,7 @@ impl ModifierImpl for MotionBlur {
         hash_f32(self.distance, hasher);
     }
 
-    fn view(
-        &self,
-        index: usize,
-        _image_size: Option<(u32, u32)>,
-        _rotation: u8,
-    ) -> Element<'_, Message> {
+    fn view(&self, index: usize, _ctx: ViewCtx) -> Element<'_, Message> {
         finish(column![
             angle_row("Angle", self.angle, 0.0..=360.0, move |v| {
                 EditMsg::Update(index, ModifierParam::MotionBlurAngle(v)).into()

@@ -7,7 +7,7 @@ use iced::widget::column;
 use crate::app::{EditMsg, Message};
 use crate::modifiers::cpu::hash21;
 use crate::modifiers::gpu::{ModEntry, TileInfo, make_entry};
-use crate::modifiers::{ModifierImpl, ModifierParam, ids};
+use crate::modifiers::{ModifierImpl, ModifierParam, ViewCtx, ids};
 use crate::widgets::number_entry::NumberEntry;
 use crate::widgets::value_slider::Fmt;
 
@@ -111,12 +111,7 @@ impl ModifierImpl for Grain {
         hash_f32(self.response, hasher);
     }
 
-    fn view(
-        &self,
-        index: usize,
-        _image_size: Option<(u32, u32)>,
-        _rotation: u8,
-    ) -> Element<'_, Message> {
+    fn view(&self, index: usize, _ctx: ViewCtx) -> Element<'_, Message> {
         finish(column![
             value_row(
                 "Amount",

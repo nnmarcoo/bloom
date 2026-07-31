@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Duration;
 
 use ffmpeg::format::{self, Pixel};
 use ffmpeg::software::scaling::{Context as Scaler, Flags};
@@ -13,6 +14,15 @@ use super::{ExportData, Geom, VideoExportInfo, ctx_with, geom_of, layer_views, p
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
+}
+
+fn audio_ts(tb: &Rational, at: Option<Duration>) -> Option<i64> {
+    let at = at?;
+    if tb.denominator() == 0 {
+        return None;
+    }
+    let secs = tb.numerator() as f64 / tb.denominator() as f64;
+    (secs > 0.0).then(|| (at.as_secs_f64() / secs).round() as i64)
 }
 
 struct FrameProcessor<'a> {
@@ -267,23 +277,67 @@ pub(super) fn encode_video(
 
     let mut frames_done: u64 = 0;
     let mut last_pts: Option<i64> = None;
-    let duration_ts = {
-        let secs = info.duration.as_secs_f64();
-        let tb = if in_tb.denominator() != 0 {
-            in_tb.numerator() as f64 / in_tb.denominator() as f64
+    let tb_secs = if in_tb.denominator() != 0 {
+        in_tb.numerator() as f64 / in_tb.denominator() as f64
+    } else {
+        0.0
+    };
+    let to_ts = |d: Duration| -> i64 {
+        if tb_secs > 0.0 {
+            (d.as_secs_f64() / tb_secs).round() as i64
         } else {
-            0.0
-        };
-        if tb > 0.0 { secs / tb } else { 0.0 }
+            0
+        }
     };
 
+    // the kept span in the input stream's own time base
+    let (trim_start_ts, trim_end_ts) = match data.trim {
+        Some((start, end)) => (to_ts(start), Some(to_ts(end))),
+        None => (0, None),
+    };
+    let span = data
+        .trim
+        .map(|(s, e)| e.saturating_sub(s))
+        .unwrap_or(info.duration);
+    let duration_ts = if tb_secs > 0.0 {
+        span.as_secs_f64() / tb_secs
+    } else {
+        0.0
+    };
+    let expected_frames = match (data.trim, info.frame_count, info.duration.as_secs_f64()) {
+        (None, n, _) => n,
+        (Some(_), n, total) if n > 0 && total > 0.0 => {
+            ((span.as_secs_f64() / total) * n as f64).round() as u64
+        }
+        _ => 0,
+    };
+
+    if trim_start_ts > 0 {
+        // land on the keyframe at or before the trim start; early frames are dropped below
+        ictx.seek(trim_start_ts, ..trim_start_ts).map_err(err)?;
+        decoder.flush();
+    }
+
+    let mut reached_end = false;
+
     macro_rules! drain_decoder {
-        () => {
+        ($stop:expr) => {
             while decoder.receive_frame(&mut decoded).is_ok() {
-                let mut pts = decoded
+                let src_pts = decoded
                     .pts()
                     .or_else(|| decoded.timestamp())
-                    .unwrap_or_else(|| last_pts.map_or(0, |p| p.saturating_add(1)));
+                    .unwrap_or_else(|| last_pts.map_or(trim_start_ts, |p| p.saturating_add(1)));
+
+                // frames between the keyframe and the trim start are decoded but not encoded
+                if src_pts < trim_start_ts {
+                    continue;
+                }
+                if trim_end_ts.is_some_and(|end| src_pts >= end) {
+                    *$stop = true;
+                    break;
+                }
+
+                let mut pts = src_pts - trim_start_ts;
                 if let Some(last) = last_pts
                     && pts <= last
                 {
@@ -312,8 +366,8 @@ pub(super) fn encode_video(
                 write_encoded(&mut out)?;
 
                 frames_done += 1;
-                if info.frame_count > 0 {
-                    progress((frames_done as f32 / info.frame_count as f32).min(1.0));
+                if expected_frames > 0 {
+                    progress((frames_done as f32 / expected_frames as f32).min(1.0));
                 } else if duration_ts > 0.0 {
                     progress((pts as f64 / duration_ts).clamp(0.0, 1.0) as f32);
                 }
@@ -325,10 +379,29 @@ pub(super) fn encode_video(
         let index = stream.index();
         if index == video_index {
             decoder.send_packet(&packet).map_err(err)?;
-            drain_decoder!();
+            drain_decoder!(&mut reached_end);
+            if reached_end {
+                break;
+            }
         } else if let Some(audio) = &out.audio
             && index == audio.in_index
         {
+            // audio is stream-copied, so the span is cut on packet boundaries
+            let a_start = audio_ts(&audio.in_tb, data.trim.map(|(s, _)| s));
+            let a_end = audio_ts(&audio.in_tb, data.trim.map(|(_, e)| e));
+            let pts = packet.pts().or_else(|| packet.dts()).unwrap_or(0);
+            if let Some(end) = a_end
+                && pts >= end
+            {
+                continue;
+            }
+            if let Some(start) = a_start {
+                if pts + packet.duration() <= start {
+                    continue;
+                }
+                packet.set_pts(packet.pts().map(|p| (p - start).max(0)));
+                packet.set_dts(packet.dts().map(|d| (d - start).max(0)));
+            }
             packet.rescale_ts(audio.in_tb, audio.ost_tb);
             packet.set_stream(audio.ost_index);
             packet.set_position(-1);
@@ -336,8 +409,9 @@ pub(super) fn encode_video(
         }
     }
 
+    // flushing after an early stop is harmless: the trim-end guard rejects the tail
     let _ = decoder.send_eof();
-    drain_decoder!();
+    drain_decoder!(&mut false);
 
     if frames_done == 0 {
         return Err("No decodable video frames.".to_string());
@@ -353,6 +427,7 @@ pub(super) fn encode_video(
 #[cfg(test)]
 mod tests {
     use std::process::Command;
+    use std::time::Duration;
 
     use crate::export::{ExportData, ExportSource, VideoExportInfo, do_export};
     use crate::modifiers::kinds::Exposure;
@@ -402,6 +477,7 @@ mod tests {
             modifiers: vec![],
             crop: None,
             rotation: 0,
+            trim: None,
         };
         let t = std::time::Instant::now();
         do_export(data, &dir.join("out.mp4"), |_| {}).expect("export");
@@ -455,6 +531,7 @@ mod tests {
             modifiers: vec![],
             crop: Some([0.25, 0.25, 0.75, 0.75]),
             rotation: 1,
+            trim: None,
         };
         do_export(data, &output, |_| {}).expect("export");
 
@@ -493,6 +570,7 @@ mod tests {
             }))],
             crop: None,
             rotation: 0,
+            trim: None,
         };
         do_export(data, &modified, |_| {}).expect("export with modifier");
         let decoded = Command::new(&ffmpeg_exe)
@@ -508,6 +586,158 @@ mod tests {
             px.chunks_exact(4)
                 .all(|p| p[0] < 40 && p[1] < 40 && p[2] < 40),
             "exposure -10 should crush the frame to near-black"
+        );
+    }
+
+    #[test]
+    fn video_export_trims_span_and_keeps_audio() {
+        let Some(ffmpeg_exe) = ffmpeg_exe() else {
+            eprintln!("vendored ffmpeg.exe not found, skipping");
+            return;
+        };
+        let dir = std::env::temp_dir().join("bloom_video_trim_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.mp4");
+        let output = dir.join("trimmed.mp4");
+
+        // 4s at 10fps: the frame's red channel ramps with time, so we can tell
+        // which span survived rather than only how long it is
+        let status = Command::new(&ffmpeg_exe)
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "gradients=size=64x48:duration=4:rate=10:c0=black:c1=red:type=linear",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=4",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-g",
+                "5",
+                "-c:a",
+                "aac",
+                "-shortest",
+            ])
+            .arg(&input)
+            .status()
+            .expect("run ffmpeg");
+        assert!(status.success(), "sample generation failed");
+
+        let info = probe_video(&input).expect("probe input");
+        let data = ExportData {
+            source: ExportSource::Video(VideoExportInfo {
+                path: input.clone(),
+                frame_count: info.frame_count,
+                duration: info.duration,
+            }),
+            width: info.width,
+            height: info.height,
+            modifiers: Vec::new(),
+            crop: None,
+            rotation: 0,
+            trim: Some((Duration::from_secs(1), Duration::from_secs(3))),
+        };
+
+        let peak_progress = std::cell::Cell::new(0.0f32);
+        do_export(data, &output, |p| {
+            peak_progress.set(peak_progress.get().max(p))
+        })
+        .expect("trimmed export");
+        let last_progress = peak_progress.get();
+
+        let out_info = probe_video(&output).expect("probe output");
+        let secs = out_info.duration.as_secs_f64();
+        assert!(
+            (1.5..=2.5).contains(&secs),
+            "expected roughly a 2s span, got {secs}"
+        );
+        assert!(
+            out_info.has_audio,
+            "audio stream should survive a trimmed export"
+        );
+        assert!(
+            out_info.duration < info.duration,
+            "trimmed output should be shorter than the source"
+        );
+        assert!(
+            last_progress > 0.9,
+            "progress should approach 1.0, peaked at {last_progress}"
+        );
+    }
+
+    #[test]
+    fn trimmed_export_starts_at_the_trim_point() {
+        let Some(ffmpeg_exe) = ffmpeg_exe() else {
+            eprintln!("vendored ffmpeg.exe not found, skipping");
+            return;
+        };
+        let dir = std::env::temp_dir().join("bloom_video_trim_offset_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.mp4");
+        let output = dir.join("tail.mp4");
+
+        // first second black, remaining three seconds green
+        let status = Command::new(&ffmpeg_exe)
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:size=32x32:duration=1:rate=10",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=green:size=32x32:duration=3:rate=10",
+                "-filter_complex",
+                "[0:v][1:v]concat=n=2:v=1[v]",
+                "-map",
+                "[v]",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-g",
+                "5",
+            ])
+            .arg(&input)
+            .status()
+            .expect("run ffmpeg");
+        assert!(status.success(), "sample generation failed");
+
+        let info = probe_video(&input).expect("probe input");
+        let data = ExportData {
+            source: ExportSource::Video(VideoExportInfo {
+                path: input.clone(),
+                frame_count: info.frame_count,
+                duration: info.duration,
+            }),
+            width: info.width,
+            height: info.height,
+            modifiers: Vec::new(),
+            crop: None,
+            rotation: 0,
+            trim: Some((Duration::from_secs(2), Duration::from_secs(3))),
+        };
+        do_export(data, &output, |_| {}).expect("trimmed export");
+
+        let decoded = Command::new(&ffmpeg_exe)
+            .arg("-i")
+            .arg(&output)
+            .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "-"])
+            .output()
+            .expect("decode trimmed output");
+        assert!(decoded.status.success());
+        let px = &decoded.stdout;
+        assert_eq!(px.len(), 32 * 32 * 4);
+        let (r, g, b) = (px[0], px[1], px[2]);
+        assert!(
+            g > 100 && r < 80 && b < 80,
+            "first kept frame should come from the green section, got ({r},{g},{b})"
         );
     }
 }

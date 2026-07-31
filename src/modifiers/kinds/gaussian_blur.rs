@@ -5,7 +5,7 @@ use iced::Element;
 use iced::widget::column;
 
 use crate::app::{EditMsg, Message};
-use crate::modifiers::{InputRequest, ModifierImpl, ModifierParam};
+use crate::modifiers::{InputRequest, ModifierImpl, ModifierParam, ViewCtx};
 
 use super::{finish, hash_f32, number_row};
 
@@ -48,12 +48,7 @@ impl ModifierImpl for GaussianBlur {
         hash_f32(self.radius, hasher);
     }
 
-    fn view(
-        &self,
-        index: usize,
-        _image_size: Option<(u32, u32)>,
-        _rotation: u8,
-    ) -> Element<'_, Message> {
+    fn view(&self, index: usize, _ctx: ViewCtx) -> Element<'_, Message> {
         finish(column![number_row(
             "Radius",
             self.radius,

@@ -48,11 +48,13 @@ pub struct ExportData {
     pub modifiers: Vec<Modifier>,
     pub crop: Option<[f32; 4]>,
     pub rotation: u8,
+    // inclusive start / exclusive end of the kept span; None keeps everything
+    pub trim: Option<(Duration, Duration)>,
 }
 
 impl ExportData {
     pub fn is_animated(&self) -> bool {
-        matches!(&self.source, ExportSource::Frames { frames, .. } if frames.len() > 1)
+        matches!(&self.source, ExportSource::Frames { frames, .. } if self.trimmed(frames).len() > 1)
     }
 
     pub fn is_video(&self) -> bool {
@@ -77,6 +79,34 @@ impl ExportData {
                 Err("Video frames are not available for this format.".to_string())
             }
         }
+    }
+
+    fn trimmed<'a>(&self, frames: &'a [ExportFrame]) -> &'a [ExportFrame] {
+        let (offset, len) = self.trim_bounds(frames);
+        &frames[offset..offset + len]
+    }
+
+    // frames whose presentation window overlaps the trim span; always at least one frame
+    fn trim_bounds(&self, frames: &[ExportFrame]) -> (usize, usize) {
+        let Some((start, end)) = self.trim else {
+            return (0, frames.len());
+        };
+        let mut first = frames.len();
+        let mut last = 0usize;
+        let mut clock = Duration::ZERO;
+        for (i, f) in frames.iter().enumerate() {
+            let frame_end = clock + f.delay;
+            if frame_end > start && clock < end {
+                first = first.min(i);
+                last = i;
+            }
+            clock = frame_end;
+        }
+        if first > last {
+            // a span that lands between frames still has to yield something to encode
+            return (0, frames.len().min(1));
+        }
+        (first, last - first + 1)
     }
 }
 
@@ -164,7 +194,12 @@ pub fn render_still_rgba(data: &ExportData) -> Result<(u32, u32, Vec<u8>), Strin
     let drawing_rasters = drawing_raster::build_layers(&data.modifiers, data.width, data.height);
     let drawing_layers = layer_views(&drawing_rasters);
     let geom = geom_of(data);
-    let (frames, still_index) = data.in_memory()?;
+    let (all_frames, still_index) = data.in_memory()?;
+    let (offset, len) = data.trim_bounds(all_frames);
+    let frames = &all_frames[offset..offset + len];
+    let still_index = still_index
+        .saturating_sub(offset)
+        .min(len.saturating_sub(1));
     let still = frames
         .get(still_index)
         .ok_or_else(|| "No frame available.".to_string())?;
@@ -189,7 +224,13 @@ pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Resul
     let drawing_rasters = drawing_raster::build_layers(&data.modifiers, data.width, data.height);
     let drawing_layers = layer_views(&drawing_rasters);
     let geom = geom_of(&data);
-    let (frames, still_index) = data.in_memory()?;
+    let (all_frames, still_index) = data.in_memory()?;
+    let (offset, len) = data.trim_bounds(all_frames);
+    let frames = &all_frames[offset..offset + len];
+    // the still index addresses the untrimmed list; re-anchor it inside the kept span
+    let still_index = still_index
+        .saturating_sub(offset)
+        .min(len.saturating_sub(1));
 
     let ext = path
         .extension()
@@ -240,6 +281,89 @@ fn export_name(path: &Path) -> String {
 }
 
 #[cfg(test)]
+mod trim_tests {
+    use super::*;
+
+    // ten 100ms frames, so frame i covers [i*100ms, (i+1)*100ms)
+    fn ten_frames() -> Vec<ExportFrame> {
+        (0..10)
+            .map(|_| ExportFrame {
+                pixels: Arc::new(vec![0u8; 4]),
+                delay: Duration::from_millis(100),
+            })
+            .collect()
+    }
+
+    fn data_with(trim: Option<(Duration, Duration)>, still_index: usize) -> ExportData {
+        ExportData {
+            source: ExportSource::Frames {
+                frames: ten_frames(),
+                still_index,
+            },
+            width: 1,
+            height: 1,
+            modifiers: Vec::new(),
+            crop: None,
+            rotation: 0,
+            trim,
+        }
+    }
+
+    fn bounds(trim: Option<(Duration, Duration)>) -> (usize, usize) {
+        let data = data_with(trim, 0);
+        let frames = match &data.source {
+            ExportSource::Frames { frames, .. } => frames,
+            #[cfg(feature = "av")]
+            _ => unreachable!(),
+        };
+        data.trim_bounds(frames)
+    }
+
+    #[test]
+    fn no_trim_keeps_every_frame() {
+        assert_eq!(bounds(None), (0, 10));
+    }
+
+    #[test]
+    fn trim_selects_overlapping_frames() {
+        let trim = Some((Duration::from_millis(250), Duration::from_millis(650)));
+        // frames 2..=6 overlap the span; 6 starts at 600ms, still inside 650ms
+        assert_eq!(bounds(trim), (2, 5));
+    }
+
+    #[test]
+    fn frame_boundary_aligned_trim_is_exact() {
+        let trim = Some((Duration::from_millis(300), Duration::from_millis(500)));
+        assert_eq!(bounds(trim), (3, 2), "300..500ms is exactly frames 3 and 4");
+    }
+
+    #[test]
+    fn degenerate_span_still_yields_a_frame() {
+        let trim = Some((Duration::from_secs(99), Duration::from_secs(100)));
+        let (_, len) = bounds(trim);
+        assert_eq!(len, 1, "an out-of-range span must not encode zero frames");
+    }
+
+    #[test]
+    fn still_index_is_reanchored_into_the_kept_span() {
+        let trim = Some((Duration::from_millis(500), Duration::from_millis(900)));
+        let data = data_with(trim, 0);
+        let (_, _, rgba) = render_still_rgba(&data).expect("render");
+        assert_eq!(rgba.len(), 4, "still export should survive an offset trim");
+    }
+
+    #[test]
+    fn trimmed_single_frame_is_not_animated() {
+        let trim = Some((Duration::from_millis(0), Duration::from_millis(50)));
+        assert!(
+            !data_with(trim, 0).is_animated(),
+            "a one-frame span should export as a still, not a GIF"
+        );
+        assert!(data_with(None, 0).is_animated());
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::modifiers::ModifierKind;
@@ -274,6 +398,7 @@ mod tests {
             modifiers: vec![Modifier::new(ModifierKind::Text(text))],
             crop: None,
             rotation: 0,
+            trim: None,
         };
 
         let (ow, oh, rgba) = render_still_rgba(&data).expect("render");
@@ -313,6 +438,7 @@ mod tests {
             modifiers: vec![Modifier::new(ModifierKind::Drawing(drawing))],
             crop: None,
             rotation: 0,
+            trim: None,
         };
 
         let (ow, oh, rgba) = render_still_rgba(&data).expect("render");
@@ -364,6 +490,7 @@ mod tests {
             ],
             crop: None,
             rotation: 0,
+            trim: None,
         };
 
         let (_, _, rgba) = render_still_rgba(&data).expect("render");
@@ -420,6 +547,7 @@ mod tests {
             }))],
             crop: None,
             rotation: 0,
+            trim: None,
         };
 
         let (_, _, rgba) = render_still_rgba(&data).expect("render");
@@ -482,6 +610,7 @@ mod tests {
             ],
             crop: None,
             rotation: 0,
+            trim: None,
         };
 
         let (ow, oh, rgba) = render_still_rgba(&data).expect("render");

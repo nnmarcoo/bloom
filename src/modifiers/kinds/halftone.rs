@@ -7,7 +7,7 @@ use iced::widget::column;
 
 use crate::app::{EditMsg, Message};
 use crate::modifiers::gpu::{ModEntry, TileInfo, make_entry};
-use crate::modifiers::{ModifierImpl, ModifierParam, ids};
+use crate::modifiers::{ModifierImpl, ModifierParam, ViewCtx, ids};
 use crate::widgets::value_slider::Fmt;
 
 use super::{clamped_luma, finish, hash_f32, value_row};
@@ -82,12 +82,7 @@ impl ModifierImpl for Halftone {
         hash_f32(self.angle, hasher);
     }
 
-    fn view(
-        &self,
-        index: usize,
-        _image_size: Option<(u32, u32)>,
-        _rotation: u8,
-    ) -> Element<'_, Message> {
+    fn view(&self, index: usize, _ctx: ViewCtx) -> Element<'_, Message> {
         finish(column![
             value_row("Size", self.size, 2.0..=50.0, 0.1, Fmt::num(0), move |v| {
                 EditMsg::Update(index, ModifierParam::HalftoneSize(v)).into()

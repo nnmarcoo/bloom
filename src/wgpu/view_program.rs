@@ -498,6 +498,15 @@ impl ViewProgram {
         })
     }
 
+    // resolved against the media duration; None when no enabled Trim keeps the full span
+    pub fn active_trim(&self, duration: Duration) -> Option<(Duration, Duration)> {
+        let trim = self
+            .modifiers
+            .iter()
+            .find_map(|m| m.enabled.then(|| m.kind.as_trim()).flatten())?;
+        (!trim.is_full()).then(|| trim.resolve(duration))
+    }
+
     fn effective_display_size(&self) -> Vec2 {
         if let Some([min_u, min_v, max_u, max_v]) = self.active_crop() {
             vec2(
@@ -517,6 +526,12 @@ impl ViewProgram {
 
     pub fn animation_duration(&self) -> Option<Duration> {
         self.animation.as_ref().map(|a| a.total_duration())
+    }
+
+    pub fn animation_delays(&self) -> impl Iterator<Item = Duration> + '_ {
+        self.animation
+            .iter()
+            .flat_map(|a| a.frames().iter().map(|f| f.delay))
     }
 
     pub fn animation_timestamp(&self) -> Option<Duration> {
@@ -779,6 +794,7 @@ impl ViewProgram {
         width: u32,
         height: u32,
     ) -> ExportData {
+        let duration = frames.iter().map(|f| f.delay).sum();
         ExportData {
             source: ExportSource::Frames {
                 frames,
@@ -789,6 +805,7 @@ impl ViewProgram {
             modifiers: self.modifiers.as_ref().clone(),
             crop: self.active_crop(),
             rotation: self.rotation,
+            trim: self.active_trim(duration),
         }
     }
 
@@ -805,6 +822,7 @@ impl ViewProgram {
             modifiers: self.modifiers.as_ref().clone(),
             crop: self.active_crop(),
             rotation: self.rotation,
+            trim: self.active_trim(info.duration),
         }
     }
 

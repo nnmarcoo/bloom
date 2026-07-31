@@ -78,15 +78,87 @@ impl TransportState {
         }
     }
 
-    pub fn on_media_applied(&mut self, autoplay: bool) {
+    // a trim carried over from previous media still applies, so start inside it
+    pub fn on_media_applied(&mut self, autoplay: bool, program: &mut ViewProgram) {
         self.paused = !autoplay;
         self.scrubbing = false;
         #[cfg(feature = "av")]
-        if !self.paused
-            && let Some(video) = self.video.as_mut()
-        {
-            video.play();
+        let span = self.span(program);
+        #[cfg(feature = "av")]
+        if let Some(video) = self.video.as_mut() {
+            if let Some((start, _)) = span
+                && !start.is_zero()
+            {
+                video.seek(start, true);
+            }
+            if !self.paused {
+                video.play();
+            }
+            return;
         }
+        if let Some((first, _)) = self.frame_span(program)
+            && first > 0
+        {
+            program.seek_animation(first);
+        }
+    }
+
+    // timing for the loaded media, or None for stills; frame_count 0 means "unknown"
+    pub fn media_timing(&self, program: &ViewProgram) -> Option<crate::modifiers::MediaTiming> {
+        #[cfg(feature = "av")]
+        if let Some(video) = &self.video {
+            let duration = video.duration();
+            let frame_count = match video.frame_count() {
+                0 => (duration.as_secs_f64() * video.avg_fps()).round().max(0.0) as u64,
+                n => n,
+            };
+            return Some(crate::modifiers::MediaTiming {
+                duration,
+                frame_count,
+            });
+        }
+
+        let (_, total) = program.animation_info()?;
+        Some(crate::modifiers::MediaTiming {
+            duration: program.animation_duration().unwrap_or_default(),
+            frame_count: total as u64,
+        })
+    }
+
+    // the playable span for the loaded media: the active trim, else the whole thing
+    // (animation playback clamps by frame index instead, via frame_span)
+    #[cfg(any(feature = "av", test))]
+    fn span(&self, program: &ViewProgram) -> Option<(Duration, Duration)> {
+        let timing = self.media_timing(program)?;
+        Some(
+            program
+                .active_trim(timing.duration)
+                .unwrap_or((Duration::ZERO, timing.duration)),
+        )
+    }
+
+    // the same span as animation frame indices, inclusive on both ends
+    fn frame_span(&self, program: &ViewProgram) -> Option<(usize, usize)> {
+        let (_, total) = program.animation_info()?;
+        let last = total.saturating_sub(1);
+        let Some((start, end)) = program.active_trim(program.animation_duration()?) else {
+            return Some((0, last));
+        };
+        let (mut first, mut final_idx) = (last, 0usize);
+        let mut clock = Duration::ZERO;
+        let mut found = false;
+        for (i, delay) in program.animation_delays().enumerate() {
+            let frame_end = clock + delay;
+            if frame_end > start && clock < end {
+                if !found {
+                    first = i;
+                    found = true;
+                }
+                final_idx = i;
+            }
+            clock = frame_end;
+        }
+        Some(if found { (first, final_idx) } else { (0, 0) })
     }
 
     pub fn playback_active(&self, program: &ViewProgram) -> bool {
@@ -203,6 +275,8 @@ pub fn update(
     match msg {
         TransportMsg::Tick(now) => {
             #[cfg(feature = "av")]
+            let span = state.span(program);
+            #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
                 if let Some(frame) = video.present() {
                     program.set_video_frame(frame, false);
@@ -215,9 +289,13 @@ pub fn update(
                     video.seek(target, false);
                     state.scrub_sent = Some(target);
                 }
-                if video.is_ended() {
+                let (span_start, hit_end) = match span {
+                    Some((start, end)) => (start, !state.scrubbing && video.position() >= end),
+                    None => (Duration::ZERO, false),
+                };
+                if video.is_ended() || hit_end {
                     if _config.loop_video {
-                        video.seek(Duration::ZERO, true);
+                        video.seek(span_start, true);
                         if !state.paused {
                             video.play();
                         }
@@ -229,27 +307,45 @@ pub fn update(
                 return Task::none();
             }
             program.tick_animation(now);
-            if program.animation_ended() {
+            let past_end = state
+                .frame_span(program)
+                .zip(program.animation_info())
+                .is_some_and(|((first, last), (frame, _))| frame > last && first <= last);
+            if past_end {
+                if program.loop_animations {
+                    let first = state.frame_span(program).map_or(0, |(f, _)| f);
+                    program.seek_animation(first);
+                    program.resume_animation();
+                } else {
+                    state.paused = true;
+                }
+            } else if program.animation_ended() {
                 state.paused = true;
             }
         }
         TransportMsg::TogglePlayback => {
             state.paused = !state.paused;
             #[cfg(feature = "av")]
+            let span = state.span(program);
+            #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
                 if state.paused {
                     video.pause();
                 } else {
-                    if video.is_ended() {
-                        video.seek(Duration::ZERO, true);
+                    let (start, end) = span.unwrap_or((Duration::ZERO, video.duration()));
+                    // resuming from the end of the span restarts at its beginning
+                    if video.is_ended() || video.position() >= end || video.position() < start {
+                        video.seek(start, true);
                     }
                     video.play();
                 }
                 return Task::none();
             }
             if !state.paused {
-                if program.animation_ended() {
-                    program.seek_animation(0);
+                let (first, last) = state.frame_span(program).unwrap_or((0, usize::MAX));
+                let frame = program.animation_info().map_or(0, |(f, _)| f);
+                if program.animation_ended() || frame > last || frame < first {
+                    program.seek_animation(first);
                 }
                 program.resume_animation();
             }
@@ -257,56 +353,89 @@ pub fn update(
         TransportMsg::FrameFirst => {
             state.paused = true;
             #[cfg(feature = "av")]
+            let span = state.span(program);
+            #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
                 video.pause();
-                video.seek(Duration::ZERO, true);
+                video.seek(span.map_or(Duration::ZERO, |(s, _)| s), true);
                 return Task::none();
             }
-            program.seek_animation(0);
+            let first = state.frame_span(program).map_or(0, |(f, _)| f);
+            program.seek_animation(first);
         }
         TransportMsg::FrameLast => {
             state.paused = true;
             #[cfg(feature = "av")]
+            let span = state.span(program);
+            #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
                 video.pause();
-                let target = video.duration().saturating_sub(video.frame_interval());
+                let end = span.map_or_else(|| video.duration(), |(_, e)| e);
+                let target = end.saturating_sub(video.frame_interval());
                 video.seek(target, true);
                 return Task::none();
             }
-            if let Some((_, total)) = program.animation_info() {
-                program.seek_animation(total.saturating_sub(1));
+            if let Some((_, last)) = state.frame_span(program) {
+                program.seek_animation(last);
             }
         }
         TransportMsg::FrameNext => {
             state.paused = true;
             #[cfg(feature = "av")]
+            let span = state.span(program);
+            #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
                 if let Some(frame) = video.step(true) {
                     program.set_video_frame(frame, false);
                 }
+                // stepping past the trim end is not allowed; snap back inside it
+                if let Some((_, end)) = span
+                    && video.position() >= end
+                {
+                    video.seek(end.saturating_sub(video.frame_interval()), true);
+                }
                 return Task::none();
             }
-            if let Some((frame, total)) = program.animation_info() {
-                program.seek_animation((frame + 1).min(total.saturating_sub(1)));
+            if let Some((frame, _)) = program.animation_info() {
+                let last = state
+                    .frame_span(program)
+                    .map_or(usize::MAX, |(_, last)| last);
+                program.seek_animation((frame + 1).min(last));
             }
         }
         TransportMsg::FramePrev => {
             state.paused = true;
             #[cfg(feature = "av")]
+            let span = state.span(program);
+            #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
                 if let Some(frame) = video.step(false) {
                     program.set_video_frame(frame, false);
                 }
+                if let Some((start, _)) = span
+                    && video.position() < start
+                {
+                    video.seek(start, true);
+                }
                 return Task::none();
             }
             if let Some((frame, _)) = program.animation_info() {
-                program.seek_animation(frame.saturating_sub(1));
+                let first = state.frame_span(program).map_or(0, |(first, _)| first);
+                program.seek_animation(frame.saturating_sub(1).max(first));
             }
         }
         TransportMsg::FrameSeek(index) => {
             #[cfg(feature = "av")]
+            let span = state.span(program);
+            #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
-                let target = video.seek_target_from_step(index);
+                let mut target = video.seek_target_from_step(index);
+                // the timeline spans the whole media so the handles stay visible;
+                // seeking outside the kept span snaps to its nearest edge
+                if let Some((start, end)) = span {
+                    target =
+                        target.clamp(start, end.saturating_sub(video.frame_interval()).max(start));
+                }
                 if state.scrubbing {
                     state.scrub_pending = Some(target);
                     if !video.is_seeking() && state.scrub_sent != Some(target) {
@@ -318,7 +447,8 @@ pub fn update(
                 }
                 return Task::none();
             }
-            program.seek_animation(index);
+            let (first, last) = state.frame_span(program).unwrap_or((0, usize::MAX));
+            program.seek_animation(index.clamp(first, last));
             if !state.paused && !state.scrubbing {
                 program.resume_animation();
             }
@@ -375,4 +505,91 @@ pub fn update(
         }
     }
     Task::none()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use crate::modifiers::kinds::Trim;
+    use crate::modifiers::{Modifier, ModifierKind};
+    use crate::wgpu::media::animation::{Animation, Frame};
+    use crate::wgpu::media::image_data::ImageData;
+
+    // ten 100ms frames, so frame i covers [i*100ms, (i+1)*100ms)
+    fn program_with_animation() -> ViewProgram {
+        let frames = (0..10)
+            .map(|_| Frame {
+                data: Arc::new(ImageData::new(vec![0u8; 4], 1, 1)),
+                delay: Duration::from_millis(100),
+            })
+            .collect();
+        let mut program = ViewProgram::default();
+        program.set_animation(Animation::new(frames).expect("animation"));
+        program
+    }
+
+    fn with_trim(start_ms: u64, end_ms: u64) -> ViewProgram {
+        let mut program = program_with_animation();
+        program
+            .modifiers_mut()
+            .push(Modifier::new(ModifierKind::Trim(Trim {
+                start: Duration::from_millis(start_ms),
+                end: Some(Duration::from_millis(end_ms)),
+            })));
+        program
+    }
+
+    fn state() -> TransportState {
+        TransportState::from_config(&Config::default())
+    }
+
+    #[test]
+    fn frame_span_covers_everything_without_a_trim() {
+        let program = program_with_animation();
+        assert_eq!(state().frame_span(&program), Some((0, 9)));
+    }
+
+    #[test]
+    fn frame_span_follows_the_trim() {
+        let program = with_trim(250, 650);
+        assert_eq!(state().frame_span(&program), Some((2, 6)));
+    }
+
+    #[test]
+    fn frame_span_is_exact_on_frame_boundaries() {
+        let program = with_trim(300, 500);
+        assert_eq!(state().frame_span(&program), Some((3, 4)));
+    }
+
+    #[test]
+    fn frame_span_ignores_a_disabled_trim() {
+        let mut program = with_trim(300, 500);
+        program.modifiers_mut()[0].enabled = false;
+        assert_eq!(state().frame_span(&program), Some((0, 9)));
+    }
+
+    #[test]
+    fn frame_span_is_none_for_stills() {
+        assert_eq!(state().frame_span(&ViewProgram::default()), None);
+    }
+
+    #[test]
+    fn span_matches_the_trim_for_animations() {
+        let program = with_trim(250, 650);
+        assert_eq!(
+            state().span(&program),
+            Some((Duration::from_millis(250), Duration::from_millis(650)))
+        );
+    }
+
+    #[test]
+    fn span_is_the_whole_media_without_a_trim() {
+        let program = program_with_animation();
+        assert_eq!(
+            state().span(&program),
+            Some((Duration::ZERO, Duration::from_millis(1000)))
+        );
+    }
 }

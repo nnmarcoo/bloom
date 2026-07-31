@@ -7,13 +7,37 @@ use crate::modifiers::gpu::{ModEntry, TileInfo};
 use crate::modifiers::kinds::{
     BrightnessContrast, ChromaticAberration, ColorBalance, Crop, Drawing, Duotone, Exposure,
     GaussianBlur, Grain, Grayscale, Halftone, HueSaturation, Invert, Levels, MotionBlur, PixelSort,
-    Posterize, RadialBlur, Sepia, Solarize, Temperature, Text, Threshold, Vibrance, Vignette,
+    Posterize, RadialBlur, Sepia, Solarize, Temperature, Text, Threshold, Trim, Vibrance, Vignette,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Axis {
     Horizontal,
     Vertical,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MediaTiming {
+    pub duration: std::time::Duration,
+    pub frame_count: u64,
+}
+
+impl MediaTiming {
+    pub fn frame_at(&self, t: std::time::Duration) -> u64 {
+        let total = self.duration.as_secs_f64();
+        if total <= 0.0 || self.frame_count == 0 {
+            return 0;
+        }
+        let frac = (t.as_secs_f64() / total).clamp(0.0, 1.0);
+        ((frac * self.frame_count as f64).round() as u64).min(self.frame_count)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ViewCtx {
+    pub image_size: Option<(u32, u32)>,
+    pub rotation: u8,
+    pub timing: Option<MediaTiming>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -97,12 +121,7 @@ pub trait ModifierImpl {
 
     fn hash(&self, hasher: &mut DefaultHasher);
 
-    fn view(
-        &self,
-        index: usize,
-        image_size: Option<(u32, u32)>,
-        rotation: u8,
-    ) -> Element<'_, Message>;
+    fn view(&self, index: usize, ctx: ViewCtx) -> Element<'_, Message>;
 }
 
 #[derive(Debug, Clone)]
@@ -154,6 +173,21 @@ macro_rules! define_modifiers {
 
             pub fn in_menu(&self) -> bool {
                 !matches!(self, ModifierType::RadialBlur)
+            }
+
+            // listed but greyed out when the loaded media can't use it
+            pub fn enabled_for(&self, timed: bool) -> bool {
+                match self {
+                    ModifierType::Trim => timed,
+                    _ => true,
+                }
+            }
+
+            pub fn disabled_reason(&self) -> &'static str {
+                match self {
+                    ModifierType::Trim => "Only for animations and video",
+                    _ => "",
+                }
             }
         }
 
@@ -210,6 +244,7 @@ define_modifiers!(
     Halftone => "Halftone" @ "Distort",
     PixelSort => "Pixel Sort" @ "Distort",
     Crop => "Crop" @ "Transform",
+    Trim => "Trim" @ "Time",
     Text => "Text" @ "Create",
     Drawing => "Drawing" @ "Create",
 );
@@ -247,13 +282,8 @@ impl ModifierKind {
         self.as_impl().hash(hasher);
     }
 
-    pub fn view(
-        &self,
-        index: usize,
-        image_size: Option<(u32, u32)>,
-        rotation: u8,
-    ) -> Element<'_, Message> {
-        self.as_impl().view(index, image_size, rotation)
+    pub fn view(&self, index: usize, ctx: ViewCtx) -> Element<'_, Message> {
+        self.as_impl().view(index, ctx)
     }
 
     pub fn as_crop(&self) -> Option<&Crop> {
@@ -266,6 +296,20 @@ impl ModifierKind {
     pub fn as_crop_mut(&mut self) -> Option<&mut Crop> {
         match self {
             ModifierKind::Crop(c) => Some(c),
+            _ => None,
+        }
+    }
+
+    pub fn as_trim(&self) -> Option<&Trim> {
+        match self {
+            ModifierKind::Trim(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    pub fn as_trim_mut(&mut self) -> Option<&mut Trim> {
+        match self {
+            ModifierKind::Trim(t) => Some(t),
             _ => None,
         }
     }
@@ -319,6 +363,9 @@ pub enum ModifierParam {
     CropY(f32),
     CropWidth(f32),
     CropHeight(f32),
+    // seconds plus the media duration they were chosen against, so clamping stays exact
+    TrimStart(f32, std::time::Duration),
+    TrimEnd(f32, std::time::Duration),
     TextContent(String),
     TextFont(String),
     TextX(f32),
@@ -335,6 +382,45 @@ pub enum ModifierParam {
     DrawingStrokeExtend([f32; 2]),
     DrawingUndoStroke,
     DrawingClear,
+}
+
+#[cfg(test)]
+mod menu_gating_tests {
+    use super::*;
+
+    #[test]
+    fn trim_is_listed_but_disabled_for_stills() {
+        assert!(
+            ModifierType::Trim.in_menu(),
+            "Trim should stay visible so users can see it exists"
+        );
+        assert!(!ModifierType::Trim.enabled_for(false));
+        assert!(ModifierType::Trim.enabled_for(true));
+    }
+
+    #[test]
+    fn disabled_trim_explains_itself() {
+        assert!(!ModifierType::Trim.disabled_reason().is_empty());
+    }
+
+    #[test]
+    fn pixel_modifiers_are_always_enabled() {
+        for t in ModifierType::ALL {
+            if matches!(t, ModifierType::Trim) {
+                continue;
+            }
+            assert!(
+                t.enabled_for(false) && t.enabled_for(true),
+                "{} should not depend on media kind",
+                t.label()
+            );
+        }
+    }
+
+    #[test]
+    fn radial_blur_stays_hidden() {
+        assert!(!ModifierType::RadialBlur.in_menu());
+    }
 }
 
 #[cfg(test)]

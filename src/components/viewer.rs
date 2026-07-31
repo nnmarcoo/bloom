@@ -12,7 +12,7 @@ use crate::{
     components::{edit_panel, info_panel, notifications},
     gallery::Gallery,
     keybinds::Keymap,
-    modifiers::{Modifier, kinds::Text},
+    modifiers::{MediaTiming, Modifier, ViewCtx, kinds::Text},
     styles::{PAD, spinner_bg_style},
     wgpu::view_program::{Histogram, ViewProgram},
     widgets::{
@@ -45,6 +45,8 @@ pub struct ViewerCtx<'a> {
     pub drag_hover_target: Option<usize>,
     pub histogram: Option<&'a Histogram>,
     pub context_menu: Option<Point>,
+    // Some(..) only for animations and video; gates the time-based modifiers
+    pub timing: Option<MediaTiming>,
     #[cfg(feature = "av")]
     pub video_panel: Option<info_panel::VideoPanel<'a>>,
 }
@@ -216,8 +218,12 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
             ctx.active_modifier,
             ctx.dragging_modifier,
             ctx.drag_hover_target,
-            image_size,
-            ctx.program.rotation(),
+            ViewCtx {
+                image_size,
+                rotation: ctx.program.rotation(),
+                timing: ctx.timing,
+            },
+            ctx.timing.is_some(),
         ));
     }
     content.into()

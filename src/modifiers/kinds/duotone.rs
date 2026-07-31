@@ -6,7 +6,7 @@ use iced::widget::column;
 
 use crate::app::{EditMsg, Message};
 use crate::modifiers::gpu::{ModEntry, TileInfo, make_entry};
-use crate::modifiers::{ModifierImpl, ModifierParam, ids};
+use crate::modifiers::{ModifierImpl, ModifierParam, ViewCtx, ids};
 use crate::widgets::value_slider::Fmt;
 
 use super::{LUMA, color_row, finish, hash_f32, value_row};
@@ -78,12 +78,7 @@ impl ModifierImpl for Duotone {
         hash_f32(self.amount, hasher);
     }
 
-    fn view(
-        &self,
-        index: usize,
-        _image_size: Option<(u32, u32)>,
-        _rotation: u8,
-    ) -> Element<'_, Message> {
+    fn view(&self, index: usize, _ctx: ViewCtx) -> Element<'_, Message> {
         finish(column![
             color_row("Shadows", self.shadow, move |rgb| EditMsg::Update(
                 index,
