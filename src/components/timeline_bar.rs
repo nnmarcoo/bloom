@@ -5,13 +5,18 @@ use iced::widget::tooltip::Position;
 use iced::widget::{container, row, text};
 use iced::{Element, Font, Length};
 
-use crate::app::{Message, TransportMsg};
+use crate::app::{EditMsg, Message, TransportMsg};
 use crate::keybinds::{Action, Keymap};
+use crate::modifiers::ModifierParam;
 use crate::styles::{BAR_HEIGHT, PAD, bar_style};
 use crate::ui::{format_duration, svg_button, with_tooltip_key};
-use crate::widgets::timeline::Timeline;
+use crate::widgets::timeline::{Timeline, TrimEdge};
 use crate::widgets::value_slider::{Fmt, ValueSlider};
 
+// the Trim modifier's index plus its span as fractions of the whole media
+pub type TrimHandles = (usize, Duration, (f32, f32));
+
+#[allow(clippy::too_many_arguments)]
 pub fn view<'a>(
     total_frames: usize,
     position: f32,
@@ -20,6 +25,7 @@ pub fn view<'a>(
     volume: Option<f32>,
     muted: bool,
     keymap: &Keymap,
+    trim: Option<TrimHandles>,
 ) -> Element<'a, Message> {
     let (play_pause_icon, play_pause_tooltip): (&'static [u8], &str) = if playing {
         (include_bytes!("../../assets/icons/pause.svg"), "Pause")
@@ -79,11 +85,22 @@ pub fn view<'a>(
     .align_y(Vertical::Center)
     .spacing(PAD);
 
-    let timeline = Timeline::new(playing, position, total_frames, |i| {
+    let mut timeline = Timeline::new(playing, position, total_frames, |i| {
         TransportMsg::FrameSeek(i).into()
     })
     .on_drag_start(TransportMsg::ScrubStart.into())
     .on_drag_end(TransportMsg::ScrubEnd.into());
+
+    if let Some((index, duration, range)) = trim {
+        timeline = timeline.trim(range, move |edge, frac| {
+            let secs = duration.as_secs_f32() * frac;
+            let param = match edge {
+                TrimEdge::Start => ModifierParam::TrimStart(secs, duration),
+                TrimEdge::End => ModifierParam::TrimEnd(secs, duration),
+            };
+            EditMsg::Update(index, param).into()
+        });
+    }
 
     let label = timestamp
         .map(|(ts, dur)| format!("{} – {}", format_duration(ts), format_duration(dur)))

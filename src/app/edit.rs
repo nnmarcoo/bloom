@@ -52,7 +52,13 @@ impl Default for EditState {
     }
 }
 
-pub fn update(state: &mut EditState, program: &mut ViewProgram, msg: EditMsg) -> Task<Message> {
+// `timed` mirrors the picker's gating: animations and video accept time-based modifiers
+pub fn update(
+    state: &mut EditState,
+    program: &mut ViewProgram,
+    timed: bool,
+    msg: EditMsg,
+) -> Task<Message> {
     match msg {
         EditMsg::SelectTool(tool) => {
             let was_crop = state.selected_tool == Tool::Crop;
@@ -133,12 +139,17 @@ pub fn update(state: &mut EditState, program: &mut ViewProgram, msg: EditMsg) ->
                     "Only one Crop modifier is allowed.",
                 )));
             }
-            let already_has_trim = matches!(t, ModifierType::Trim)
-                && program.modifiers.iter().any(|m| m.kind.as_trim().is_some());
-            if already_has_trim {
-                return Task::done(Message::Notify(Notification::warning(
-                    "Only one Trim modifier is allowed.",
-                )));
+            if matches!(t, ModifierType::Trim) {
+                if program.modifiers.iter().any(|m| m.kind.as_trim().is_some()) {
+                    return Task::done(Message::Notify(Notification::warning(
+                        "Only one Trim modifier is allowed.",
+                    )));
+                }
+                if !timed {
+                    return Task::done(Message::Notify(Notification::warning(
+                        "Trim only applies to animations and video.",
+                    )));
+                }
             }
             let kind = if is_crop {
                 let (iw, ih) = program

@@ -174,7 +174,10 @@ mod tests {
         t.set_start(Duration::from_secs(1), DUR);
         assert!(t.end.is_none());
         let (start, end) = t.resolve(Duration::from_secs(4));
-        assert_eq!((start, end), (Duration::from_secs(1), Duration::from_secs(4)));
+        assert_eq!(
+            (start, end),
+            (Duration::from_secs(1), Duration::from_secs(4))
+        );
     }
 
     #[test]

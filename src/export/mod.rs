@@ -197,7 +197,9 @@ pub fn render_still_rgba(data: &ExportData) -> Result<(u32, u32, Vec<u8>), Strin
     let (all_frames, still_index) = data.in_memory()?;
     let (offset, len) = data.trim_bounds(all_frames);
     let frames = &all_frames[offset..offset + len];
-    let still_index = still_index.saturating_sub(offset).min(len.saturating_sub(1));
+    let still_index = still_index
+        .saturating_sub(offset)
+        .min(len.saturating_sub(1));
     let still = frames
         .get(still_index)
         .ok_or_else(|| "No frame available.".to_string())?;
@@ -226,7 +228,9 @@ pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Resul
     let (offset, len) = data.trim_bounds(all_frames);
     let frames = &all_frames[offset..offset + len];
     // the still index addresses the untrimmed list; re-anchor it inside the kept span
-    let still_index = still_index.saturating_sub(offset).min(len.saturating_sub(1));
+    let still_index = still_index
+        .saturating_sub(offset)
+        .min(len.saturating_sub(1));
 
     let ext = path
         .extension()

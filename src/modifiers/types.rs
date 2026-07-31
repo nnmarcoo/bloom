@@ -171,11 +171,22 @@ macro_rules! define_modifiers {
                 }
             }
 
-            pub fn in_menu(&self, timed: bool) -> bool {
+            pub fn in_menu(&self) -> bool {
+                !matches!(self, ModifierType::RadialBlur)
+            }
+
+            // listed but greyed out when the loaded media can't use it
+            pub fn enabled_for(&self, timed: bool) -> bool {
                 match self {
-                    ModifierType::RadialBlur => false,
                     ModifierType::Trim => timed,
                     _ => true,
+                }
+            }
+
+            pub fn disabled_reason(&self) -> &'static str {
+                match self {
+                    ModifierType::Trim => "Only for animations and video",
+                    _ => "",
                 }
             }
         }
@@ -371,6 +382,45 @@ pub enum ModifierParam {
     DrawingStrokeExtend([f32; 2]),
     DrawingUndoStroke,
     DrawingClear,
+}
+
+#[cfg(test)]
+mod menu_gating_tests {
+    use super::*;
+
+    #[test]
+    fn trim_is_listed_but_disabled_for_stills() {
+        assert!(
+            ModifierType::Trim.in_menu(),
+            "Trim should stay visible so users can see it exists"
+        );
+        assert!(!ModifierType::Trim.enabled_for(false));
+        assert!(ModifierType::Trim.enabled_for(true));
+    }
+
+    #[test]
+    fn disabled_trim_explains_itself() {
+        assert!(!ModifierType::Trim.disabled_reason().is_empty());
+    }
+
+    #[test]
+    fn pixel_modifiers_are_always_enabled() {
+        for t in ModifierType::ALL {
+            if matches!(t, ModifierType::Trim) {
+                continue;
+            }
+            assert!(
+                t.enabled_for(false) && t.enabled_for(true),
+                "{} should not depend on media kind",
+                t.label()
+            );
+        }
+    }
+
+    #[test]
+    fn radial_blur_stays_hidden() {
+        assert!(!ModifierType::RadialBlur.in_menu());
+    }
 }
 
 #[cfg(test)]

@@ -528,6 +528,12 @@ impl ViewProgram {
         self.animation.as_ref().map(|a| a.total_duration())
     }
 
+    pub fn animation_delays(&self) -> impl Iterator<Item = Duration> + '_ {
+        self.animation
+            .iter()
+            .flat_map(|a| a.frames().iter().map(|f| f.delay))
+    }
+
     pub fn animation_timestamp(&self) -> Option<Duration> {
         self.animation.as_ref().map(|a| a.current_timestamp())
     }
