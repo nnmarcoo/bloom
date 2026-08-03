@@ -314,7 +314,7 @@ impl ViewProgram {
             return None;
         }
         let eff = self.effective_display_size();
-        let origin = if let Some([min_u, min_v, ..]) = self.active_crop() {
+        let origin = if let Some([min_u, min_v, ..]) = self.displayed_crop() {
             vec2(min_u * self.image_size.x, min_v * self.image_size.y)
         } else {
             Vec2::ZERO
@@ -476,8 +476,8 @@ impl ViewProgram {
         Some((self.image_size.x as u32, self.image_size.y as u32))
     }
 
-    fn active_crop(&self) -> Option<[f32; 4]> {
-        if self.crop_tool_active || self.image_size == Vec2::ZERO {
+    fn crop(&self) -> Option<[f32; 4]> {
+        if self.image_size == Vec2::ZERO {
             return None;
         }
         self.modifiers.iter().find_map(|m| {
@@ -496,6 +496,10 @@ impl ViewProgram {
         })
     }
 
+    fn displayed_crop(&self) -> Option<[f32; 4]> {
+        self.crop().filter(|_| !self.crop_tool_active)
+    }
+
     pub fn active_trim(&self, duration: Duration) -> Option<(Duration, Duration)> {
         let trim = self
             .modifiers
@@ -505,7 +509,7 @@ impl ViewProgram {
     }
 
     fn effective_display_size(&self) -> Vec2 {
-        if let Some([min_u, min_v, max_u, max_v]) = self.active_crop() {
+        if let Some([min_u, min_v, max_u, max_v]) = self.displayed_crop() {
             vec2(
                 (max_u - min_u) * self.image_size.x,
                 (max_v - min_v) * self.image_size.y,
@@ -558,7 +562,7 @@ impl ViewProgram {
         if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
             return None;
         }
-        let display_uv = if let Some([min_u, min_v, max_u, max_v]) = self.active_crop() {
+        let display_uv = if let Some([min_u, min_v, max_u, max_v]) = self.displayed_crop() {
             let span = vec2((max_u - min_u).max(1e-6), (max_v - min_v).max(1e-6));
             vec2((uv.x - min_u) / span.x, (uv.y - min_v) / span.y)
         } else {
@@ -587,7 +591,7 @@ impl ViewProgram {
         .truncate();
         let eff = self.effective_display_size();
         let local_px = (img_ndc + 1.0) * 0.5 * vec2(eff.x, -eff.y) + vec2(0.0, eff.y);
-        let origin = if let Some([min_u, min_v, ..]) = self.active_crop() {
+        let origin = if let Some([min_u, min_v, ..]) = self.displayed_crop() {
             vec2(min_u * self.image_size.x, min_v * self.image_size.y)
         } else {
             Vec2::ZERO
@@ -767,7 +771,7 @@ impl ViewProgram {
             width,
             height,
             modifiers: self.modifiers.as_ref().clone(),
-            crop: self.active_crop(),
+            crop: self.crop(),
             rotation: self.rotation,
             trim: self.active_trim(duration),
         }
@@ -784,7 +788,7 @@ impl ViewProgram {
             width: info.width,
             height: info.height,
             modifiers: self.modifiers.as_ref().clone(),
-            crop: self.active_crop(),
+            crop: self.crop(),
             rotation: self.rotation,
             trim: self.active_trim(info.duration),
         }
@@ -962,7 +966,7 @@ impl Program<Message> for ViewProgram {
         ViewPrimitive {
             uniforms: DisplayUniforms {
                 transform: self.build_transform(viewport),
-                crop_uv: self.active_crop().unwrap_or([0.0, 0.0, 1.0, 1.0]),
+                crop_uv: self.displayed_crop().unwrap_or([0.0, 0.0, 1.0, 1.0]),
             },
             image: self.image.clone(),
             scale: s,
@@ -1233,5 +1237,61 @@ mod histogram_tests {
         let mut m = Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 4.0 }));
         m.enabled = false;
         assert_matches_render_full(vec![m], "disabled blur");
+    }
+}
+
+#[cfg(test)]
+mod crop_tests {
+    use super::*;
+    use crate::modifiers::ModifierKind;
+    use crate::modifiers::kinds::Crop;
+
+    fn program_with_crop() -> ViewProgram {
+        let mut program = ViewProgram::default();
+        program.set_image(ImageData::new(vec![0u8; 100 * 50 * 4], 100, 50));
+        program
+            .modifiers_mut()
+            .push(Modifier::new(ModifierKind::Crop(Crop {
+                x: 10.0,
+                y: 20.0,
+                width: 50.0,
+                height: 25.0,
+            })));
+        program
+    }
+
+    #[test]
+    fn crop_is_exported_while_the_crop_tool_is_active() {
+        let mut program = program_with_crop();
+        program.crop_tool_active = true;
+
+        assert_eq!(program.displayed_crop(), None);
+        assert_eq!(program.crop(), Some([0.1, 0.4, 0.6, 0.9]));
+        assert_eq!(
+            program.export_frame_data().expect("image is loaded").crop,
+            Some([0.1, 0.4, 0.6, 0.9]),
+        );
+    }
+
+    #[test]
+    fn crop_applies_to_view_and_export_when_the_tool_is_inactive() {
+        let program = program_with_crop();
+        assert_eq!(program.displayed_crop(), program.crop());
+        assert_eq!(
+            program.export_frame_data().expect("image is loaded").crop,
+            Some([0.1, 0.4, 0.6, 0.9]),
+        );
+    }
+
+    #[test]
+    fn disabled_crop_is_neither_shown_nor_exported() {
+        let mut program = program_with_crop();
+        program.modifiers_mut()[0].enabled = false;
+        assert_eq!(program.crop(), None);
+        assert_eq!(program.displayed_crop(), None);
+        assert_eq!(
+            program.export_frame_data().expect("image is loaded").crop,
+            None,
+        );
     }
 }
