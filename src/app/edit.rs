@@ -52,7 +52,6 @@ impl Default for EditState {
     }
 }
 
-// `timed` mirrors the picker's gating: animations and video accept time-based modifiers
 pub fn update(
     state: &mut EditState,
     program: &mut ViewProgram,

@@ -359,11 +359,7 @@ mod tests {
     fn diagonal_sort_orders_main_diagonal() {
         let g = |v: u8| [v, v, v, 255u8];
         let mut src = Vec::new();
-        for v in [
-            90u8, 10, 10, //
-            10, 60, 10, //
-            10, 10, 30,
-        ] {
+        for v in [90u8, 10, 10, 10, 60, 10, 10, 10, 30] {
             src.extend_from_slice(&g(v));
         }
         let out = pixel_sort_cpu(&src, 3, 3, 0.0, 45.0);

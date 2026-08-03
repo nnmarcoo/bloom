@@ -64,8 +64,6 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for MenuItem<'a, 
         _viewport: &Rectangle,
     ) {
         if !self.enabled {
-            // Leaves is_hovered stale if a hovered item becomes disabled; harmless
-            // since draw guards on self.enabled. Clear it here if a phantom highlight appears.
             return;
         }
 

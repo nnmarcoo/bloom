@@ -13,7 +13,6 @@ use crate::ui::{format_duration, svg_button, with_tooltip_key};
 use crate::widgets::timeline::{Timeline, TrimEdge};
 use crate::widgets::value_slider::{Fmt, ValueSlider};
 
-// the Trim modifier's index plus its span as fractions of the whole media
 pub type TrimHandles = (usize, Duration, (f32, f32));
 
 #[allow(clippy::too_many_arguments)]

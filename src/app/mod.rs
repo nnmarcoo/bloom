@@ -557,7 +557,6 @@ impl App {
         )
     }
 
-    // the first enabled Trim, as timeline-relative fractions for its drag handles
     fn trim_handles(&self) -> Option<timeline_bar::TrimHandles> {
         let duration = self.transport.media_timing(&self.program)?.duration;
         if duration.is_zero() {

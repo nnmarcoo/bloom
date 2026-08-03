@@ -48,7 +48,6 @@ struct State {
     built_for: Option<(String, bool)>,
     content: Option<Element<'static, Op, Theme, Renderer>>,
     menu_tree: Option<Tree>,
-    // fly-out picks reach the real shell directly; this flags a close on the next update
     picked: std::rc::Rc<std::cell::Cell<bool>>,
 }
 
@@ -72,7 +71,6 @@ impl<Message> ModifierPicker<Message> {
         self
     }
 
-    // time-based modifiers (Trim) are only offered for animations and video
     pub fn timed(mut self, timed: bool) -> Self {
         self.timed = timed;
         self
@@ -514,8 +512,6 @@ impl<Message: Clone> Overlay<Message, Theme, Renderer> for PickerOverlay<'_, '_,
             return;
         }
 
-        // cursor is Unavailable when a fly-out is under the pointer, so a genuine
-        // outside-click is one where the cursor is available but over nothing
         if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event
             && cursor.position().is_some()
             && !cursor.is_over(layout.bounds())

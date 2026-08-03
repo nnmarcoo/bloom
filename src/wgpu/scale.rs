@@ -4,7 +4,7 @@ const STEPS: &[f32] = &[
     25.0, 30.0, 35.0,
 ];
 
-const DEFAULT_INDEX: usize = 14; // 1.00
+const DEFAULT_INDEX: usize = 14;
 const EPS: f32 = 1e-6;
 
 enum Direction {

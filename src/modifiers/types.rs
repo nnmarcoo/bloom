@@ -175,7 +175,6 @@ macro_rules! define_modifiers {
                 !matches!(self, ModifierType::RadialBlur)
             }
 
-            // listed but greyed out when the loaded media can't use it
             pub fn enabled_for(&self, timed: bool) -> bool {
                 match self {
                     ModifierType::Trim => timed,
@@ -363,7 +362,6 @@ pub enum ModifierParam {
     CropY(f32),
     CropWidth(f32),
     CropHeight(f32),
-    // seconds plus the media duration they were chosen against, so clamping stays exact
     TrimStart(f32, std::time::Duration),
     TrimEnd(f32, std::time::Duration),
     TextContent(String),

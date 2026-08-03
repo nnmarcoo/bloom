@@ -78,7 +78,6 @@ impl TransportState {
         }
     }
 
-    // a trim carried over from previous media still applies, so start inside it
     pub fn on_media_applied(&mut self, autoplay: bool, program: &mut ViewProgram) {
         self.paused = !autoplay;
         self.scrubbing = false;
@@ -103,7 +102,6 @@ impl TransportState {
         }
     }
 
-    // timing for the loaded media, or None for stills; frame_count 0 means "unknown"
     pub fn media_timing(&self, program: &ViewProgram) -> Option<crate::modifiers::MediaTiming> {
         #[cfg(feature = "av")]
         if let Some(video) = &self.video {
@@ -125,8 +123,6 @@ impl TransportState {
         })
     }
 
-    // the playable span for the loaded media: the active trim, else the whole thing
-    // (animation playback clamps by frame index instead, via frame_span)
     #[cfg(any(feature = "av", test))]
     fn span(&self, program: &ViewProgram) -> Option<(Duration, Duration)> {
         let timing = self.media_timing(program)?;
@@ -137,7 +133,6 @@ impl TransportState {
         )
     }
 
-    // the same span as animation frame indices, inclusive on both ends
     fn frame_span(&self, program: &ViewProgram) -> Option<(usize, usize)> {
         let (_, total) = program.animation_info()?;
         let last = total.saturating_sub(1);
@@ -333,7 +328,6 @@ pub fn update(
                     video.pause();
                 } else {
                     let (start, end) = span.unwrap_or((Duration::ZERO, video.duration()));
-                    // resuming from the end of the span restarts at its beginning
                     if video.is_ended() || video.position() >= end || video.position() < start {
                         video.seek(start, true);
                     }
@@ -388,7 +382,6 @@ pub fn update(
                 if let Some(frame) = video.step(true) {
                     program.set_video_frame(frame, false);
                 }
-                // stepping past the trim end is not allowed; snap back inside it
                 if let Some((_, end)) = span
                     && video.position() >= end
                 {
@@ -430,8 +423,6 @@ pub fn update(
             #[cfg(feature = "av")]
             if let Some(video) = state.video.as_mut() {
                 let mut target = video.seek_target_from_step(index);
-                // the timeline spans the whole media so the handles stay visible;
-                // seeking outside the kept span snaps to its nearest edge
                 if let Some((start, end)) = span {
                     target =
                         target.clamp(start, end.saturating_sub(video.frame_interval()).max(start));
@@ -517,7 +508,6 @@ mod tests {
     use crate::wgpu::media::animation::{Animation, Frame};
     use crate::wgpu::media::image_data::ImageData;
 
-    // ten 100ms frames, so frame i covers [i*100ms, (i+1)*100ms)
     fn program_with_animation() -> ViewProgram {
         let frames = (0..10)
             .map(|_| Frame {

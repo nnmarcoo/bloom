@@ -8,7 +8,6 @@ use iced::{Background, Border, Element, Event, Length, Rectangle, Renderer, Size
 
 use crate::styles::radius;
 
-// how close the cursor must be to a trim edge to grab it instead of seeking
 const HANDLE_GRAB_PX: f32 = 6.0;
 const HANDLE_W: f32 = 3.0;
 
@@ -60,7 +59,6 @@ impl<Message> Timeline<Message> {
         self
     }
 
-    // draggable trim edges as fractions of the full media, with their change handler
     pub fn trim(
         mut self,
         range: (f32, f32),
@@ -162,7 +160,6 @@ where
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(pos) = cursor.position_over(bounds) {
-                    // grabbing a trim edge takes priority over seeking
                     if let Some(edge) = self.edge_at(bounds, pos.x) {
                         state.trim_drag = Some(edge);
                         shell.capture_event();
@@ -281,7 +278,6 @@ where
             let (sx, ex) = (x_of(trim_start), x_of(trim_end));
             let excluded = palette.background.base.color.scale_alpha(0.55);
 
-            // shade the spans the trim discards
             for (x, width) in [
                 (bounds.x, sx - bounds.x),
                 (ex, bounds.x + bounds.width - ex),

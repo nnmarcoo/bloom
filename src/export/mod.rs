@@ -48,7 +48,6 @@ pub struct ExportData {
     pub modifiers: Vec<Modifier>,
     pub crop: Option<[f32; 4]>,
     pub rotation: u8,
-    // inclusive start / exclusive end of the kept span; None keeps everything
     pub trim: Option<(Duration, Duration)>,
 }
 
@@ -86,7 +85,6 @@ impl ExportData {
         &frames[offset..offset + len]
     }
 
-    // frames whose presentation window overlaps the trim span; always at least one frame
     fn trim_bounds(&self, frames: &[ExportFrame]) -> (usize, usize) {
         let Some((start, end)) = self.trim else {
             return (0, frames.len());
@@ -103,7 +101,6 @@ impl ExportData {
             clock = frame_end;
         }
         if first > last {
-            // a span that lands between frames still has to yield something to encode
             return (0, frames.len().min(1));
         }
         (first, last - first + 1)
@@ -227,7 +224,6 @@ pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Resul
     let (all_frames, still_index) = data.in_memory()?;
     let (offset, len) = data.trim_bounds(all_frames);
     let frames = &all_frames[offset..offset + len];
-    // the still index addresses the untrimmed list; re-anchor it inside the kept span
     let still_index = still_index
         .saturating_sub(offset)
         .min(len.saturating_sub(1));
@@ -284,7 +280,6 @@ fn export_name(path: &Path) -> String {
 mod trim_tests {
     use super::*;
 
-    // ten 100ms frames, so frame i covers [i*100ms, (i+1)*100ms)
     fn ten_frames() -> Vec<ExportFrame> {
         (0..10)
             .map(|_| ExportFrame {
@@ -327,7 +322,6 @@ mod trim_tests {
     #[test]
     fn trim_selects_overlapping_frames() {
         let trim = Some((Duration::from_millis(250), Duration::from_millis(650)));
-        // frames 2..=6 overlap the span; 6 starts at 600ms, still inside 650ms
         assert_eq!(bounds(trim), (2, 5));
     }
 

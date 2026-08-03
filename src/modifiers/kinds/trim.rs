@@ -14,7 +14,6 @@ use crate::widgets::value_slider::Fmt;
 
 use super::{finish, value_row};
 
-// a trim shorter than this is degenerate; keeps the range non-empty
 pub const MIN_SPAN: Duration = Duration::from_millis(1);
 
 #[derive(Debug, Clone, Default)]
@@ -28,7 +27,6 @@ impl Trim {
         self.start.is_zero() && self.end.is_none()
     }
 
-    // an unset end means "to the end of whatever media is loaded"
     pub fn end_or(&self, duration: Duration) -> Duration {
         self.end.unwrap_or(duration).min(duration)
     }

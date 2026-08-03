@@ -290,7 +290,6 @@ pub(super) fn encode_video(
         }
     };
 
-    // the kept span in the input stream's own time base
     let (trim_start_ts, trim_end_ts) = match data.trim {
         Some((start, end)) => (to_ts(start), Some(to_ts(end))),
         None => (0, None),
@@ -313,7 +312,6 @@ pub(super) fn encode_video(
     };
 
     if trim_start_ts > 0 {
-        // land on the keyframe at or before the trim start; early frames are dropped below
         ictx.seek(trim_start_ts, ..trim_start_ts).map_err(err)?;
         decoder.flush();
     }
@@ -328,7 +326,6 @@ pub(super) fn encode_video(
                     .or_else(|| decoded.timestamp())
                     .unwrap_or_else(|| last_pts.map_or(trim_start_ts, |p| p.saturating_add(1)));
 
-                // frames between the keyframe and the trim start are decoded but not encoded
                 if src_pts < trim_start_ts {
                     continue;
                 }
@@ -386,7 +383,6 @@ pub(super) fn encode_video(
         } else if let Some(audio) = &out.audio
             && index == audio.in_index
         {
-            // audio is stream-copied, so the span is cut on packet boundaries
             let a_start = audio_ts(&audio.in_tb, data.trim.map(|(s, _)| s));
             let a_end = audio_ts(&audio.in_tb, data.trim.map(|(_, e)| e));
             let pts = packet.pts().or_else(|| packet.dts()).unwrap_or(0);
@@ -409,7 +405,6 @@ pub(super) fn encode_video(
         }
     }
 
-    // flushing after an early stop is harmless: the trim-end guard rejects the tail
     let _ = decoder.send_eof();
     drain_decoder!(&mut false);
 
@@ -600,8 +595,6 @@ mod tests {
         let input = dir.join("input.mp4");
         let output = dir.join("trimmed.mp4");
 
-        // 4s at 10fps: the frame's red channel ramps with time, so we can tell
-        // which span survived rather than only how long it is
         let status = Command::new(&ffmpeg_exe)
             .args([
                 "-y",
@@ -681,7 +674,6 @@ mod tests {
         let input = dir.join("input.mp4");
         let output = dir.join("tail.mp4");
 
-        // first second black, remaining three seconds green
         let status = Command::new(&ffmpeg_exe)
             .args([
                 "-y",

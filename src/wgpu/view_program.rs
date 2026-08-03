@@ -130,8 +130,6 @@ struct StagedCache {
     pixels: Vec<u8>,
 }
 
-const STAGED_EYEDROPPER_MAX_PX: u64 = 8_000_000;
-
 struct EyedropperCache {
     key: u64,
     info: Option<(u32, u32, Vec2, [u8; 4])>,
@@ -498,7 +496,6 @@ impl ViewProgram {
         })
     }
 
-    // resolved against the media duration; None when no enabled Trim keeps the full span
     pub fn active_trim(&self, duration: Duration) -> Option<(Duration, Duration)> {
         let trim = self
             .modifiers
@@ -661,40 +658,18 @@ impl ViewProgram {
         drawing_layers: &[Option<LayerView<'_>>],
         px: u32,
         py: u32,
-        uv: [f32; 2],
     ) -> Option<[u8; 4]> {
         let image = self.image.as_ref()?;
-        let w = image.width;
-        let h = image.height;
-
-        if (w as u64) * (h as u64) <= STAGED_EYEDROPPER_MAX_PX {
-            if let Some(c) = self.staged_pixel(text_layers, drawing_layers, image, px, py) {
-                return Some(c);
-            }
-        }
-
-        let idx = (py as usize * w as usize + px as usize) * 4;
-        let pixels = image.pixels_snapshot();
-        let p = pixels.get(idx..idx + 4)?;
-        Some(cpu::f32_to_pixel(self.apply_modifiers_cpu(
-            text_layers,
-            drawing_layers,
-            &pixels,
-            w,
-            h,
-            uv,
-            cpu::pixel_to_f32(p),
-        )))
+        self.staged_pixel(text_layers, drawing_layers, image, px, py)
     }
 
-    fn staged_pixel(
+    fn with_staged<R>(
         &self,
         text_layers: &[Option<TextRaster>],
         drawing_layers: &[Option<LayerView<'_>>],
         image: &ImageData,
-        px: u32,
-        py: u32,
-    ) -> Option<[u8; 4]> {
+        f: impl FnOnce(&[u8], u32) -> R,
+    ) -> Option<R> {
         let (w, h) = (image.width, image.height);
         let key = {
             let mut hasher = DefaultHasher::new();
@@ -706,6 +681,9 @@ impl ViewProgram {
         let stale = guard.as_ref().map(|c| c.key != key).unwrap_or(true);
         if stale {
             let pixels = image.pixels_snapshot();
+            if pixels.len() < image.size_bytes() {
+                return None;
+            }
             let staged =
                 cpu::render_full(&self.modifiers, text_layers, drawing_layers, &pixels, w, h);
             *guard = Some(StagedCache {
@@ -715,9 +693,21 @@ impl ViewProgram {
             });
         }
         let cache = guard.as_ref()?;
-        let idx = (py as usize * cache.w as usize + px as usize) * 4;
-        let p = cache.pixels.get(idx..idx + 4)?;
-        Some([p[0], p[1], p[2], p[3]])
+        Some(f(&cache.pixels, cache.w))
+    }
+
+    fn staged_pixel(
+        &self,
+        text_layers: &[Option<TextRaster>],
+        drawing_layers: &[Option<LayerView<'_>>],
+        image: &ImageData,
+        px: u32,
+        py: u32,
+    ) -> Option<[u8; 4]> {
+        self.with_staged(text_layers, drawing_layers, image, |staged, w| {
+            let idx = (py as usize * w as usize + px as usize) * 4;
+            staged.get(idx..idx + 4).map(|p| [p[0], p[1], p[2], p[3]])
+        })?
     }
 
     pub fn color_at_window(&self, window_pos: Vec2) -> Option<[u8; 4]> {
@@ -727,36 +717,10 @@ impl ViewProgram {
             return None;
         }
         let (px, py) = (img.x as u32, img.y as u32);
-        let uv = [px as f32 / self.image_size.x, py as f32 / self.image_size.y];
         self.with_rasters(
             self.image_size.x as u32,
             self.image_size.y as u32,
-            |text, drawing| self.sample_pixel(text, drawing, px, py, uv),
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn apply_modifiers_cpu(
-        &self,
-        text_layers: &[Option<crate::modifiers::text_raster::TextRaster>],
-        drawing_layers: &[Option<LayerView<'_>>],
-        pixels: &[u8],
-        img_w: u32,
-        img_h: u32,
-        uv: [f32; 2],
-        c: [f32; 4],
-    ) -> [f32; 4] {
-        cpu::apply_modifiers_with_layers(
-            &self.modifiers,
-            text_layers,
-            drawing_layers,
-            pixels,
-            img_w,
-            img_h,
-            uv[0] * img_w as f32 + 0.5,
-            uv[1] * img_h as f32 + 0.5,
-            uv,
-            c,
+            |text, drawing| self.sample_pixel(text, drawing, px, py),
         )
     }
 
@@ -857,7 +821,7 @@ impl ViewProgram {
             self.with_rasters(
                 self.image_size.x as u32,
                 self.image_size.y as u32,
-                |text, drawing| self.sample_pixel(text, drawing, px, py, [uv.x, uv.y]),
+                |text, drawing| self.sample_pixel(text, drawing, px, py),
             )?
         } else {
             let image = self.image.as_ref()?;
@@ -935,29 +899,23 @@ impl ViewProgram {
         }
 
         self.with_rasters(image.width, image.height, |text_layers, drawing_layers| {
-            for row in 0..size as i64 {
-                for col in 0..size as i64 {
-                    let (x, y) = coord(row, col);
-                    if x < 0 || y < 0 || x >= w || y >= h {
-                        continue;
+            self.with_staged(text_layers, drawing_layers, image, |staged, sw| {
+                for row in 0..size as i64 {
+                    for col in 0..size as i64 {
+                        let (x, y) = coord(row, col);
+                        if x < 0 || y < 0 || x >= w || y >= h {
+                            continue;
+                        }
+                        let src = (y as usize * sw as usize + x as usize) * 4;
+                        let Some(p) = staged.get(src..src + 4) else {
+                            continue;
+                        };
+                        let dst = ((row * size as i64 + col) * 4) as usize;
+                        pixels[dst..dst + 4].copy_from_slice(p);
                     }
-                    let idx = (y as usize * w as usize + x as usize) * 4;
-                    let p = &buf[idx..idx + 4];
-                    let uv = [x as f32 / w as f32, y as f32 / h as f32];
-                    let rgba = cpu::f32_to_pixel(self.apply_modifiers_cpu(
-                        text_layers,
-                        drawing_layers,
-                        &buf,
-                        w as u32,
-                        h as u32,
-                        uv,
-                        cpu::pixel_to_f32(p),
-                    ));
-                    let dst = ((row * size as i64 + col) * 4) as usize;
-                    pixels[dst..dst + 4].copy_from_slice(&rgba);
                 }
-            }
-        });
+            })
+        })?;
         self.store_cursor_pixels(key, size, &pixels);
         Some(pixels)
     }
@@ -1110,6 +1068,21 @@ pub(crate) fn compute_subsampled_histogram(
     let height_u = height as usize;
     let row_indices: Vec<usize> = (0..height_u).step_by(stride).collect();
 
+    let text_layers = crate::modifiers::text_raster::build_layers(modifiers, width, height);
+    let drawing_rasters = crate::modifiers::drawing_raster::build_layers(modifiers, width, height);
+    let drawing_layers: Vec<Option<LayerView<'_>>> = drawing_rasters
+        .iter()
+        .map(|l| l.as_ref().map(|r| r.view()))
+        .collect();
+    let rendered = cpu::render_full(
+        modifiers,
+        &text_layers,
+        &drawing_layers,
+        pixels,
+        width,
+        height,
+    );
+
     let (mut r, mut g, mut b) = row_indices
         .par_iter()
         .map(|&y| {
@@ -1119,14 +1092,10 @@ pub(crate) fn compute_subsampled_histogram(
             let mut x = 0;
             while x < width_u {
                 let idx = (y * width_u + x) * 4;
-                if let Some(p) = pixels.get(idx..idx + 4) {
-                    let uv = [x as f32 / width as f32, y as f32 / height as f32];
-                    let raw = cpu::pixel_to_f32(p);
-                    let result = cpu::apply_modifiers(modifiers, pixels, width, height, uv, raw);
-                    let out = cpu::f32_to_pixel(result);
-                    r[out[0] as usize] += 1;
-                    g[out[1] as usize] += 1;
-                    b[out[2] as usize] += 1;
+                if let Some(p) = rendered.get(idx..idx + 4) {
+                    r[p[0] as usize] += 1;
+                    g[p[1] as usize] += 1;
+                    b[p[2] as usize] += 1;
                 }
                 x += stride;
             }
@@ -1183,4 +1152,86 @@ fn hash_text_modifiers(modifiers: &[Modifier]) -> u64 {
         }
     }
     hasher.finish()
+}
+
+#[cfg(test)]
+mod histogram_tests {
+    use super::*;
+    use crate::modifiers::ModifierKind;
+    use crate::modifiers::kinds::{GaussianBlur, MotionBlur, PixelSort};
+
+    fn noise(w: u32, h: u32) -> Vec<u8> {
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut rng = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 33) as u8
+        };
+        let mut px = vec![0u8; (w * h * 4) as usize];
+        for p in px.chunks_exact_mut(4) {
+            p[0] = rng();
+            p[1] = rng();
+            p[2] = rng();
+            p[3] = 255;
+        }
+        px
+    }
+
+    fn assert_matches_render_full(modifiers: Vec<Modifier>, label: &str) {
+        let (w, h) = (64u32, 48u32);
+        let src = noise(w, h);
+
+        let (r, g, b) = compute_subsampled_histogram(&src, w, h, &modifiers);
+
+        let rendered = cpu::render_full(&modifiers, &[], &[], &src, w, h);
+        let (mut er, mut eg, mut eb) = ([0u32; 256], [0u32; 256], [0u32; 256]);
+        for p in rendered.chunks_exact(4) {
+            er[p[0] as usize] += 1;
+            eg[p[1] as usize] += 1;
+            eb[p[2] as usize] += 1;
+        }
+        smooth_bins(&mut er);
+        smooth_bins(&mut eg);
+        smooth_bins(&mut eb);
+
+        assert_eq!(r, er, "{label}: red channel disagrees with render_full");
+        assert_eq!(g, eg, "{label}: green channel disagrees with render_full");
+        assert_eq!(b, eb, "{label}: blue channel disagrees with render_full");
+    }
+
+    #[test]
+    fn blur_after_blur_matches_export() {
+        assert_matches_render_full(
+            vec![
+                Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 4.0 })),
+                Modifier::new(ModifierKind::MotionBlur(MotionBlur {
+                    angle: 0.0,
+                    distance: 20.0,
+                })),
+            ],
+            "gaussian -> motion",
+        );
+    }
+
+    #[test]
+    fn pixel_sort_is_reflected() {
+        assert_matches_render_full(
+            vec![
+                Modifier::new(ModifierKind::PixelSort(PixelSort {
+                    threshold: 0.3,
+                    angle: 0.0,
+                })),
+                Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 3.0 })),
+            ],
+            "pixel sort -> blur",
+        );
+    }
+
+    #[test]
+    fn disabled_modifiers_are_ignored() {
+        let mut m = Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 4.0 }));
+        m.enabled = false;
+        assert_matches_render_full(vec![m], "disabled blur");
+    }
 }

@@ -45,7 +45,6 @@ pub struct ViewerCtx<'a> {
     pub drag_hover_target: Option<usize>,
     pub histogram: Option<&'a Histogram>,
     pub context_menu: Option<Point>,
-    // Some(..) only for animations and video; gates the time-based modifiers
     pub timing: Option<MediaTiming>,
     #[cfg(feature = "av")]
     pub video_panel: Option<info_panel::VideoPanel<'a>>,
