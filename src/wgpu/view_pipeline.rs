@@ -23,8 +23,7 @@ use crate::{
             display::DisplayPass,
             pixel_grid::{PixelGridPass, PixelGridUniforms},
         },
-        residency,
-        tiled_source::{ResidencyCtx, TileSampling, TiledSource},
+        tiled_source::TiledSource,
     },
 };
 
@@ -233,8 +232,8 @@ impl ViewPipeline {
         for tile in &mut source.tiles {
             let tx = tile.x as f32;
             let ty = tile.y as f32;
-            let tw = tile.width() as f32;
-            let th = tile.height() as f32;
+            let tw = tile.width as f32;
+            let th = tile.height as f32;
 
             let isec_left = crop_left.max(tx);
             let isec_right = crop_right.min(tx + tw);
@@ -300,38 +299,6 @@ impl ViewPipeline {
                 tile.isec_px = roi.map(|_| [isec_left, isec_top, isec_right, isec_bottom]);
             }
         }
-    }
-
-    /// Brings source-tile VRAM in line with what is on screen.
-    ///
-    /// Must run after [`Self::update`], which computes tile visibility, and
-    /// before rendering or modifier processing, both of which can only skip a
-    /// tile that is missing rather than fetch it.
-    ///
-    /// Returns the bytes now resident, for diagnostics; `None` when residency
-    /// was left untouched because host pixels are gone.
-    pub fn apply_residency(
-        &mut self,
-        device: &Device,
-        queue: &Queue,
-        image: &ImageData,
-    ) -> Option<u64> {
-        let ctx = ResidencyCtx {
-            display_pass: &self.display,
-            trilinear_sampler: &self.trilinear_sampler,
-            nearest_sampler: &self.nearest_sampler,
-            linear_sampler: &self.linear_sampler,
-            blit_pipeline: &self.blit_pipeline,
-            blit_bgl: &self.blit_bgl,
-            mipmap_zoom_out: self.mipmap_zoom_out,
-        };
-        self.source.as_mut()?.apply_residency(
-            device,
-            queue,
-            image,
-            ctx,
-            residency::DEFAULT_BUDGET_BYTES,
-        )
     }
 
     pub fn update_checkerboard(&mut self, queue: &Queue, uniforms: CheckerboardUniforms) {
@@ -453,25 +420,17 @@ impl ViewPipeline {
                     }
                 }
             } else {
-                let sampling = if zoomed_out {
-                    TileSampling::ZoomOut
-                } else if smooth_zoom_in {
-                    TileSampling::Linear
-                } else {
-                    TileSampling::Nearest
-                };
                 for tile in &source.tiles {
                     if tile_ndc_culled(tile.last_ndc_rect) {
                         continue;
                     }
-                    // A non-resident tile is simply not drawn, leaving the
-                    // background showing. Skipping is the only correct option
-                    // here: this runs during rendering, where there is no queue
-                    // to upload from. Making tiles resident is the residency
-                    // policy's job, before we get here.
-                    if let Some(bg) = tile.display_bind_group(sampling) {
-                        bind_groups.push(bg);
-                    }
+                    bind_groups.push(if zoomed_out {
+                        &tile.zoom_out_bind_group
+                    } else if smooth_zoom_in {
+                        &tile.linear_bind_group
+                    } else {
+                        &tile.nearest_bind_group
+                    });
                 }
             }
         } else {

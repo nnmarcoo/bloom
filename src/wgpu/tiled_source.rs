@@ -4,49 +4,21 @@ use iced::wgpu::{
     Sampler, TexelCopyBufferLayout, Texture, TextureFormat, TextureUsages, TextureView,
 };
 
-use crate::modifiers::plan::ImageSpec;
 use crate::wgpu::{
     error::ViewError,
     gpu,
     media::image_data::{ImageData, ImageId},
     passes::display::DisplayPass,
-    residency,
     view_pipeline::DisplayUniforms,
 };
 
-/// A tile's GPU-side resources.
-///
-/// Split out from [`Tile`] so they can be dropped and rebuilt independently of
-/// the tile's identity. Holding every tile's textures for the lifetime of the
-/// image makes resident VRAM a function of image size rather than of what is
-/// visible, which is what makes very large images thrash: past the card's
-/// capacity the driver pages textures across PCIe instead of failing, and
-/// sampling cost rises roughly 8x with no error anywhere for the pipeline to
-/// observe (see `large_image_probe::probe_vram_spill`).
-///
-/// [`TiledSource::apply_residency`] drops and rebuilds these according to the
-/// policy in [`crate::wgpu::residency`]; consumers must handle a tile being
-/// absent.
-pub struct TileResidency {
-    /// The quality scale these resources were built at. A tile already resident
-    /// at the right scale is reused; one built at a different zoom must be
-    /// rebuilt, which is what lets zoom changes take effect.
-    pub scale: f32,
-    /// Mip levels this texture actually has. Smaller than the tile's nominal
-    /// `mip_count` when the quality scale shrank it, so anything regenerating
-    /// mips must use this rather than the tile's full-size figure.
-    pub mip_count: u32,
+pub struct Tile {
     pub _source_texture: Texture,
     pub source_view: TextureView,
+    pub uniform_buffer: Buffer,
     pub zoom_out_bind_group: BindGroup,
     pub nearest_bind_group: BindGroup,
     pub linear_bind_group: BindGroup,
-}
-
-pub struct Tile {
-    /// GPU resources, or `None` when the tile has been evicted.
-    pub residency: Option<TileResidency>,
-    pub uniform_buffer: Buffer,
     pub last_ndc_rect: Option<(Vec2, Vec2)>,
     pub last_transform: Option<Mat4>,
     pub last_crop_uv: Option<[f32; 4]>,
@@ -55,84 +27,9 @@ pub struct Tile {
     pub isec_px: Option<[f32; 4]>,
     pub x: u32,
     pub y: u32,
-    /// The tile's document geometry: its size in the source image. What
-    /// resolution it is actually loaded at is a separate runtime decision, made
-    /// by [`crate::wgpu::residency`].
-    pub spec: ImageSpec,
+    pub width: u32,
+    pub height: u32,
     pub mip_count: u32,
-}
-
-impl Tile {
-    /// The tile's sampleable view, or `None` when it is not resident.
-    pub fn source_view(&self) -> Option<&TextureView> {
-        self.residency.as_ref().map(|r| &r.source_view)
-    }
-
-    /// The bind group for the given sampling mode, or `None` when the tile is
-    /// not resident.
-    pub fn display_bind_group(&self, mode: TileSampling) -> Option<&BindGroup> {
-        let r = self.residency.as_ref()?;
-        Some(match mode {
-            TileSampling::ZoomOut => &r.zoom_out_bind_group,
-            TileSampling::Linear => &r.linear_bind_group,
-            TileSampling::Nearest => &r.nearest_bind_group,
-        })
-    }
-
-    /// The bytes this tile occupies in VRAM at the given quality scale, mip
-    /// chain included.
-    #[allow(dead_code)] // Used by tests; production caller arrives with the render-loop wiring.
-    pub fn resident_bytes(&self, scale: f32) -> u64 {
-        let d = self.spec.scaled(scale);
-        tile_resident_bytes(d.w, d.h, self.mip_count)
-    }
-
-    /// The allocated texture size, for tests that assert allocation follows the
-    /// quality scale rather than the reported figure.
-    #[cfg(test)]
-    pub fn _debug_texture_size(&self) -> (u32, u32) {
-        let s = self
-            .residency
-            .as_ref()
-            .expect("tile is resident")
-            ._source_texture
-            .size();
-        (s.width, s.height)
-    }
-
-    /// Convenience for the common `tile.spec.w` / `tile.spec.h` reads.
-    pub fn width(&self) -> u32 {
-        self.spec.w
-    }
-
-    pub fn height(&self) -> u32 {
-        self.spec.h
-    }
-}
-
-/// VRAM cost of one resident tile, mip chain included.
-///
-/// Free-standing so the residency budget can size a tile it has not built yet,
-/// and so the accounting is testable without a GPU.
-pub fn tile_resident_bytes(width: u32, height: u32, mip_count: u32) -> u64 {
-    let base = width as u64 * height as u64 * 4;
-    if mip_count > 1 {
-        // A full mip chain converges to 4/3 of the base level.
-        base * 4 / 3
-    } else {
-        base
-    }
-}
-
-/// How a tile is sampled for display, chosen by zoom level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TileSampling {
-    /// Zoomed out: sample the mip chain.
-    ZoomOut,
-    /// Zoomed in with smoothing.
-    Linear,
-    /// Zoomed in without smoothing.
-    Nearest,
 }
 
 pub struct TiledSource {
@@ -143,78 +40,6 @@ pub struct TiledSource {
     pub physical_scale: f32,
     pub has_mipmaps: bool,
     pub mips_dirty: bool,
-    /// How many tiles have been built or rebuilt over this source's lifetime.
-    ///
-    /// Rebuilding re-uploads a tile, so this is the cost that matters when the
-    /// view is steady: it should stop climbing once residency settles.
-    pub rebuilds: u64,
-}
-
-/// Box-filters a tile down into `scratch` at `dst_w` x `dst_h`.
-///
-/// Used when the view is zoomed out far enough that a tile is drawn into fewer
-/// pixels than it holds. Downsampling on the way to the GPU is what makes the
-/// saving real: allocating a smaller texture but uploading full-resolution
-/// pixels would still move every byte across the bus.
-///
-/// A box filter is the right choice here — the reduction factor is a power of
-/// two, so each destination pixel is an exact average of a square block, which
-/// is both cheap and free of the aliasing that point sampling would introduce.
-#[allow(clippy::too_many_arguments)]
-fn downsample_tile(
-    x: u32,
-    y: u32,
-    src_w: u32,
-    src_h: u32,
-    dst_w: u32,
-    dst_h: u32,
-    full_width: u32,
-    image_pixels: &[u8],
-    scratch: &mut Vec<u8>,
-) {
-    let src_stride = full_width as usize * 4;
-    scratch.clear();
-    scratch.resize(dst_w as usize * dst_h as usize * 4, 0);
-
-    // Ratios rather than a single shift: tiles at the image's right and bottom
-    // edges are partial, so the factor is not always an exact power of two.
-    let fx = src_w as f32 / dst_w as f32;
-    let fy = src_h as f32 / dst_h as f32;
-
-    for dy in 0..dst_h {
-        let y0 = (dy as f32 * fy) as u32;
-        let y1 = (((dy + 1) as f32 * fy) as u32).clamp(y0 + 1, src_h);
-        for dx in 0..dst_w {
-            let x0 = (dx as f32 * fx) as u32;
-            let x1 = (((dx + 1) as f32 * fx) as u32).clamp(x0 + 1, src_w);
-
-            let mut acc = [0u32; 4];
-            let mut n = 0u32;
-            for sy in y0..y1 {
-                let row = (y + sy) as usize * src_stride;
-                for sx in x0..x1 {
-                    let o = row + (x + sx) as usize * 4;
-                    // Guard the tail: a partial edge tile can address past the
-                    // buffer if the source is shorter than its declared size.
-                    let Some(px) = image_pixels.get(o..o + 4) else {
-                        continue;
-                    };
-                    acc[0] += px[0] as u32;
-                    acc[1] += px[1] as u32;
-                    acc[2] += px[2] as u32;
-                    acc[3] += px[3] as u32;
-                    n += 1;
-                }
-            }
-            if n == 0 {
-                continue;
-            }
-            let d = (dy as usize * dst_w as usize + dx as usize) * 4;
-            for c in 0..4 {
-                scratch[d + c] = (acc[c] / n) as u8;
-            }
-        }
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -266,164 +91,6 @@ fn write_tile_texture(
                 depth_or_array_layers: 1,
             },
         );
-    }
-}
-
-/// Everything needed to build a tile's GPU resources.
-///
-/// Bundled because both initial construction and rehydration after eviction
-/// need the identical set, and threading nine parameters through twice invites
-/// them to drift apart.
-#[derive(Clone, Copy)]
-pub struct ResidencyCtx<'a> {
-    pub display_pass: &'a DisplayPass,
-    pub trilinear_sampler: &'a Sampler,
-    pub nearest_sampler: &'a Sampler,
-    pub linear_sampler: &'a Sampler,
-    pub blit_pipeline: &'a RenderPipeline,
-    pub blit_bgl: &'a BindGroupLayout,
-    pub mipmap_zoom_out: bool,
-}
-
-/// Builds a tile's GPU resources and uploads its pixels.
-///
-/// Used both when a source is first created and when an evicted tile is needed
-/// again, so the two paths cannot produce differently configured tiles.
-#[allow(clippy::too_many_arguments)]
-fn build_residency(
-    device: &Device,
-    queue: &Queue,
-    ctx: ResidencyCtx<'_>,
-    uniform_buffer: &Buffer,
-    x: u32,
-    y: u32,
-    // `spec` is the tile's size in the source image; `device_spec` is the size
-    // actually allocated after the runtime quality scale — equal to `spec` at
-    // full zoom, smaller when zoomed out.
-    spec: ImageSpec,
-    device_spec: ImageSpec,
-    mip_count: u32,
-    full_width: u32,
-    image_pixels: &[u8],
-    scratch: &mut Vec<u8>,
-    label: &str,
-) -> TileResidency {
-    let (width, height) = (spec.w, spec.h);
-    // Mip levels must suit the texture actually allocated, not the tile's full
-    // size. A 100x50 tile has 7 levels, but at 1/16 scale it is 6x3, which
-    // supports 3 — asking for 7 is a validation error that aborts the process.
-    let mip_count = if mip_count > 1 {
-        mip_count.min(gpu::hw_mip_count(device_spec.w, device_spec.h))
-    } else {
-        1
-    };
-    let source_texture = gpu::texture_2d_mipmapped(
-        device,
-        device_spec.w,
-        device_spec.h,
-        mip_count,
-        TextureFormat::Rgba8Unorm,
-        if ctx.mipmap_zoom_out {
-            TextureUsages::TEXTURE_BINDING
-                | TextureUsages::COPY_DST
-                | TextureUsages::COPY_SRC
-                | TextureUsages::RENDER_ATTACHMENT
-        } else {
-            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST | TextureUsages::COPY_SRC
-        },
-        Some(&format!("{label}:source")),
-    );
-
-    if device_spec.w == width && device_spec.h == height {
-        write_tile_texture(
-            queue,
-            &source_texture,
-            x,
-            y,
-            width,
-            height,
-            full_width,
-            image_pixels,
-            scratch,
-        );
-    } else {
-        // Reduce on the CPU before the upload: allocating a smaller texture but
-        // sending full-resolution pixels would still move every byte.
-        downsample_tile(
-            x,
-            y,
-            width,
-            height,
-            device_spec.w,
-            device_spec.h,
-            full_width,
-            image_pixels,
-            scratch,
-        );
-        queue.write_texture(
-            source_texture.as_image_copy(),
-            scratch,
-            TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(device_spec.w * 4),
-                rows_per_image: None,
-            },
-            Extent3d {
-                width: device_spec.w,
-                height: device_spec.h,
-                depth_or_array_layers: 1,
-            },
-        );
-    }
-
-    if ctx.mipmap_zoom_out && mip_count > 1 {
-        regen_tile_mipmaps(
-            device,
-            queue,
-            &source_texture,
-            mip_count,
-            ctx.blit_pipeline,
-            ctx.blit_bgl,
-            ctx.linear_sampler,
-        );
-    }
-
-    let source_view = source_texture.create_view(&Default::default());
-
-    let zoom_out_bind_group = ctx.display_pass.create_bind_group(
-        device,
-        uniform_buffer,
-        &source_view,
-        if ctx.mipmap_zoom_out {
-            ctx.trilinear_sampler
-        } else {
-            ctx.nearest_sampler
-        },
-        Some(&format!("{label}:zoom-out-bg")),
-    );
-    let nearest_bind_group = ctx.display_pass.create_bind_group(
-        device,
-        uniform_buffer,
-        &source_view,
-        ctx.nearest_sampler,
-        Some(&format!("{label}:nearest-bg")),
-    );
-    let linear_bind_group = ctx.display_pass.create_bind_group(
-        device,
-        uniform_buffer,
-        &source_view,
-        ctx.linear_sampler,
-        Some(&format!("{label}:linear-bg")),
-    );
-
-    TileResidency {
-        scale: device_spec.w as f32 / spec.w as f32,
-        mip_count,
-        _source_texture: source_texture,
-        source_view,
-        zoom_out_bind_group,
-        nearest_bind_group,
-        linear_bind_group,
     }
 }
 
@@ -487,16 +154,6 @@ impl TiledSource {
             });
         }
 
-        let ctx = ResidencyCtx {
-            display_pass,
-            trilinear_sampler,
-            nearest_sampler,
-            linear_sampler,
-            blit_pipeline,
-            blit_bgl,
-            mipmap_zoom_out,
-        };
-
         let limit = device.limits().max_texture_dimension_2d;
         let max_dim = tile_dim.map_or(limit, |d| d.clamp(1, limit));
         let cols = image.width.div_ceil(max_dim);
@@ -521,30 +178,88 @@ impl TiledSource {
                     1
                 };
 
+                let source_texture = gpu::texture_2d_mipmapped(
+                    device,
+                    tw,
+                    th,
+                    mip_count,
+                    TextureFormat::Rgba8Unorm,
+                    if mipmap_zoom_out {
+                        TextureUsages::TEXTURE_BINDING
+                            | TextureUsages::COPY_DST
+                            | TextureUsages::COPY_SRC
+                            | TextureUsages::RENDER_ATTACHMENT
+                    } else {
+                        TextureUsages::TEXTURE_BINDING
+                            | TextureUsages::COPY_DST
+                            | TextureUsages::COPY_SRC
+                    },
+                    Some(&format!("{label}:source")),
+                );
+
+                write_tile_texture(
+                    queue,
+                    &source_texture,
+                    tx,
+                    ty,
+                    tw,
+                    th,
+                    image.width,
+                    image_pixels.as_slice(),
+                    &mut tile_pixels,
+                );
+
+                if mipmap_zoom_out && mip_count > 1 {
+                    regen_tile_mipmaps(
+                        device,
+                        queue,
+                        &source_texture,
+                        mip_count,
+                        blit_pipeline,
+                        blit_bgl,
+                        linear_sampler,
+                    );
+                }
+
+                let source_view = source_texture.create_view(&Default::default());
+
                 let uniform_buffer = gpu::uniform_buffer::<DisplayUniforms>(
                     device,
                     Some(&format!("{label}:display-uniform")),
                 );
-                let spec = ImageSpec::new(tw, th);
-                let residency = build_residency(
+                let zoom_out_bind_group = display_pass.create_bind_group(
                     device,
-                    queue,
-                    ctx,
                     &uniform_buffer,
-                    tx,
-                    ty,
-                    spec,
-                    spec,
-                    mip_count,
-                    image.width,
-                    image_pixels.as_slice(),
-                    &mut tile_pixels,
-                    &label,
+                    &source_view,
+                    if mipmap_zoom_out {
+                        trilinear_sampler
+                    } else {
+                        nearest_sampler
+                    },
+                    Some(&format!("{label}:zoom-out-bg")),
+                );
+                let nearest_bind_group = display_pass.create_bind_group(
+                    device,
+                    &uniform_buffer,
+                    &source_view,
+                    nearest_sampler,
+                    Some(&format!("{label}:nearest-bg")),
+                );
+                let linear_bind_group = display_pass.create_bind_group(
+                    device,
+                    &uniform_buffer,
+                    &source_view,
+                    linear_sampler,
+                    Some(&format!("{label}:linear-bg")),
                 );
 
                 tiles.push(Tile {
-                    residency: Some(residency),
+                    _source_texture: source_texture,
+                    source_view,
                     uniform_buffer,
+                    zoom_out_bind_group,
+                    nearest_bind_group,
+                    linear_bind_group,
                     last_ndc_rect: None,
                     last_transform: None,
                     last_crop_uv: None,
@@ -553,7 +268,8 @@ impl TiledSource {
                     isec_px: None,
                     x: tx,
                     y: ty,
-                    spec,
+                    width: tw,
+                    height: th,
                     mip_count,
                 });
             }
@@ -567,102 +283,7 @@ impl TiledSource {
             physical_scale: 1.0,
             has_mipmaps: mipmap_zoom_out,
             mips_dirty: false,
-            rebuilds: 0,
         })
-    }
-
-    /// Brings residency in line with the policy for the current viewport.
-    ///
-    /// Evicts tiles the policy does not want and rebuilds those it does,
-    /// uploading from `image`. Call before rendering, since rendering itself has
-    /// no queue to upload with and can only skip tiles that are missing.
-    ///
-    /// Returns the bytes now resident, or `None` when host pixels are
-    /// unavailable — after `ImageData::release_pixels`, an evicted tile cannot be
-    /// reconstructed, so this makes no changes rather than evicting something it
-    /// could not bring back.
-    #[allow(dead_code)] // Wiring into the render loop is the next step.
-    pub fn apply_residency(
-        &mut self,
-        device: &Device,
-        queue: &Queue,
-        image: &ImageData,
-        ctx: ResidencyCtx<'_>,
-        budget_bytes: u64,
-    ) -> Option<u64> {
-        let image_pixels = image.pixels_snapshot();
-        if image_pixels.len() < image.size_bytes() {
-            return None;
-        }
-
-        // Zoom decides how much detail is worth loading. Zoomed out, a tile is
-        // drawn into far fewer pixels than it holds, so full resolution would
-        // spend VRAM on detail the display cannot resolve.
-        let scale = residency::tile_scale_for_zoom(self.physical_scale);
-
-        let facts: Vec<residency::TileFacts> = self
-            .tiles
-            .iter()
-            .map(|t| residency::TileFacts {
-                visible: !crate::wgpu::view_pipeline::tile_ndc_culled(t.last_ndc_rect),
-                spec: t.spec,
-                scale,
-                mip_count: t.mip_count,
-            })
-            .collect();
-
-        let plan = residency::plan(&facts, budget_bytes);
-        let full_width = self.full_width;
-        let mut scratch = Vec::new();
-
-        for (i, tile) in self.tiles.iter_mut().enumerate() {
-            match plan.needs[i] {
-                residency::TileNeed::Evictable => {
-                    // Dropping the resources frees the VRAM; the tile keeps its
-                    // identity so it can be rebuilt on demand.
-                    //
-                    // Safe with respect to ModifierPipeline's cached outputs
-                    // because the policy evicts exactly the tiles the executor
-                    // culls, and culling already drops `tile_outputs[ti]`. Were
-                    // the two to diverge, an evicted tile could keep a processed
-                    // output marked valid and the pipeline would show stale
-                    // pixels instead of a gap. See
-                    // `residency::tests::the_evicted_set_is_exactly_the_set_the_executor_culls`.
-                    tile.residency = None;
-                }
-                residency::TileNeed::Resident => {
-                    // Reuse only when the existing resources match the scale the
-                    // view now wants. Without this check a zoom change would
-                    // never take effect; rebuilding unconditionally would
-                    // re-upload every visible tile every frame.
-                    if tile
-                        .residency
-                        .as_ref()
-                        .is_some_and(|r| (r.scale - scale).abs() < 1e-6)
-                    {
-                        continue;
-                    }
-                    self.rebuilds += 1;
-                    tile.residency = Some(build_residency(
-                        device,
-                        queue,
-                        ctx,
-                        &tile.uniform_buffer,
-                        tile.x,
-                        tile.y,
-                        tile.spec,
-                        tile.spec.scaled(scale),
-                        tile.mip_count,
-                        full_width,
-                        image_pixels.as_slice(),
-                        &mut scratch,
-                        "tile:rehydrated",
-                    ));
-                }
-            }
-        }
-
-        Some(plan.resident_bytes)
     }
 
     pub fn matches(&self, image: &ImageData, mipmap_zoom_out: bool) -> bool {
@@ -693,29 +314,24 @@ impl TiledSource {
         let mut scratch = Vec::new();
 
         for tile in &self.tiles {
-            // A non-resident tile has no texture to write into. It will pick up
-            // the new contents when it is next made resident.
-            let Some(res) = tile.residency.as_ref() else {
-                continue;
-            };
             write_tile_texture(
                 queue,
-                &res._source_texture,
+                &tile._source_texture,
                 tile.x,
                 tile.y,
-                tile.width(),
-                tile.height(),
+                tile.width,
+                tile.height,
                 full_width,
                 image_pixels.as_slice(),
                 &mut scratch,
             );
 
-            if needs_mips && res.mip_count > 1 {
+            if needs_mips && tile.mip_count > 1 {
                 regen_tile_mipmaps(
                     device,
                     queue,
-                    &res._source_texture,
-                    res.mip_count,
+                    &tile._source_texture,
+                    tile.mip_count,
                     blit_pipeline,
                     blit_bgl,
                     linear_sampler,
@@ -739,15 +355,12 @@ impl TiledSource {
         let mut encoder: Option<CommandEncoder> = None;
 
         for tile in &self.tiles {
-            let Some(res) = tile.residency.as_ref() else {
-                continue;
-            };
-            if res.mip_count > 1 {
+            if tile.mip_count > 1 {
                 gpu::generate_hw_mipmaps(
                     mip_encoder(&mut encoder, device),
                     device,
-                    &res._source_texture,
-                    res.mip_count,
+                    &tile._source_texture,
+                    tile.mip_count,
                     TextureFormat::Rgba8Unorm,
                     blit_pipeline,
                     blit_bgl,
@@ -761,401 +374,5 @@ impl TiledSource {
         }
 
         self.mips_dirty = false;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unmipped_tile_costs_its_pixels() {
-        assert_eq!(tile_resident_bytes(1024, 1024, 1), 1024 * 1024 * 4);
-    }
-
-    #[test]
-    fn mipped_tile_costs_four_thirds_of_the_base_level() {
-        let base = 1024u64 * 1024 * 4;
-        assert_eq!(tile_resident_bytes(1024, 1024, 11), base * 4 / 3);
-    }
-
-    /// The measured failure this work exists to fix: a 50000x50000 source needs
-    /// far more VRAM than a typical discrete card has, and with mipmaps on (the
-    /// default) it is worse still. Pinning the arithmetic keeps the motivating
-    /// numbers honest if tile sizing ever changes.
-    #[test]
-    fn a_gigapixel_source_far_exceeds_a_typical_cards_vram() {
-        let tile_dim = 8192u32;
-        let tiles_per_side = 50000u32.div_ceil(tile_dim) as u64;
-        let n_tiles = tiles_per_side * tiles_per_side;
-
-        let unmipped = n_tiles * tile_resident_bytes(tile_dim, tile_dim, 1);
-        let mipped = n_tiles * tile_resident_bytes(tile_dim, tile_dim, 14);
-
-        // An 8GB card, all of it, which is already optimistic.
-        let vram = 8u64 * 1024 * 1024 * 1024;
-        assert!(
-            unmipped > vram,
-            "expected a 50000^2 source to exceed 8GB even without mips"
-        );
-        assert!(
-            mipped > unmipped,
-            "mips must be accounted for; they are on by default"
-        );
-    }
-}
-
-#[cfg(test)]
-mod residency_tests {
-    use super::*;
-    use crate::wgpu::test_device::{GPU_LOCK, try_device};
-    use glam::vec2;
-
-    /// Builds a source large enough to tile, with a tiny tile size so the test
-    /// does not depend on the machine's texture limits.
-    fn source_with_tiles(device: &Device, queue: &Queue) -> (TiledSource, ImageData) {
-        let (w, h) = (128u32, 128u32);
-        let image = ImageData::new(vec![200u8; (w * h * 4) as usize], w, h);
-        let display = DisplayPass::new(device, TextureFormat::Rgba8Unorm);
-        let (blit_pipeline, blit_bgl) = gpu::blit_pipeline(device, TextureFormat::Rgba8Unorm);
-        let sampler = device.create_sampler(&iced::wgpu::SamplerDescriptor::default());
-        let source = TiledSource::new(
-            device,
-            queue,
-            &image,
-            &display,
-            &sampler,
-            &sampler,
-            &sampler,
-            false,
-            &blit_pipeline,
-            &blit_bgl,
-            Some(64),
-        )
-        .expect("tiled source");
-        (source, image)
-    }
-
-    fn ctx_of<'a>(
-        display: &'a DisplayPass,
-        sampler: &'a Sampler,
-        blit_pipeline: &'a RenderPipeline,
-        blit_bgl: &'a BindGroupLayout,
-    ) -> ResidencyCtx<'a> {
-        ResidencyCtx {
-            display_pass: display,
-            trilinear_sampler: sampler,
-            nearest_sampler: sampler,
-            linear_sampler: sampler,
-            blit_pipeline,
-            blit_bgl,
-            mipmap_zoom_out: false,
-        }
-    }
-
-    /// Off-screen tiles lose their memory, and are rebuilt when they come back.
-    /// This is the whole mechanism: if rehydration did not restore a usable
-    /// tile, panning across a large image would leave permanent holes.
-    #[test]
-    fn evicted_tiles_are_rebuilt_when_visible_again() {
-        let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let Some((device, queue)) = try_device() else {
-            eprintln!("evicted_tiles_are_rebuilt_when_visible_again: no adapter, skipping");
-            return;
-        };
-
-        let (mut source, image) = source_with_tiles(&device, &queue);
-        assert!(source.tiles.len() > 1, "test needs a multi-tile source");
-
-        let display = DisplayPass::new(&device, TextureFormat::Rgba8Unorm);
-        let (blit_pipeline, blit_bgl) = gpu::blit_pipeline(&device, TextureFormat::Rgba8Unorm);
-        let sampler = device.create_sampler(&iced::wgpu::SamplerDescriptor::default());
-        let ctx = ctx_of(&display, &sampler, &blit_pipeline, &blit_bgl);
-
-        // Put every tile far off screen: nothing is visible or in the margin.
-        for t in &mut source.tiles {
-            t.last_ndc_rect = Some((vec2(50.0, 50.0), vec2(51.0, 51.0)));
-        }
-        let bytes = source
-            .apply_residency(&device, &queue, &image, ctx, u64::MAX)
-            .expect("host pixels available");
-        assert_eq!(bytes, 0, "nothing visible should mean nothing resident");
-        assert!(
-            source.tiles.iter().all(|t| t.residency.is_none()),
-            "off-screen tiles should have been evicted"
-        );
-
-        // Bring the first tile back on screen.
-        source.tiles[0].last_ndc_rect = Some((vec2(-0.5, -0.5), vec2(0.5, 0.5)));
-        let bytes = source
-            .apply_residency(&device, &queue, &image, ctx, u64::MAX)
-            .expect("host pixels available");
-
-        assert!(
-            source.tiles[0].residency.is_some(),
-            "a visible tile must be rehydrated"
-        );
-        assert!(
-            source.tiles[0].source_view().is_some(),
-            "rehydrated tiles must be sampleable again"
-        );
-        let scale = residency::tile_scale_for_zoom(source.physical_scale);
-        assert_eq!(bytes, source.tiles[0].resident_bytes(scale));
-    }
-
-    /// Zooming out must shrink the textures actually allocated, not merely the
-    /// figure the policy reports.
-    ///
-    /// This distinction is the whole point of the test. An earlier version of
-    /// this work computed a quality scale, priced the budget with it, and then
-    /// built every tile at full resolution anyway — so the accounting claimed a
-    /// 60x saving that never happened. Asserting against `Texture::size()` keeps
-    /// the claim tied to what the GPU is actually asked for.
-    #[test]
-    fn zooming_out_shrinks_the_textures_actually_allocated() {
-        let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let Some((device, queue)) = try_device() else {
-            eprintln!("zooming_out_shrinks_the_textures_actually_allocated: no adapter, skipping");
-            return;
-        };
-
-        let (mut source, image) = source_with_tiles(&device, &queue);
-        let display = DisplayPass::new(&device, TextureFormat::Rgba8Unorm);
-        let (blit_pipeline, blit_bgl) = gpu::blit_pipeline(&device, TextureFormat::Rgba8Unorm);
-        let sampler = device.create_sampler(&iced::wgpu::SamplerDescriptor::default());
-        let ctx = ctx_of(&display, &sampler, &blit_pipeline, &blit_bgl);
-
-        // Everything visible, viewed at an eighth scale.
-        for t in &mut source.tiles {
-            t.last_ndc_rect = Some((vec2(-0.5, -0.5), vec2(0.5, 0.5)));
-        }
-        source.physical_scale = 0.125;
-
-        // Force a rebuild so the new scale is applied.
-        for t in &mut source.tiles {
-            t.residency = None;
-        }
-        let bytes = source
-            .apply_residency(&device, &queue, &image, ctx, u64::MAX)
-            .expect("host pixels available");
-
-        let scale = residency::tile_scale_for_zoom(source.physical_scale);
-        assert_eq!(scale, 0.125, "test relies on an eighth-scale view");
-
-        for (i, t) in source.tiles.iter().enumerate() {
-            let res = t.residency.as_ref().expect("visible tiles are resident");
-            let got = res._source_texture.size();
-            let want = t.spec.scaled(scale);
-            assert_eq!(
-                (got.width, got.height),
-                (want.w, want.h),
-                "tile {i}: allocated {}x{} but the policy priced {}x{}. The                  reported saving is fictional unless the texture shrinks too.",
-                got.width,
-                got.height,
-                want.w,
-                want.h
-            );
-        }
-
-        let expected: u64 = source.tiles.iter().map(|t| t.resident_bytes(scale)).sum();
-        assert_eq!(
-            bytes, expected,
-            "reported bytes must match what the tiles actually occupy"
-        );
-    }
-
-    /// A steady view must not rebuild anything.
-    ///
-    /// `apply_residency` runs every frame. Zoomed out, every tile is visible, so
-    /// rebuilding on each call would re-upload the whole image continuously —
-    /// which is exactly the stutter this guards against. Rebuilds must happen
-    /// only when the view actually changes what it needs.
-    #[test]
-    fn a_steady_view_rebuilds_nothing() {
-        let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let Some((device, queue)) = try_device() else {
-            eprintln!("a_steady_view_rebuilds_nothing: no adapter, skipping");
-            return;
-        };
-
-        let (mut source, image) = source_with_tiles(&device, &queue);
-        let display = DisplayPass::new(&device, TextureFormat::Rgba8Unorm);
-        let (blit_pipeline, blit_bgl) = gpu::blit_pipeline(&device, TextureFormat::Rgba8Unorm);
-        let sampler = device.create_sampler(&iced::wgpu::SamplerDescriptor::default());
-        let ctx = ctx_of(&display, &sampler, &blit_pipeline, &blit_bgl);
-
-        for t in &mut source.tiles {
-            t.last_ndc_rect = Some((vec2(-0.5, -0.5), vec2(0.5, 0.5)));
-        }
-        source.physical_scale = 0.25;
-
-        source
-            .apply_residency(&device, &queue, &image, ctx, u64::MAX)
-            .expect("host pixels available");
-        // `rebuilds` counts calls to build_residency, so a steady view showing
-        // no increase is a direct statement that nothing was re-uploaded.
-        let before = source.rebuilds;
-        for _ in 0..5 {
-            source
-                .apply_residency(&device, &queue, &image, ctx, u64::MAX)
-                .expect("host pixels available");
-        }
-        assert_eq!(
-            source.rebuilds,
-            before,
-            "an unchanged view rebuilt {} tiles; that re-uploads them every frame",
-            source.rebuilds - before
-        );
-    }
-
-    /// Changing zoom must rebuild, or the new resolution never takes effect.
-    #[test]
-    fn changing_zoom_rebuilds_at_the_new_scale() {
-        let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let Some((device, queue)) = try_device() else {
-            eprintln!("changing_zoom_rebuilds_at_the_new_scale: no adapter, skipping");
-            return;
-        };
-
-        let (mut source, image) = source_with_tiles(&device, &queue);
-        let display = DisplayPass::new(&device, TextureFormat::Rgba8Unorm);
-        let (blit_pipeline, blit_bgl) = gpu::blit_pipeline(&device, TextureFormat::Rgba8Unorm);
-        let sampler = device.create_sampler(&iced::wgpu::SamplerDescriptor::default());
-        let ctx = ctx_of(&display, &sampler, &blit_pipeline, &blit_bgl);
-
-        for t in &mut source.tiles {
-            t.last_ndc_rect = Some((vec2(-0.5, -0.5), vec2(0.5, 0.5)));
-        }
-
-        source.physical_scale = 1.0;
-        source
-            .apply_residency(&device, &queue, &image, ctx, u64::MAX)
-            .expect("host pixels");
-        let full = source.tiles[0]._debug_texture_size();
-
-        source.physical_scale = 0.25;
-        source
-            .apply_residency(&device, &queue, &image, ctx, u64::MAX)
-            .expect("host pixels");
-        let quarter = source.tiles[0]._debug_texture_size();
-
-        assert!(
-            quarter.0 < full.0 && quarter.1 < full.1,
-            "zooming out should have rebuilt smaller: {full:?} -> {quarter:?}"
-        );
-    }
-
-    /// Zooming far out on a small image must not request more mip levels than
-    /// the shrunken texture can hold.
-    ///
-    /// `mip_count` is computed once from the tile's full size, but the texture
-    /// now shrinks with zoom. A 100x50 tile has 7 levels; at 1/16 scale it is
-    /// 6x3, which supports 3. Asking wgpu for 7 aborts the process — the crash
-    /// is a STATUS_STACK_BUFFER_OVERRUN, not a Rust panic, so nothing catches it.
-    #[test]
-    fn zooming_far_out_on_a_small_image_does_not_overrun_mip_levels() {
-        let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let Some((device, queue)) = try_device() else {
-            eprintln!("zooming_far_out_on_a_small_image: no adapter, skipping");
-            return;
-        };
-
-        // Mipmaps on, matching the shipped default.
-        let (w, h) = (100u32, 50u32);
-        let image = ImageData::new(vec![128u8; (w * h * 4) as usize], w, h);
-        let display = DisplayPass::new(&device, TextureFormat::Rgba8Unorm);
-        let (blit_pipeline, blit_bgl) = gpu::blit_pipeline(&device, TextureFormat::Rgba8Unorm);
-        let sampler = device.create_sampler(&iced::wgpu::SamplerDescriptor::default());
-        let mut source = TiledSource::new(
-            &device,
-            &queue,
-            &image,
-            &display,
-            &sampler,
-            &sampler,
-            &sampler,
-            true,
-            &blit_pipeline,
-            &blit_bgl,
-            None,
-        )
-        .expect("tiled source");
-
-        let ctx = ResidencyCtx {
-            display_pass: &display,
-            trilinear_sampler: &sampler,
-            nearest_sampler: &sampler,
-            linear_sampler: &sampler,
-            blit_pipeline: &blit_pipeline,
-            blit_bgl: &blit_bgl,
-            mipmap_zoom_out: true,
-        };
-
-        for t in &mut source.tiles {
-            t.last_ndc_rect = Some((vec2(-0.5, -0.5), vec2(0.5, 0.5)));
-        }
-
-        // Sweep out to extreme zoom, the way scrolling does.
-        for phys in [0.5f32, 0.25, 0.125, 0.0625, 0.03125, 0.015, 0.005, 0.001] {
-            source.physical_scale = phys;
-            source
-                .apply_residency(&device, &queue, &image, ctx, u64::MAX)
-                .expect("host pixels available");
-
-            for (i, t) in source.tiles.iter().enumerate() {
-                let res = t.residency.as_ref().expect("visible tile is resident");
-                let size = res._source_texture.size();
-                let levels = res._source_texture.mip_level_count();
-                let max_levels = gpu::hw_mip_count(size.width, size.height);
-                assert!(
-                    levels <= max_levels,
-                    "phys={phys}: tile {i} is {}x{} with {levels} mip levels, but                      that size supports at most {max_levels}",
-                    size.width,
-                    size.height
-                );
-                assert_eq!(
-                    levels, res.mip_count,
-                    "phys={phys}: tile {i} records {} mip levels but the texture                      has {levels}; regeneration would address levels that do not                      exist",
-                    res.mip_count
-                );
-            }
-
-            // Regenerating mips walks every level, so it is the other place a
-            // stale count aborts the process.
-            source.regen_mipmaps(&device, &queue, &blit_pipeline, &blit_bgl, &sampler);
-        }
-    }
-
-    /// Without host pixels an evicted tile cannot be rebuilt, so the policy must
-    /// decline to run rather than evict something it could not restore.
-    #[test]
-    fn residency_is_left_alone_when_host_pixels_are_gone() {
-        let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let Some((device, queue)) = try_device() else {
-            eprintln!("residency_is_left_alone_when_host_pixels_are_gone: no adapter, skipping");
-            return;
-        };
-
-        let (mut source, image) = source_with_tiles(&device, &queue);
-        let display = DisplayPass::new(&device, TextureFormat::Rgba8Unorm);
-        let (blit_pipeline, blit_bgl) = gpu::blit_pipeline(&device, TextureFormat::Rgba8Unorm);
-        let sampler = device.create_sampler(&iced::wgpu::SamplerDescriptor::default());
-        let ctx = ctx_of(&display, &sampler, &blit_pipeline, &blit_bgl);
-
-        image.release_pixels();
-        for t in &mut source.tiles {
-            t.last_ndc_rect = Some((vec2(50.0, 50.0), vec2(51.0, 51.0)));
-        }
-
-        assert!(
-            source
-                .apply_residency(&device, &queue, &image, ctx, u64::MAX)
-                .is_none(),
-            "should decline without host pixels"
-        );
-        assert!(
-            source.tiles.iter().all(|t| t.residency.is_some()),
-            "declining must leave every tile as it was, not half-evicted"
-        );
     }
 }

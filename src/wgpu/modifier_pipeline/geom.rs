@@ -44,8 +44,8 @@ pub(super) fn tile_proc_rect(
     apron_px: f32,
     roi_enabled: bool,
 ) -> ProcRect {
-    let fw = tile.x as f32 + tile.width() as f32;
-    let fh = tile.y as f32 + tile.height() as f32;
+    let fw = tile.x as f32 + tile.width as f32;
+    let fh = tile.y as f32 + tile.height as f32;
     let tl = tile.x as f32;
     let tt = tile.y as f32;
 
@@ -76,7 +76,7 @@ pub(super) fn tile_proc_rect(
     };
     let src = UvRect {
         origin: [tl / full_w, tt / full_h],
-        size: [tile.width() as f32 / full_w, tile.height() as f32 / full_h],
+        size: [tile.width as f32 / full_w, tile.height as f32 / full_h],
     };
     ProcRect {
         px,
@@ -123,8 +123,8 @@ pub(super) fn proc_rect_from_px(
     let px = proc_px.unwrap_or([
         tile.x as f32,
         tile.y as f32,
-        tile.x as f32 + tile.width() as f32,
-        tile.y as f32 + tile.height() as f32,
+        tile.x as f32 + tile.width as f32,
+        tile.y as f32 + tile.height as f32,
     ]);
     let proc = UvRect {
         origin: [px[0] / full_w, px[1] / full_h],
@@ -132,7 +132,7 @@ pub(super) fn proc_rect_from_px(
     };
     let src = UvRect {
         origin: [tile.x as f32 / full_w, tile.y as f32 / full_h],
-        size: [tile.width() as f32 / full_w, tile.height() as f32 / full_h],
+        size: [tile.width as f32 / full_w, tile.height as f32 / full_h],
     };
     ProcRect {
         px,

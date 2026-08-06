@@ -73,13 +73,6 @@ impl Primitive for ViewPrimitive {
             self.pan_ndc,
             self.rotation,
         );
-        // Reclaim VRAM from tiles that are no longer on screen, and rebuild any
-        // that came back. Placed here because `update` has just computed
-        // visibility, and everything downstream — modifier processing and
-        // rendering — can only skip a missing tile, never fetch one.
-        if let Some(image) = &self.image {
-            pipeline.apply_residency(device, queue, image);
-        }
         if self.show_checkerboard {
             pipeline.update_checkerboard(queue, self.checker_uniforms);
         }

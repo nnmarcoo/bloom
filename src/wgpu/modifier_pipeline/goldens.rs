@@ -53,8 +53,8 @@ fn make_source(
         t.proc_rect_px = Some([
             t.x as f32,
             t.y as f32,
-            (t.x + t.width()) as f32,
-            (t.y + t.height()) as f32,
+            (t.x + t.width) as f32,
+            (t.y + t.height) as f32,
         ]);
     }
     source
@@ -112,14 +112,14 @@ fn assemble(
             .unwrap_or_else(|| panic!("tile {ti} has no output"));
         assert_eq!(
             (o.width, o.height),
-            (tile.width(), tile.height()),
+            (tile.width, tile.height),
             "tile {ti} output not at native scale"
         );
         let px = read_texture(device, queue, &o._tex, o.width, o.height);
-        for r in 0..tile.height() {
+        for r in 0..tile.height {
             let d = (((tile.y + r) * fw + tile.x) * 4) as usize;
-            let s = (r * tile.width() * 4) as usize;
-            let n = (tile.width() * 4) as usize;
+            let s = (r * tile.width * 4) as usize;
+            let n = (tile.width * 4) as usize;
             full[d..d + n].copy_from_slice(&px[s..s + n]);
         }
     }
