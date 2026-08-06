@@ -154,6 +154,179 @@ fn assemble_scaled(
     full
 }
 
+/// Restricts every tile's ROI to its intersection with a centred window
+/// covering `frac` of the image, mimicking a zoomed-in viewport.
+///
+/// This is the piece the rest of the golden suite lacks: `make_source` gives
+/// every tile a *full-bounds* `proc_rect_px`, so the region the executor
+/// derives is always the whole frame and no apron or reach value can change
+/// the result. With a partial ROI a stage must actually fetch beyond what it
+/// writes, which is what makes under-fetch observable.
+///
+/// Tiles falling entirely outside the window get `None`, matching what the
+/// view pipeline does when a tile is scrolled off screen.
+fn set_partial_roi(source: &mut TiledSource, frac: f32) {
+    let (fw, fh) = (source.full_width as f32, source.full_height as f32);
+    let (half_w, half_h) = (fw * frac * 0.5, fh * frac * 0.5);
+    let view = [
+        fw * 0.5 - half_w,
+        fh * 0.5 - half_h,
+        fw * 0.5 + half_w,
+        fh * 0.5 + half_h,
+    ];
+    for t in &mut source.tiles {
+        let (tl, tt) = (t.x as f32, t.y as f32);
+        let (tr, tb) = (tl + t.width as f32, tt + t.height as f32);
+        let isect = [
+            view[0].max(tl),
+            view[1].max(tt),
+            view[2].min(tr),
+            view[3].min(tb),
+        ];
+        t.proc_rect_px = (isect[2] > isect[0] && isect[3] > isect[1]).then_some(isect);
+    }
+}
+
+/// Compares GPU output against the CPU oracle *only where the GPU actually
+/// rendered*, which is what a partial ROI requires: outside the ROI the tile
+/// textures hold nothing meaningful, so a whole-image diff would drown the
+/// signal in regions neither path claims to have produced.
+///
+/// Returns `(max_diff, pct_over, compared)`. `compared` guards against the
+/// degenerate pass where the ROI collapsed and nothing was checked at all.
+fn diff_within_roi(
+    device: &Device,
+    queue: &Queue,
+    mp: &ModifierPipeline,
+    source: &TiledSource,
+    cpu_full: &[u8],
+    tol: u8,
+) -> (u8, f64, usize) {
+    let fw = source.full_width;
+    let mut max_d = 0u8;
+    let mut over = 0usize;
+    let mut compared = 0usize;
+
+    for (ti, tile) in source.tiles.iter().enumerate() {
+        let (Some(o), Some(roi)) = (mp.tile_outputs[ti].as_ref(), tile.proc_rect_px) else {
+            continue;
+        };
+        let px = o.proc_px.expect("executor outputs always carry proc_px");
+        let data = read_texture(device, queue, &o._tex, o.width, o.height);
+
+        // Walk the ROI in image space and map into the tile's own texture,
+        // which covers `px` -- a superset of the ROI once the apron is added.
+        let x0 = roi[0].ceil() as u32;
+        let y0 = roi[1].ceil() as u32;
+        let x1 = (roi[2].floor() as u32).min(fw);
+        let y1 = (roi[3].floor() as u32).min(source.full_height);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let lx = x as f32 - px[0];
+                let ly = y as f32 - px[1];
+                if lx < 0.0 || ly < 0.0 || lx >= o.width as f32 || ly >= o.height as f32 {
+                    continue;
+                }
+                let s = ((ly as u32 * o.width + lx as u32) * 4) as usize;
+                let d = ((y * fw + x) * 4) as usize;
+                for c in 0..4 {
+                    let diff = data[s + c].abs_diff(cpu_full[d + c]);
+                    max_d = max_d.max(diff);
+                    if diff > tol {
+                        over += 1;
+                    }
+                    compared += 1;
+                }
+            }
+        }
+    }
+    (max_d, over as f64 * 100.0 / compared.max(1) as f64, compared)
+}
+
+/// GPU-vs-oracle agreement with a partial ROI, at a size where a stage's
+/// reach matters. `frac` shrinks the visible window; `tol` is the per-channel
+/// tolerance already used by the other goldens.
+fn run_roi_golden(
+    label: &str,
+    modifiers: &[Modifier],
+    tile_dim: u32,
+    frac: f32,
+    tol: u8,
+    w: u32,
+    h: u32,
+) {
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let pixels = test_pixels(w, h);
+    let image = ImageData::new(pixels.clone(), w, h);
+    let mut source = make_source(&device, &queue, &image, Some(tile_dim));
+    set_partial_roi(&mut source, frac);
+
+    let partial = source
+        .tiles
+        .iter()
+        .filter(|t| {
+            t.proc_rect_px.is_some_and(|r| {
+                r[0] > t.x as f32
+                    || r[1] > t.y as f32
+                    || r[2] < (t.x + t.width) as f32
+                    || r[3] < (t.y + t.height) as f32
+            })
+        })
+        .count();
+    assert!(
+        partial > 0,
+        "{label}: no tile got a strictly-partial ROI, so this test would not \
+         exercise anything the full-bounds goldens miss"
+    );
+
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
+    converge(&mut mp, &device, &queue, &source, modifiers, label);
+
+    // The apron is only observable when the rendered region is a strict subset
+    // of the tile. `ROI_MARGIN_PX` (256) is added to every ROI before clamping,
+    // so with tiles at or below that size the clamp always restores full
+    // bounds and no apron value can matter. Fail loudly rather than pass
+    // vacuously if the geometry ever stops satisfying that.
+    let strict = source
+        .tiles
+        .iter()
+        .enumerate()
+        .filter(|(ti, tile)| {
+            mp.tile_outputs[*ti]
+                .as_ref()
+                .and_then(|o| o.proc_px)
+                .is_some_and(|p| {
+                    p[0] > tile.x as f32
+                        || p[1] > tile.y as f32
+                        || p[2] < (tile.x + tile.width) as f32
+                        || p[3] < (tile.y + tile.height) as f32
+                })
+        })
+        .count();
+    assert!(
+        strict > 0,
+        "{label}: every tile rendered its full bounds, so the apron is not \
+         observable here. Tiles must exceed ROI_MARGIN_PX ({ROI_MARGIN_PX}) \
+         for a partial region to survive clamping."
+    );
+
+    let cpu_full = crate::modifiers::cpu::render_full(modifiers, &[], &[], &pixels, w, h);
+    let (max_d, pct, compared) = diff_within_roi(&device, &queue, &mp, &source, &cpu_full, tol);
+    assert!(
+        compared > 0,
+        "{label}: compared no pixels; the ROI collapsed and the test proved nothing"
+    );
+    assert!(
+        max_d <= tol,
+        "{label}: GPU diverges from oracle inside the ROI: max channel diff \
+         {max_d} > tol {tol} ({pct:.3}% of {compared} channels over). A stage \
+         is reading input the ROI did not fetch."
+    );
+}
+
 #[test]
 fn tiling_invisible_blur_at_downscale() {
     let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -530,6 +703,49 @@ fn golden_motion_blur_multi_tile() {
         Some(FORCED_TILE_DIM),
         4,
     );
+}
+
+// ---- Partial-ROI goldens ------------------------------------------------
+//
+// These are the only tests that can observe a stage's input reach. See
+// `set_partial_roi` for why the full-bounds goldens above cannot.
+
+#[test]
+fn roi_blur_partial_viewport() {
+    run_roi_golden("roi/blur", &blur_chain(), 1024, 0.42, 4, 2048, 2048);
+}
+
+/// Chromatic aberration under a partial ROI.
+///
+/// Unlike the kernel cases above, this test **cannot** detect an under-fetch,
+/// and that is a property of the shader rather than a gap in the harness:
+/// `chromatic_aberration.wgsl` clamps its sample coordinates into `src_size`
+/// (lines 40-41), so a region that was never fetched reads as the edge of the
+/// region that was. The output is wrong but smoothly wrong, and stays inside
+/// the tolerance. Verified empirically -- reclassifying CA from `WholeFrame`
+/// to an 8px kernel keeps this green.
+///
+/// Kept because it still pins GPU/oracle agreement for CA on a partial ROI,
+/// but do not treat it as protection for CA's reach. Making that testable
+/// needs the shader to stop clamping, or a separate assertion on the gathered
+/// source rect rather than on pixels.
+#[test]
+fn roi_chromatic_aberration_partial_viewport() {
+    run_roi_golden("roi/ca", &ca_chain(), 1024, 0.42, 4, 2048, 2048);
+}
+
+#[test]
+fn roi_motion_blur_partial_viewport() {
+    run_roi_golden("roi/motion-blur", &motion_blur_chain(), 1024, 0.42, 4, 2048, 2048);
+}
+
+#[test]
+fn roi_pointwise_then_blur_partial_viewport() {
+    let chain = vec![
+        Modifier::new(ModifierKind::Exposure(Exposure { exposure: 0.3 })),
+        Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 6.0 })),
+    ];
+    run_roi_golden("roi/pointwise+blur", &chain, 1024, 0.42, 4, 2048, 2048);
 }
 
 #[test]

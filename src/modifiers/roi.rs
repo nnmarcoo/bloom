@@ -211,6 +211,44 @@ mod tests {
         assert_eq!(old, [2995.0, 2995.0, 3205.0, 3205.0]);
     }
 
+    /// Mirrors the backward walk `execute_kernel_chain` performs to decide how
+    /// much source it must gather (`executor.rs`, "for k in (0..n).rev()").
+    ///
+    /// This is where CA's classification is actually observable. The GPU
+    /// goldens cannot see it: `chromatic_aberration.wgsl` clamps its sample
+    /// coordinates into the fetched rect, so an under-fetch reads as an edge
+    /// colour rather than as a visible error. Asserting on the region itself
+    /// sidesteps that.
+    #[test]
+    fn chain_gather_region_follows_the_widest_stage() {
+        const W: f32 = 2048.0;
+        const H: f32 = 2048.0;
+        let out = [900.0, 900.0, 1100.0, 1100.0];
+
+        // Blur alone: a bounded apron, so the gather stays local.
+        let blur = step_class(&ModifierKind::GaussianBlur(GaussianBlur { radius: 6.0 }));
+        assert_eq!(
+            input_needed(blur, out, W, H),
+            [894.0, 894.0, 1106.0, 1106.0]
+        );
+
+        // Any FullFrame stage in the chain forces a full gather, regardless of
+        // where it sits or how tight the stages around it are.
+        let ca = step_class(&ModifierKind::ChromaticAberration(ChromaticAberration {
+            amount: 8.0,
+        }));
+        let chain = [blur, ca, StepClass::Pointwise];
+        let mut cur = out;
+        for c in chain.iter().rev() {
+            cur = input_needed(*c, cur, W, H);
+        }
+        assert_eq!(
+            cur,
+            [0.0, 0.0, W, H],
+            "a FullFrame stage must widen the whole chain's gather"
+        );
+    }
+
     /// `StepClass` and `EffectClass` are two views of one declaration. Walking
     /// every modifier type catches a new kind that classifies inconsistently,
     /// which is what previously let chromatic aberration claim a bounded apron
