@@ -39,7 +39,7 @@ pub(super) fn tile_proc_rect(
     tile: &crate::wgpu::tiled_source::Tile,
     full_w: f32,
     full_h: f32,
-    proc_scale: f32,
+    quality_scale: f32,
     downscale: bool,
     apron_px: f32,
     roi_enabled: bool,
@@ -64,9 +64,12 @@ pub(super) fn tile_proc_rect(
         None => [tl, tt, fw, fh],
     };
 
+    // Document space above this line, device space below it: `px` and the two
+    // `UvRect`s stay in image coordinates, while `w`/`h` are the actual
+    // allocation and carry the runtime quality factor.
     let pw_px = (px[2] - px[0]).max(1.0);
     let ph_px = (px[3] - px[1]).max(1.0);
-    let scale = if downscale { proc_scale } else { 1.0 };
+    let scale = if downscale { quality_scale } else { 1.0 };
     let w = ((pw_px * scale).ceil() as u32).max(1);
     let h = ((ph_px * scale).ceil() as u32).max(1);
 

@@ -47,11 +47,16 @@ pub struct ViewCtx {
 /// [`crate::modifiers::roi::StepClass`] (how much input a region needs) are
 /// derived from it, so a modifier declares its reach exactly once.
 ///
-/// `radius_px` and `step` are in the modifier's own working space: a
-/// `Neighborhood` reaches at most `radius_px` pixels away from the pixel being
-/// written, in any direction. A modifier whose reach is *not* a bounded local
-/// offset — for example one that scales sample coordinates about the image
-/// centre — is `FullFrame`, not a `Neighborhood` with a large radius.
+/// `radius_px` is in **document space** — image pixels, the same units the
+/// user types into the modifier's controls — never device space. A 20px blur
+/// declares a 20px reach whether the viewport is at 10% or 400% zoom; the
+/// backend applies the runtime quality factor at the point of use. A
+/// `Neighborhood` reaches at most `radius_px` document pixels from the pixel
+/// being written, in any direction.
+///
+/// A modifier whose reach is *not* a bounded local offset — for example one
+/// that scales sample coordinates about the image centre — is `FullFrame`,
+/// not a `Neighborhood` with a large radius.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InputRequest {
     SamplePoint,
@@ -339,6 +344,17 @@ impl ModifierKind {
     }
 }
 
+/// Parameter edits applied to a modifier.
+///
+/// Any variant carrying a pixel distance — blur radius, motion blur distance,
+/// stroke size, text position — is in **document space**: image pixels,
+/// independent of zoom and of the runtime quality factor. These values are
+/// persisted with the document, so scaling one by a device-space factor before
+/// storing it would corrupt the file, not just the frame.
+///
+/// Conversion to device space happens at the point of use in the backend,
+/// normally by normalising against the full image dimensions (see
+/// `wgpu::modifier_pipeline::quality_scale_for`).
 #[derive(Debug, Clone)]
 pub enum ModifierParam {
     LevelsShadows(f32),

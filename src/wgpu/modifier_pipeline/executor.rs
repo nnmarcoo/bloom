@@ -114,12 +114,12 @@ impl ModifierPipeline {
         queue: &Queue,
         source: &TiledSource,
         seg: &[&Modifier],
-        proc_scale: f32,
+        quality_scale: f32,
         downscale: bool,
     ) {
         let full_w = source.full_width as f32;
         let full_h = source.full_height as f32;
-        let cur_scale = if downscale { proc_scale } else { 1.0 };
+        let cur_scale = if downscale { quality_scale } else { 1.0 };
 
         let mut encoder: Option<CommandEncoder> = None;
         let mut pool_used = 0usize;
@@ -139,9 +139,11 @@ impl ModifierPipeline {
             let reuse = match (self.tile_outputs[ti].as_ref(), visible_roi) {
                 (Some(o), Some(roi)) => {
                     o.proc_px.is_some_and(|p| rect_contains(p, roi))
-                        && (o.proc_scale - cur_scale).abs() < 1e-4
+                        && (o.quality_scale - cur_scale).abs() < 1e-4
                 }
-                (Some(o), None) => o.proc_px.is_none() && (o.proc_scale - cur_scale).abs() < 1e-4,
+                (Some(o), None) => {
+                    o.proc_px.is_none() && (o.quality_scale - cur_scale).abs() < 1e-4
+                }
                 _ => false,
             };
 
@@ -149,7 +151,7 @@ impl ModifierPipeline {
                 let o = self.tile_outputs[ti].as_ref().unwrap();
                 proc_rect_from_px(o.proc_px, tile, full_w, full_h, o.width, o.height)
             } else {
-                tile_proc_rect(tile, full_w, full_h, proc_scale, downscale, 0.0, true)
+                tile_proc_rect(tile, full_w, full_h, quality_scale, downscale, 0.0, true)
             };
 
             if !reuse {
@@ -172,7 +174,7 @@ impl ModifierPipeline {
                     width: pr.w,
                     height: pr.h,
                     proc_px: Some(pr.px),
-                    proc_scale: cur_scale,
+                    quality_scale: cur_scale,
                 });
                 self.tile_display_bgs_linear[ti] = None;
                 self.tile_display_bgs_nearest[ti] = None;
@@ -244,7 +246,7 @@ impl ModifierPipeline {
         queue: &Queue,
         source: &TiledSource,
         plan: &[PlanItem],
-        proc_scale: f32,
+        quality_scale: f32,
         downscale: bool,
     ) {
         let full_w = source.full_width as f32;
@@ -304,7 +306,7 @@ impl ModifierPipeline {
             .collect();
 
         let limit_dim = device.limits().max_texture_dimension_2d;
-        let mut fit_scale = if downscale { proc_scale } else { 1.0 };
+        let mut fit_scale = if downscale { quality_scale } else { 1.0 };
         loop {
             let pitch = 1.0 / fit_scale;
             let fits = |r: RegionPx| -> bool {
@@ -360,7 +362,7 @@ impl ModifierPipeline {
             }
             let reuse = self.tile_outputs[ti].as_ref().is_some_and(|o| {
                 o.proc_px.is_some_and(|p| rect_contains(p, roi))
-                    && (o.proc_scale - scale).abs() < 1e-4
+                    && (o.quality_scale - scale).abs() < 1e-4
             });
             let pr = if reuse {
                 let o = self.tile_outputs[ti].as_ref().unwrap();
@@ -388,7 +390,7 @@ impl ModifierPipeline {
                     width: pr.w,
                     height: pr.h,
                     proc_px: Some(pr.px),
-                    proc_scale: scale,
+                    quality_scale: scale,
                 });
                 self.tile_display_bgs_linear[ti] = None;
                 self.tile_display_bgs_nearest[ti] = None;

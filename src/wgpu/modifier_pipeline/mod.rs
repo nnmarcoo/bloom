@@ -100,8 +100,11 @@ struct TileOutput {
     valid: bool,
     width: u32,
     height: u32,
+    /// Document-space region this output covers, in image pixels.
     proc_px: Option<[f32; 4]>,
-    proc_scale: f32,
+    /// Runtime quality factor this output was rendered at. See
+    /// [`quality_scale`](super::quality_scale) for the doc/device distinction.
+    quality_scale: f32,
 }
 
 struct ScratchTarget {
@@ -163,6 +166,39 @@ impl Scheduler {
 
     fn pending(&self) -> bool {
         self.deferred
+    }
+}
+
+/// Two different kinds of pixel coordinate flow through this pipeline, and
+/// conflating them is the bug class this naming exists to prevent.
+///
+/// **Document space** is the image's own coordinate system: tile rects,
+/// `proc_px`, crop windows, and every modifier parameter the user types. A
+/// 20px motion blur is 20 document pixels whether you are zoomed to 10% or
+/// 400%. These values belong to the document and are saved with it.
+///
+/// **Device space** is what actually gets allocated and rasterized. It is
+/// document space multiplied by [`quality_scale_for`] — a runtime-only factor
+/// derived from zoom level and clamped further by VRAM
+/// ([`fit_process_scale`]). It changes as the user zooms or as memory
+/// pressure varies, and it must never be persisted or affect exported output.
+///
+/// The rule: modifier parameters are document-space and are converted to
+/// device space *at the point of use*, normally by normalising against the
+/// full image dimensions rather than the scaled texture. Chromatic aberration
+/// (`amount / full_w`) and motion blur (`distance / full_w`) both do this, so
+/// they are already scale-invariant. Gaussian blur instead derives its radius
+/// from the measured texture size, which is equivalent and more robust.
+///
+/// This factor is display-only: `physical_scale` defaults to 1.0 and is set
+/// solely by the view pipeline from the current zoom, while export renders
+/// through `cpu::render_full` and never reaches this code. That is why the
+/// oracle hashes are insensitive to it.
+fn quality_scale_for(physical_scale: f32) -> f32 {
+    if physical_scale > 0.0 {
+        physical_scale.log2().ceil().exp2().min(1.0)
+    } else {
+        1.0
     }
 }
 
@@ -338,12 +374,8 @@ impl ModifierPipeline {
         }
 
         let physical_scale = source.physical_scale;
-        let proc_scale = if physical_scale > 0.0 {
-            physical_scale.log2().ceil().exp2().min(1.0)
-        } else {
-            1.0
-        };
-        let downscale = proc_scale < 1.0;
+        let quality_scale = quality_scale_for(physical_scale);
+        let downscale = quality_scale < 1.0;
 
         if self.text_layers.len() != modifiers.len() {
             self.text_layers.clear();
@@ -479,11 +511,12 @@ impl ModifierPipeline {
                 th = th.max(t.height);
             }
         }
-        let fit = fit_process_scale(tw, th, n_proc, 1, process_vram_budget(device), proc_scale);
-        let (ps, ds) = if fit < proc_scale {
+        // VRAM can force quality below what the zoom level asked for.
+        let fit = fit_process_scale(tw, th, n_proc, 1, process_vram_budget(device), quality_scale);
+        let (ps, ds) = if fit < quality_scale {
             (fit, true)
         } else {
-            (proc_scale, downscale)
+            (quality_scale, downscale)
         };
         if let [PlanItem::Fused(seg)] = plan_vec.as_slice() {
             let seg = seg.clone();

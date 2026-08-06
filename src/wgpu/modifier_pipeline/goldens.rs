@@ -195,9 +195,9 @@ fn oversized_sort_lines_reduce_scale_instead_of_failing() {
     let o = mp.tile_outputs[0].as_ref().expect("output");
     assert!(o.valid);
     assert!(
-        o.proc_scale < 1.0,
+        o.quality_scale < 1.0,
         "expected reduced processing scale, got {}",
-        o.proc_scale
+        o.quality_scale
     );
 }
 
