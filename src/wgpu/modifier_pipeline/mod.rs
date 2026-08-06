@@ -132,7 +132,7 @@ impl ScratchTarget {
     }
 }
 
-use crate::modifiers::plan::{PlanItem, plan_modifiers};
+use crate::modifiers::plan::{ImageSpec, PlanItem, infer_specs, plan_modifiers};
 
 const TILE_BUDGET: usize = 2;
 
@@ -453,6 +453,20 @@ impl ModifierPipeline {
         if plan_vec.is_empty() {
             return;
         }
+
+        // Document geometry for this plan. Every stage is passthrough today, so
+        // the executor can keep treating the source size as chain-wide; the
+        // assert makes that assumption explicit and will fire the moment a
+        // resizing modifier lands, pointing at the code that has to stop
+        // assuming it.
+        let source_spec = ImageSpec::new(source.full_width, source.full_height);
+        debug_assert!(
+            infer_specs(source_spec, &plan_vec)
+                .iter()
+                .all(|s| s.is_passthrough()),
+            "a modifier changes dimensions, but the GPU executor still sizes \
+             every stage from the source"
+        );
 
         let mut n_proc = 0u64;
         let (mut tw, mut th) = (1u32, 1u32);

@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::modifiers::drawing_raster::{self, DrawingRaster, LayerView};
+use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
 use crate::modifiers::text_raster::{self, TextRaster};
 use crate::modifiers::{Modifier, cpu};
 
@@ -125,8 +126,14 @@ struct Geom {
 }
 
 fn geom_of(data: &ExportData) -> Geom {
-    let img_w = data.width;
-    let img_h = data.height;
+    // `img_w`/`img_h` describe the buffer `render_full` produces, which is what
+    // the crop window and `fill_row` index into — not necessarily the source
+    // size. They coincide today because every stage is passthrough; deriving
+    // them from the chain keeps that correct once a stage can resize.
+    let plan = plan_modifiers(&data.modifiers);
+    let processed = chain_output_spec(ImageSpec::new(data.width, data.height), &plan);
+    let img_w = processed.w;
+    let img_h = processed.h;
 
     let (cx0, cy0, cw, ch) = match data.crop {
         Some([min_u, min_v, max_u, max_v]) => {
@@ -366,6 +373,44 @@ mod tests {
     use super::*;
     use crate::modifiers::ModifierKind;
     use crate::modifiers::kinds::Text;
+
+    /// Export geometry is derived from what the chain produces, not from the
+    /// source size. The two agree while every stage is passthrough; this pins
+    /// the derivation so a resizing stage changes the exported dimensions
+    /// instead of being silently ignored by `geom_of`.
+    #[test]
+    fn export_geometry_follows_the_chain_output() {
+        use crate::modifiers::kinds::GaussianBlur;
+
+        let (w, h) = (128u32, 96u32);
+        let data = ExportData {
+            source: ExportSource::Frames {
+                frames: vec![ExportFrame {
+                    pixels: Arc::new(vec![0u8; (w * h * 4) as usize]),
+                    delay: Duration::ZERO,
+                }],
+                still_index: 0,
+            },
+            width: w,
+            height: h,
+            modifiers: vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
+                radius: 3.0,
+            }))],
+            crop: None,
+            rotation: 0,
+            trim: None,
+        };
+
+        let plan = plan_modifiers(&data.modifiers);
+        let chain_out = chain_output_spec(ImageSpec::new(w, h), &plan);
+        let geom = geom_of(&data);
+        assert_eq!(
+            (geom.img_w, geom.img_h),
+            (chain_out.w, chain_out.h),
+            "geom_of must size the processed buffer from the chain"
+        );
+        assert_eq!((geom.out_w, geom.out_h), (w, h));
+    }
 
     #[test]
     fn text_appears_in_still_export() {

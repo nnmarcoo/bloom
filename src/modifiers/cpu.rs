@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 
 use crate::modifiers::drawing_raster::LayerView;
-use crate::modifiers::plan::{PlanItem, plan_modifiers};
+use crate::modifiers::plan::{ImageSpec, PlanItem, infer_specs, plan_modifiers};
 use crate::modifiers::text_raster::TextRaster;
 use crate::modifiers::{Modifier, ModifierKind, motion_blur_samples};
 
@@ -18,16 +18,28 @@ pub(crate) fn render_full(
     let copy = n.min(pixels.len());
     cur[..copy].copy_from_slice(&pixels[..copy]);
 
-    let w = img_w as usize;
-    let h = img_h as usize;
-
     // Walk the shared plan rather than re-deriving the segmentation here: the
     // GPU pipeline consumes the same plan, so the two backends cannot drift
     // apart in how they group modifiers.
-    for item in plan_modifiers(modifiers) {
+    let plan = plan_modifiers(modifiers);
+    let specs = infer_specs(ImageSpec::new(img_w, img_h), &plan);
+
+    // Geometry is a running value rather than a loop constant, so a stage that
+    // changes dimensions only has to declare it in `infer_specs`. Every stage is
+    // passthrough today; the debug assert below pins that.
+    for (item, spec) in plan.iter().zip(&specs) {
+        let ImageSpec { w: img_w, h: img_h } = spec.input;
+        let w = img_w as usize;
+        let h = img_h as usize;
+        debug_assert_eq!(
+            cur.len(),
+            w * h * 4,
+            "buffer does not match the stage's declared input spec"
+        );
+
         match item {
             PlanItem::Fused(segment) => {
-                apply_pointwise_segment(&mut cur, img_w, img_h, &segment);
+                apply_pointwise_segment(&mut cur, img_w, img_h, segment);
             }
             // `i` indexes the original stack, which is what the positionally
             // stored text and drawing rasters are keyed by.
@@ -40,12 +52,12 @@ pub(crate) fn render_full(
                     cur = motion_blur_full(&cur, img_w, img_h, mb.angle, mb.distance);
                 }
                 ModifierKind::Text(_) => {
-                    if let Some(Some(raster)) = text_layers.get(i) {
+                    if let Some(Some(raster)) = text_layers.get(*i) {
                         text_full(&mut cur, img_w, img_h, raster);
                     }
                 }
                 ModifierKind::Drawing(_) => {
-                    if let Some(Some(raster)) = drawing_layers.get(i) {
+                    if let Some(Some(raster)) = drawing_layers.get(*i) {
                         drawing_full(&mut cur, img_w, raster);
                     }
                 }
@@ -72,6 +84,12 @@ pub(crate) fn render_full(
                 ),
             },
         }
+
+        debug_assert_eq!(
+            cur.len(),
+            spec.output.w as usize * spec.output.h as usize * 4,
+            "stage output does not match its declared output spec"
+        );
     }
     cur
 }

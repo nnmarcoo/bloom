@@ -17,7 +17,7 @@
 //! the GPU pipeline and the CPU export path consume the same plan, which is what
 //! keeps the two from drifting apart.
 
-use crate::modifiers::Modifier;
+use crate::modifiers::{Modifier, ModifierKind};
 
 /// One unit of execution.
 #[derive(Debug)]
@@ -28,6 +28,81 @@ pub enum PlanItem<'a> {
     /// stack so backends can find per-modifier side data (text and drawing
     /// rasters are stored positionally).
     Step(usize, &'a Modifier),
+}
+
+/// The pixel dimensions a stage operates on.
+///
+/// This is **document geometry**: the size the modifier stack says an image is,
+/// independent of any runtime quality scaling a backend applies to go faster.
+/// Keeping the two apart is what lets a downscaled preview and a full-resolution
+/// export run the same plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageSpec {
+    pub w: u32,
+    pub h: u32,
+}
+
+impl ImageSpec {
+    pub fn new(w: u32, h: u32) -> Self {
+        // A zero-sized stage would make every downstream division by width or
+        // height a divide-by-zero, so clamp at construction.
+        Self {
+            w: w.max(1),
+            h: h.max(1),
+        }
+    }
+}
+
+/// The input and output geometry of one plan item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StageSpec {
+    pub input: ImageSpec,
+    pub output: ImageSpec,
+}
+
+impl StageSpec {
+    /// True when the stage hands its input through at the same size.
+    pub fn is_passthrough(&self) -> bool {
+        self.input == self.output
+    }
+}
+
+/// The dimensions a modifier produces, or `None` when it preserves its input.
+///
+/// Every modifier is currently dimension-preserving: crop is still hoisted out
+/// of the stack and applied as a sampling window after the chain, and no resize
+/// modifier exists yet. This function is where both of those become ordinary
+/// stages.
+fn output_spec(kind: &ModifierKind, input: ImageSpec) -> Option<ImageSpec> {
+    let _ = (kind, input);
+    None
+}
+
+/// Resolves the geometry of every plan item, given the source dimensions.
+///
+/// Returns one [`StageSpec`] per plan item, in plan order, so
+/// `specs[i]` describes `plan[i]`.
+pub fn infer_specs(source: ImageSpec, plan: &[PlanItem]) -> Vec<StageSpec> {
+    let mut cur = source;
+    plan.iter()
+        .map(|item| {
+            // A fused run is pointwise by construction, so it cannot resize.
+            let output = match item {
+                PlanItem::Fused(_) => cur,
+                PlanItem::Step(_, m) => output_spec(&m.kind, cur).unwrap_or(cur),
+            };
+            let spec = StageSpec { input: cur, output };
+            cur = output;
+            spec
+        })
+        .collect()
+}
+
+/// The dimensions the whole plan produces from `source`.
+pub fn chain_output_spec(source: ImageSpec, plan: &[PlanItem]) -> ImageSpec {
+    infer_specs(source, plan)
+        .last()
+        .map_or(source, |s| s.output)
 }
 
 /// Reduces a modifier stack to its execution plan.
@@ -88,6 +163,67 @@ mod tests {
     #[test]
     fn empty_stack_plans_nothing() {
         assert!(plan_modifiers(&[]).is_empty());
+    }
+
+    const SRC: ImageSpec = ImageSpec { w: 1920, h: 1080 };
+
+    #[test]
+    fn image_spec_never_collapses_to_zero() {
+        assert_eq!(ImageSpec::new(0, 0), ImageSpec { w: 1, h: 1 });
+    }
+
+    #[test]
+    fn an_empty_plan_outputs_the_source_size() {
+        assert_eq!(chain_output_spec(SRC, &[]), SRC);
+    }
+
+    /// Until a resize modifier exists, geometry is constant through the chain.
+    /// This is the invariant that makes Phase 2 byte-neutral; when resize lands
+    /// it should fail, and the failure is the signal to update it.
+    #[test]
+    fn every_stage_is_currently_passthrough() {
+        let mods = vec![
+            exposure(),
+            blur(),
+            m(ModifierKind::PixelSort(PixelSort {
+                threshold: 0.5,
+                angle: 0.0,
+            })),
+            m(ModifierKind::ChromaticAberration(ChromaticAberration {
+                amount: 5.0,
+            })),
+            exposure(),
+        ];
+        let plan = plan_modifiers(&mods);
+        let specs = infer_specs(SRC, &plan);
+
+        assert_eq!(specs.len(), plan.len(), "one spec per plan item");
+        for (i, s) in specs.iter().enumerate() {
+            assert!(
+                s.is_passthrough(),
+                "stage {i} resizes, but no modifier declares an output spec yet"
+            );
+            assert_eq!(s.input, SRC);
+        }
+        assert_eq!(chain_output_spec(SRC, &plan), SRC);
+    }
+
+    /// Specs must chain: each stage's input is the previous stage's output.
+    /// Trivially true while everything is passthrough, but this is the property
+    /// resize will rely on, so it is worth pinning before the behavior exists.
+    #[test]
+    fn stage_inputs_chain_from_previous_outputs() {
+        let mods = vec![exposure(), blur(), exposure()];
+        let plan = plan_modifiers(&mods);
+        let specs = infer_specs(SRC, &plan);
+
+        assert_eq!(specs[0].input, SRC, "first stage reads the source");
+        for pair in specs.windows(2) {
+            assert_eq!(
+                pair[0].output, pair[1].input,
+                "a stage must read exactly what the previous one produced"
+            );
+        }
     }
 
     #[test]
