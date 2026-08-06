@@ -165,6 +165,73 @@ mod tests {
         vec![m(ModifierKind::GaussianBlur(GaussianBlur { radius }))]
     }
 
+    /// How cost scales with source size at a fixed zoom.
+    ///
+    /// The headline case for this viewer is very large images — tens of
+    /// thousands of pixels per side, far past `max_texture_dimension_2d`, so the
+    /// source is necessarily tiled. Zoomed in, the visible region is a tiny
+    /// fraction of the image, so an ROI-driven pipeline should cost roughly the
+    /// same regardless of how big the source is. Anything that grows with total
+    /// image size is work being done for pixels nobody can see.
+    ///
+    /// `set_viewport` keeps the visible region a constant number of pixels here,
+    /// so a flat column is the correct result and a rising one localizes the
+    /// leak.
+    #[test]
+    #[ignore = "GPU timing baseline; run with --release --ignored --nocapture"]
+    fn gpu_bench_large_images() {
+        let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((device, queue)) = try_device() else {
+            eprintln!("gpu_bench_large_images: no adapter, skipping");
+            return;
+        };
+
+        let limit = device.limits().max_texture_dimension_2d;
+        println!("\nScaling with source size — visible region held at ~1024x1024");
+        println!("max_texture_dimension_2d = {limit}");
+        println!("{:-<74}", "");
+        println!(
+            "  {:<14} {:>7} {:>9} {:>10} {:>10} {:>10}",
+            "source", "tiles", "VRAM GB", "pointwise", "blur r=8", "blur r=64"
+        );
+        println!("{:-<74}", "");
+
+        for dim in [2048u32, 4096, 8192, 16384] {
+            let image = ImageData::new(pixels(dim, dim), dim, dim);
+            let mut source = make_source(&device, &queue, &image);
+            let n_tiles = source.tiles.len();
+            let vram = (dim as f64 * dim as f64 * 4.0) / 1e9;
+
+            // Hold the visible area constant so only the source size varies.
+            let frac = (1024.0 / dim as f32).min(1.0);
+            set_viewport(&mut source, frac, 1.0);
+
+            let t = |mods: &[Modifier]| match time_chain(&device, &queue, &source, mods) {
+                Some(d) => format!("{:.2}", d.as_secs_f64() * 1000.0),
+                None => "n/c".to_string(),
+            };
+            let pw = t(&[m(ModifierKind::Exposure(Exposure { exposure: 0.3 }))]);
+            let b8 = t(&blur(8.0));
+            let b64 = t(&blur(64.0));
+
+            println!(
+                "  {:<14} {:>7} {:>9.2} {:>10} {:>10} {:>10}",
+                format!("{dim}x{dim}"),
+                n_tiles,
+                vram,
+                pw,
+                b8,
+                b64
+            );
+        }
+        println!("{:-<74}", "");
+        println!(
+            "\nNote: TiledSource uploads every tile to VRAM up front and never\n\
+             evicts, so source residency grows with total image size regardless\n\
+             of what is on screen.\n"
+        );
+    }
+
     #[test]
     #[ignore = "GPU timing baseline; run with --release --ignored --nocapture"]
     fn gpu_bench_pipeline() {
