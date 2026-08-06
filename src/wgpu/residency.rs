@@ -329,3 +329,106 @@ mod tests {
         assert!(p.over_budget);
     }
 }
+
+#[cfg(test)]
+mod scenarios {
+    use super::*;
+
+    /// How much VRAM the policy holds across realistic viewing situations,
+    /// against what the old always-resident behaviour would have held.
+    ///
+    /// This is the acceptance measurement for the residency work. It is pure
+    /// arithmetic over the policy rather than a GPU benchmark, because the thing
+    /// being checked is how much memory is *asked for* — the 8x sampling
+    /// slowdown in `large_image_probe::probe_vram_spill` is a consequence of
+    /// over-asking, and not over-asking is what fixes it.
+    #[test]
+    #[ignore = "diagnostic table; run with --release --ignored --nocapture"]
+    fn residency_across_viewing_scenarios() {
+        // A 50000x50000 source, tiled at the common 8192px device limit.
+        let tile_dim = 8192u32;
+        let per_side = 50000u32.div_ceil(tile_dim) as usize;
+        let n = per_side * per_side;
+
+        println!("\n50000x50000 source, {tile_dim}px tiles, {n} tiles");
+        println!("{:-<70}", "");
+        println!(
+            "  {:<28} {:>10} {:>12} {:>12}",
+            "view", "visible", "before GB", "after GB"
+        );
+        println!("{:-<70}", "");
+
+        // (label, visible tiles, physical_scale)
+        let scenarios: [(&str, usize, f32); 4] = [
+            ("fit to 4K screen", n, 3840.0 / 50000.0),
+            ("50% zoom", 12, 0.5),
+            ("100% zoom", 4, 1.0),
+            ("400% zoom (pixel peep)", 2, 4.0),
+        ];
+
+        let all_resident_gb = (n as u64 * tile_resident_bytes(tile_dim, tile_dim, 1)) as f64 / 1e9;
+
+        for (label, visible, phys) in scenarios {
+            let scale = tile_scale_for_zoom(phys);
+            let tiles: Vec<TileFacts> = (0..n)
+                .map(|i| TileFacts {
+                    visible: i < visible,
+                    spec: ImageSpec::new(tile_dim, tile_dim),
+                    scale,
+                    mip_count: 1,
+                })
+                .collect();
+            let p = plan(&tiles, DEFAULT_BUDGET_BYTES);
+            println!(
+                "  {:<28} {:>10} {:>12.2} {:>12.3}",
+                label,
+                visible,
+                all_resident_gb,
+                p.resident_bytes as f64 / 1e9
+            );
+        }
+        println!("{:-<70}", "");
+        println!(
+            "\n  'before' is every tile at full resolution, which is what was held\n  \
+             regardless of the view. 'after' is the visible set at a resolution\n  \
+             chosen from zoom.\n\n  \
+             Zoomed out is the case visibility alone could not fix — every tile\n  \
+             is on screen — and it is resolution that carries it.\n"
+        );
+    }
+
+    /// The regression guard: no ordinary view may exceed the budget.
+    ///
+    /// `probe_vram_spill` showed sampling cost rising ~8x once resident memory
+    /// passes what the card holds. Staying inside a conservative budget at every
+    /// zoom is what keeps the pipeline out of that regime.
+    #[test]
+    fn no_ordinary_view_exceeds_the_budget() {
+        let tile_dim = 8192u32;
+        let per_side = 50000u32.div_ceil(tile_dim) as usize;
+        let n = per_side * per_side;
+
+        for (label, visible, phys) in [
+            ("fit", n, 3840.0 / 50000.0),
+            ("50%", 12, 0.5),
+            ("100%", 4, 1.0),
+            ("400%", 2, 4.0),
+        ] {
+            let scale = tile_scale_for_zoom(phys);
+            let tiles: Vec<TileFacts> = (0..n)
+                .map(|i| TileFacts {
+                    visible: i < visible,
+                    spec: ImageSpec::new(tile_dim, tile_dim),
+                    scale,
+                    mip_count: 1,
+                })
+                .collect();
+            let p = plan(&tiles, DEFAULT_BUDGET_BYTES);
+            assert!(
+                !p.over_budget,
+                "{label}: a gigapixel source should stay within budget, wanted {} bytes",
+                p.resident_bytes
+            );
+        }
+    }
+}

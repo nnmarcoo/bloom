@@ -23,7 +23,8 @@ use crate::{
             display::DisplayPass,
             pixel_grid::{PixelGridPass, PixelGridUniforms},
         },
-        tiled_source::{TileSampling, TiledSource},
+        residency,
+        tiled_source::{ResidencyCtx, TileSampling, TiledSource},
     },
 };
 
@@ -299,6 +300,38 @@ impl ViewPipeline {
                 tile.isec_px = roi.map(|_| [isec_left, isec_top, isec_right, isec_bottom]);
             }
         }
+    }
+
+    /// Brings source-tile VRAM in line with what is on screen.
+    ///
+    /// Must run after [`Self::update`], which computes tile visibility, and
+    /// before rendering or modifier processing, both of which can only skip a
+    /// tile that is missing rather than fetch it.
+    ///
+    /// Returns the bytes now resident, for diagnostics; `None` when residency
+    /// was left untouched because host pixels are gone.
+    pub fn apply_residency(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        image: &ImageData,
+    ) -> Option<u64> {
+        let ctx = ResidencyCtx {
+            display_pass: &self.display,
+            trilinear_sampler: &self.trilinear_sampler,
+            nearest_sampler: &self.nearest_sampler,
+            linear_sampler: &self.linear_sampler,
+            blit_pipeline: &self.blit_pipeline,
+            blit_bgl: &self.blit_bgl,
+            mipmap_zoom_out: self.mipmap_zoom_out,
+        };
+        self.source.as_mut()?.apply_residency(
+            device,
+            queue,
+            image,
+            ctx,
+            residency::DEFAULT_BUDGET_BYTES,
+        )
     }
 
     pub fn update_checkerboard(&mut self, queue: &Queue, uniforms: CheckerboardUniforms) {
