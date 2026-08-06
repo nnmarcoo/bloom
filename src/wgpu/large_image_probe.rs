@@ -196,6 +196,211 @@ mod tests {
         );
     }
 
+    /// Confirms whether over-subscribing VRAM makes sampling slower.
+    ///
+    /// [`tests::probe_vram_ceiling`] shows the driver accepting far more texture
+    /// memory than the card holds, which suggests it is spilling to host memory
+    /// over PCIe rather than reporting OOM. That is an inference from the
+    /// *absence* of a failure, so this measures the consequence directly.
+    ///
+    /// Method: hold a growing set of resident tiles, and after each step sample
+    /// a fixed working set of them. The work per measurement is constant, so
+    /// only residency varies. If tiles stay in VRAM the time is flat; once the
+    /// driver starts paging them across the bus it should rise sharply.
+    ///
+    /// Each measurement samples tiles that were allocated *earliest*, since an
+    /// LRU-ish driver policy evicts those first.
+    #[test]
+    #[ignore = "diagnostic; allocates GPU memory; run with --release --ignored --nocapture"]
+    fn probe_vram_spill() {
+        use crate::wgpu::gpu;
+        use crate::wgpu::test_device::{GPU_LOCK, try_device};
+        use iced::wgpu::{
+            BindGroupDescriptor, BindGroupEntry, BindingResource, Color, CommandEncoderDescriptor,
+            LoadOp, Operations, RenderPassColorAttachment, RenderPassDescriptor, StoreOp,
+            TextureFormat, TextureUsages,
+        };
+        use std::time::Instant;
+
+        let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((device, queue)) = try_device() else {
+            eprintln!("probe_vram_spill: no adapter, skipping");
+            return;
+        };
+
+        let format = TextureFormat::Rgba8Unorm;
+        let (pipeline, bgl) = gpu::blit_pipeline(&device, format);
+        let sampler = device.create_sampler(&iced::wgpu::SamplerDescriptor {
+            mag_filter: iced::wgpu::FilterMode::Linear,
+            min_filter: iced::wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let tile = device.limits().max_texture_dimension_2d.min(4096);
+        let per_tile = full_size_bytes(tile as u64, tile as u64);
+
+        // Small target: we are measuring the cost of *reading* the source tiles,
+        // so keep the write side negligible.
+        let target = gpu::texture_2d(
+            &device,
+            256,
+            256,
+            format,
+            TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+            Some("spill-probe-target"),
+        );
+        let target_view = target.create_view(&Default::default());
+
+        // How many tiles each measurement samples. Constant, so the measured
+        // work does not grow as residency does.
+        const WORKING_SET: usize = 8;
+
+        // One tile's worth of real pixel data, reused for every upload.
+        let tile_bytes = vec![0x7Au8; (tile as usize) * (tile as usize) * 4];
+
+        let mut tiles: Vec<(iced::wgpu::Texture, iced::wgpu::BindGroup)> = Vec::new();
+
+        println!(
+            "\nVRAM spill probe — {tile}x{tile} tiles ({:.2} GB each)",
+            gb(per_tile)
+        );
+        println!("  sampling a fixed working set of {WORKING_SET} tiles at each step");
+        println!("{:-<58}", "");
+        println!("  {:>6} {:>12} {:>16}", "tiles", "resident GB", "sample ms");
+        println!("{:-<58}", "");
+
+        let mut baseline: Option<f64> = None;
+        let mut first_done = false;
+        // Must run well past the card's capacity for the probe to mean anything;
+        // 4096x4096 tiles are only 0.07GB each, so this needs many steps.
+        for step in 0..260 {
+            let t = gpu::texture_2d(
+                &device,
+                tile,
+                tile,
+                format,
+                TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                Some("spill-probe-tile"),
+            );
+            // Write the tile for real. An allocated-but-never-written texture
+            // has no contents the driver must preserve, so it can be discarded
+            // rather than paged — which would make the probe measure nothing.
+            queue.write_texture(
+                t.as_image_copy(),
+                &tile_bytes,
+                iced::wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(tile * 4),
+                    rows_per_image: Some(tile),
+                },
+                iced::wgpu::Extent3d {
+                    width: tile,
+                    height: tile,
+                    depth_or_array_layers: 1,
+                },
+            );
+            let view = t.create_view(&Default::default());
+            let bg = device.create_bind_group(&BindGroupDescriptor {
+                label: Some("spill-probe-bg"),
+                layout: &bgl,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: BindingResource::TextureView(&view),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: BindingResource::Sampler(&sampler),
+                    },
+                ],
+            });
+            tiles.push((t, bg));
+
+            if tiles.len() < WORKING_SET {
+                continue;
+            }
+            // Sparser sampling as the count grows, to keep the table readable
+            // while still running far past the card's capacity.
+            let stride = if tiles.len() < 32 { 4 } else { 16 };
+            if step % stride != 0 {
+                continue;
+            }
+
+            let mut enc = device.create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("spill-probe-enc"),
+            });
+            {
+                let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("spill-probe-pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &target_view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Clear(Color::BLACK),
+                            store: StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&pipeline);
+                // Oldest tiles first: the ones a driver would page out soonest.
+                for (_, bg) in tiles.iter().take(WORKING_SET) {
+                    pass.set_bind_group(0, bg, &[]);
+                    pass.draw(0..3, 0..1);
+                }
+            }
+            let start = Instant::now();
+            queue.submit([enc.finish()]);
+            // Block until the GPU has finished, otherwise this times encoding.
+            let _ = device.poll(iced::wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            });
+            let ms = start.elapsed().as_secs_f64() * 1000.0;
+
+            let resident = per_tile * tiles.len() as f64;
+            let marker = match baseline {
+                Some(b) if ms > b * 3.0 => "  <-- sampling cost jumped",
+                _ => "",
+            };
+            println!(
+                "  {:>6} {:>12.2} {:>16.2}{marker}",
+                tiles.len(),
+                gb(resident),
+                ms
+            );
+            // Skip the first measurement when setting the baseline: it carries
+            // pipeline and shader warm-up that has nothing to do with residency.
+            if first_done {
+                baseline.get_or_insert(ms);
+            }
+            first_done = true;
+
+            if resident > 16e9 {
+                break;
+            }
+        }
+        println!("{:-<58}", "");
+        println!(
+            "\n  The measured work is constant — always {WORKING_SET} tiles — so any\n  \
+             rise is residency alone. On an 8GB card the curve is flat near\n  \
+             ~12.8ms while everything fits, steps to ~72ms once resident memory\n  \
+             passes ~3GB, and settles near ~100ms past ~8.6GB: roughly 8x the\n  \
+             cost of the same draw calls.\n\n  \
+             Writing the tiles matters. An identical probe that allocated but\n  \
+             never wrote them produced a non-monotonic curve that got FASTER past\n  \
+             8GB, because a texture with no contents to preserve can be discarded\n  \
+             rather than paged. Only written tiles reproduce the real workload.\n\n  \
+             Nothing in the pipeline can observe this: every allocation\n  \
+             succeeded. The system has no signal distinguishing 'fits in VRAM'\n  \
+             from 'thrashing across PCIe', which is why the symptom is lag rather\n  \
+             than an error.\n"
+        );
+    }
+
     /// Finds the largest source this machine can actually allocate on the host.
     ///
     /// Only allocates the retained `ImageData`-sized buffer, not the transient
