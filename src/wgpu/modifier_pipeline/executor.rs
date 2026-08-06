@@ -200,6 +200,13 @@ impl ModifierPipeline {
                     full_w: source.full_width,
                     full_h: source.full_height,
                 };
+                // Without the source texture there is nothing to read, and
+                // processing would write undefined contents into a tile marked
+                // valid. Leave the output invalid so it is retried once the
+                // residency policy has made the tile resident again.
+                let Some(source_view) = tile.source_view() else {
+                    continue;
+                };
                 let uniforms = build_segment_uniforms(seg, &tile_info, pr.proc, pr.src);
                 if pool_used == self.uniform_pool.len() {
                     self.uniform_pool.push(gpu::uniform_buffer::<ModUniforms>(
@@ -214,7 +221,7 @@ impl ModifierPipeline {
                     device,
                     &self.combined.bgl,
                     buffer,
-                    &tile.source_view,
+                    source_view,
                     &self.trilinear_sampler,
                     Some("combined-modifiers-bg"),
                 );
@@ -1017,6 +1024,12 @@ impl ModifierPipeline {
         let mut bgs: Vec<(BindGroup, Option<[u32; 4]>)> = Vec::new();
         for (ti, scissor) in &pieces {
             let tile = &source.tiles[*ti];
+            // Gathering a non-resident tile would sample undefined contents into
+            // the slab. Skipping leaves that piece of the slab cleared, and the
+            // caller retries once the tile is resident.
+            let Some(source_view) = tile.source_view() else {
+                continue;
+            };
             let tr = [
                 tile.x as f32,
                 tile.y as f32,
@@ -1037,7 +1050,7 @@ impl ModifierPipeline {
                     device,
                     &self.combined.bgl,
                     buffer,
-                    &tile.source_view,
+                    source_view,
                     &self.trilinear_sampler,
                     Some("slab-gather-bg"),
                 ),

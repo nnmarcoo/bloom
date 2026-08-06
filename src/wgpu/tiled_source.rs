@@ -12,13 +12,34 @@ use crate::wgpu::{
     view_pipeline::DisplayUniforms,
 };
 
-pub struct Tile {
+/// A tile's GPU-side resources.
+///
+/// Split out from [`Tile`] so they can be dropped and rebuilt independently of
+/// the tile's identity. Holding every tile's textures for the lifetime of the
+/// image makes resident VRAM a function of image size rather than of what is
+/// visible, which is what makes very large images thrash: past the card's
+/// capacity the driver pages textures across PCIe instead of failing, and
+/// sampling cost rises roughly 8x with no error anywhere for the pipeline to
+/// observe (see `large_image_probe::probe_vram_spill`).
+///
+/// Nothing evicts these yet. This type exists so that "not resident" is
+/// representable and every consumer has to handle it, before any policy decides
+/// when to drop them.
+pub struct TileResidency {
     pub _source_texture: Texture,
     pub source_view: TextureView,
-    pub uniform_buffer: Buffer,
     pub zoom_out_bind_group: BindGroup,
     pub nearest_bind_group: BindGroup,
     pub linear_bind_group: BindGroup,
+}
+
+pub struct Tile {
+    /// GPU resources, or `None` when the tile is not resident.
+    ///
+    /// Always `Some` today. Consumers must still handle `None`, since that is
+    /// the state eviction will introduce.
+    pub residency: Option<TileResidency>,
+    pub uniform_buffer: Buffer,
     pub last_ndc_rect: Option<(Vec2, Vec2)>,
     pub last_transform: Option<Mat4>,
     pub last_crop_uv: Option<[f32; 4]>,
@@ -30,6 +51,58 @@ pub struct Tile {
     pub width: u32,
     pub height: u32,
     pub mip_count: u32,
+}
+
+impl Tile {
+    /// The tile's sampleable view, or `None` when it is not resident.
+    pub fn source_view(&self) -> Option<&TextureView> {
+        self.residency.as_ref().map(|r| &r.source_view)
+    }
+
+    /// The bind group for the given sampling mode, or `None` when the tile is
+    /// not resident.
+    pub fn display_bind_group(&self, mode: TileSampling) -> Option<&BindGroup> {
+        let r = self.residency.as_ref()?;
+        Some(match mode {
+            TileSampling::ZoomOut => &r.zoom_out_bind_group,
+            TileSampling::Linear => &r.linear_bind_group,
+            TileSampling::Nearest => &r.nearest_bind_group,
+        })
+    }
+
+    /// The bytes this tile occupies in VRAM while resident, mip chain included.
+    // No caller yet: the residency budget that will use it is the next step.
+    #[allow(dead_code)]
+    pub fn resident_bytes(&self) -> u64 {
+        tile_resident_bytes(self.width, self.height, self.mip_count)
+    }
+}
+
+/// VRAM cost of one resident tile, mip chain included.
+///
+/// Free-standing so the residency budget can size a tile it has not built yet,
+/// and so the accounting is testable without a GPU.
+// Exercised by tests; the production caller arrives with the residency budget.
+#[allow(dead_code)]
+pub fn tile_resident_bytes(width: u32, height: u32, mip_count: u32) -> u64 {
+    let base = width as u64 * height as u64 * 4;
+    if mip_count > 1 {
+        // A full mip chain converges to 4/3 of the base level.
+        base * 4 / 3
+    } else {
+        base
+    }
+}
+
+/// How a tile is sampled for display, chosen by zoom level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TileSampling {
+    /// Zoomed out: sample the mip chain.
+    ZoomOut,
+    /// Zoomed in with smoothing.
+    Linear,
+    /// Zoomed in without smoothing.
+    Nearest,
 }
 
 pub struct TiledSource {
@@ -254,12 +327,14 @@ impl TiledSource {
                 );
 
                 tiles.push(Tile {
-                    _source_texture: source_texture,
-                    source_view,
+                    residency: Some(TileResidency {
+                        _source_texture: source_texture,
+                        source_view,
+                        zoom_out_bind_group,
+                        nearest_bind_group,
+                        linear_bind_group,
+                    }),
                     uniform_buffer,
-                    zoom_out_bind_group,
-                    nearest_bind_group,
-                    linear_bind_group,
                     last_ndc_rect: None,
                     last_transform: None,
                     last_crop_uv: None,
@@ -314,9 +389,14 @@ impl TiledSource {
         let mut scratch = Vec::new();
 
         for tile in &self.tiles {
+            // A non-resident tile has no texture to write into. It will pick up
+            // the new contents when it is next made resident.
+            let Some(res) = tile.residency.as_ref() else {
+                continue;
+            };
             write_tile_texture(
                 queue,
-                &tile._source_texture,
+                &res._source_texture,
                 tile.x,
                 tile.y,
                 tile.width,
@@ -330,7 +410,7 @@ impl TiledSource {
                 regen_tile_mipmaps(
                     device,
                     queue,
-                    &tile._source_texture,
+                    &res._source_texture,
                     tile.mip_count,
                     blit_pipeline,
                     blit_bgl,
@@ -355,11 +435,14 @@ impl TiledSource {
         let mut encoder: Option<CommandEncoder> = None;
 
         for tile in &self.tiles {
+            let Some(res) = tile.residency.as_ref() else {
+                continue;
+            };
             if tile.mip_count > 1 {
                 gpu::generate_hw_mipmaps(
                     mip_encoder(&mut encoder, device),
                     device,
-                    &tile._source_texture,
+                    &res._source_texture,
                     tile.mip_count,
                     TextureFormat::Rgba8Unorm,
                     blit_pipeline,
@@ -374,5 +457,46 @@ impl TiledSource {
         }
 
         self.mips_dirty = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unmipped_tile_costs_its_pixels() {
+        assert_eq!(tile_resident_bytes(1024, 1024, 1), 1024 * 1024 * 4);
+    }
+
+    #[test]
+    fn mipped_tile_costs_four_thirds_of_the_base_level() {
+        let base = 1024u64 * 1024 * 4;
+        assert_eq!(tile_resident_bytes(1024, 1024, 11), base * 4 / 3);
+    }
+
+    /// The measured failure this work exists to fix: a 50000x50000 source needs
+    /// far more VRAM than a typical discrete card has, and with mipmaps on (the
+    /// default) it is worse still. Pinning the arithmetic keeps the motivating
+    /// numbers honest if tile sizing ever changes.
+    #[test]
+    fn a_gigapixel_source_far_exceeds_a_typical_cards_vram() {
+        let tile_dim = 8192u32;
+        let tiles_per_side = 50000u32.div_ceil(tile_dim) as u64;
+        let n_tiles = tiles_per_side * tiles_per_side;
+
+        let unmipped = n_tiles * tile_resident_bytes(tile_dim, tile_dim, 1);
+        let mipped = n_tiles * tile_resident_bytes(tile_dim, tile_dim, 14);
+
+        // An 8GB card, all of it, which is already optimistic.
+        let vram = 8u64 * 1024 * 1024 * 1024;
+        assert!(
+            unmipped > vram,
+            "expected a 50000^2 source to exceed 8GB even without mips"
+        );
+        assert!(
+            mipped > unmipped,
+            "mips must be accounted for; they are on by default"
+        );
     }
 }

@@ -23,7 +23,7 @@ use crate::{
             display::DisplayPass,
             pixel_grid::{PixelGridPass, PixelGridUniforms},
         },
-        tiled_source::TiledSource,
+        tiled_source::{TileSampling, TiledSource},
     },
 };
 
@@ -420,17 +420,25 @@ impl ViewPipeline {
                     }
                 }
             } else {
+                let sampling = if zoomed_out {
+                    TileSampling::ZoomOut
+                } else if smooth_zoom_in {
+                    TileSampling::Linear
+                } else {
+                    TileSampling::Nearest
+                };
                 for tile in &source.tiles {
                     if tile_ndc_culled(tile.last_ndc_rect) {
                         continue;
                     }
-                    bind_groups.push(if zoomed_out {
-                        &tile.zoom_out_bind_group
-                    } else if smooth_zoom_in {
-                        &tile.linear_bind_group
-                    } else {
-                        &tile.nearest_bind_group
-                    });
+                    // A non-resident tile is simply not drawn, leaving the
+                    // background showing. Skipping is the only correct option
+                    // here: this runs during rendering, where there is no queue
+                    // to upload from. Making tiles resident is the residency
+                    // policy's job, before we get here.
+                    if let Some(bg) = tile.display_bind_group(sampling) {
+                        bind_groups.push(bg);
+                    }
                 }
             }
         } else {
