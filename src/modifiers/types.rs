@@ -40,11 +40,27 @@ pub struct ViewCtx {
     pub timing: Option<MediaTiming>,
 }
 
+/// What a modifier needs to read in order to produce one output pixel.
+///
+/// This is the single source of truth for a modifier's input reach. Both
+/// [`EffectClass`] (which backend pass runs it) and
+/// [`crate::modifiers::roi::StepClass`] (how much input a region needs) are
+/// derived from it, so a modifier declares its reach exactly once.
+///
+/// `radius_px` and `step` are in the modifier's own working space: a
+/// `Neighborhood` reaches at most `radius_px` pixels away from the pixel being
+/// written, in any direction. A modifier whose reach is *not* a bounded local
+/// offset — for example one that scales sample coordinates about the image
+/// centre — is `FullFrame`, not a `Neighborhood` with a large radius.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InputRequest {
     SamplePoint,
-    Neighborhood { radius_px: f32 },
-    ScanLines { axis: Axis },
+    /// Bounded local reach. `separable` records whether the pass can run as two
+    /// 1-D passes, which the GPU backend uses to pick a pipeline.
+    Neighborhood { radius_px: f32, separable: bool },
+    /// Reads whole lines along `step`. Cardinal directions are `(1, 0)` /
+    /// `(0, 1)`; diagonal sorts use their reduced rational slope.
+    ScanLines { step: (i32, i32) },
     FullFrame,
 }
 
@@ -67,10 +83,19 @@ impl EffectClass {
         match req {
             InputRequest::SamplePoint => EffectClass::Pointwise,
             InputRequest::FullFrame => EffectClass::Fragment,
-            InputRequest::Neighborhood { radius_px } => EffectClass::Separable {
+            InputRequest::Neighborhood { radius_px, .. } => EffectClass::Separable {
                 apron_px: radius_px,
             },
-            InputRequest::ScanLines { axis } => EffectClass::ComputeScanline { axis },
+            // The backend pass only distinguishes row-major from column-major
+            // work; a diagonal step is driven by its dominant axis and the
+            // exact slope is recovered from `StepClass` where it matters.
+            InputRequest::ScanLines { step: (dx, dy) } => EffectClass::ComputeScanline {
+                axis: if dy.abs() > dx.abs() {
+                    Axis::Vertical
+                } else {
+                    Axis::Horizontal
+                },
+            },
         }
     }
 
@@ -435,19 +460,32 @@ mod effect_class_tests {
     #[test]
     fn class_matches_input_request_partition() {
         assert!(class(ModifierKind::Exposure(Exposure::default())).is_pointwise());
+
+        // Chromatic aberration displaces samples proportionally to their
+        // distance from the image centre, so its reach is unbounded by
+        // `amount` and it is the one effect here that is truly full-frame.
         assert!(
             class(ModifierKind::ChromaticAberration(
                 ChromaticAberration::default()
             ))
             .is_fragment()
         );
-        assert!(class(ModifierKind::Text(Text::default())).is_fragment());
-        assert!(
+
+        // Text composites a pre-rasterized layer: co-located reads only.
+        assert_eq!(
+            class(ModifierKind::Text(Text::default())).separable_apron(),
+            Some(0.0)
+        );
+
+        // Motion blur sweeps `t` over [-0.5, 0.5] * distance, so its reach is
+        // half the distance, not the whole of it.
+        assert_eq!(
             class(ModifierKind::MotionBlur(MotionBlur {
                 angle: 0.0,
                 distance: 20.0,
             }))
-            .is_fragment()
+            .separable_apron(),
+            Some(10.0)
         );
 
         let blur = ModifierKind::GaussianBlur(GaussianBlur { radius: 7.0 });

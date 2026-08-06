@@ -1,5 +1,4 @@
-use crate::modifiers::ModifierKind;
-use crate::modifiers::pixel_sort::{SortAxis, SortMode};
+use crate::modifiers::{InputRequest, ModifierKind};
 
 pub type RegionPx = [f32; 4];
 
@@ -11,33 +10,24 @@ pub enum StepClass {
     WholeFrame,
 }
 
+/// Derived from the modifier's own [`InputRequest`] so the ROI taxonomy cannot
+/// drift from what the modifier actually reads. Previously this matched on
+/// `ModifierKind` and re-derived each apron by hand, which let the two
+/// disagree — chromatic aberration declared `FullFrame` here but was given a
+/// bounded apron, under-fetching its input by orders of magnitude at the image
+/// corners.
 pub fn step_class(kind: &ModifierKind) -> StepClass {
-    match kind {
-        ModifierKind::GaussianBlur(gb) => StepClass::Kernel {
-            apron_px: gb.radius.abs(),
-            separable: true,
+    match kind.input_request() {
+        InputRequest::SamplePoint => StepClass::Pointwise,
+        InputRequest::Neighborhood {
+            radius_px,
+            separable,
+        } => StepClass::Kernel {
+            apron_px: radius_px.abs(),
+            separable,
         },
-        ModifierKind::ChromaticAberration(ca) => StepClass::Kernel {
-            apron_px: ca.amount.abs(),
-            separable: false,
-        },
-        ModifierKind::MotionBlur(mb) => StepClass::Kernel {
-            apron_px: mb.distance.abs(),
-            separable: false,
-        },
-        ModifierKind::Text(_) | ModifierKind::Drawing(_) => StepClass::Kernel {
-            apron_px: 0.0,
-            separable: false,
-        },
-        ModifierKind::PixelSort(ps) => StepClass::Scanline {
-            dir: match SortMode::from_angle(ps.angle) {
-                SortMode::Cardinal(SortAxis::Horizontal { .. }) => (1, 0),
-                SortMode::Cardinal(SortAxis::Vertical { .. }) => (0, 1),
-                SortMode::Diagonal { dx, dy } => (dx, dy),
-            },
-        },
-        _ if kind.effect_class().is_pointwise() => StepClass::Pointwise,
-        _ => StepClass::WholeFrame,
+        InputRequest::ScanLines { step } => StepClass::Scanline { dir: step },
+        InputRequest::FullFrame => StepClass::WholeFrame,
     }
 }
 
@@ -75,7 +65,9 @@ pub fn input_needed(class: StepClass, out: RegionPx, w: f32, h: f32) -> RegionPx
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modifiers::kinds::{Exposure, GaussianBlur, MotionBlur, PixelSort};
+    use crate::modifiers::kinds::{
+        ChromaticAberration, Exposure, GaussianBlur, MotionBlur, PixelSort,
+    };
 
     const W: f32 = 1000.0;
     const H: f32 = 800.0;
@@ -157,15 +149,23 @@ mod tests {
                 separable: true
             }
         );
+        // Half the distance: the sweep is centred on the output pixel.
         assert_eq!(
             step_class(&ModifierKind::MotionBlur(MotionBlur {
                 angle: 30.0,
                 distance: 12.0
             })),
             StepClass::Kernel {
-                apron_px: 12.0,
+                apron_px: 6.0,
                 separable: false
             }
+        );
+        // Not a kernel at any radius — see `ChromaticAberration::input_request`.
+        assert_eq!(
+            step_class(&ModifierKind::ChromaticAberration(ChromaticAberration {
+                amount: 5.0
+            })),
+            StepClass::WholeFrame
         );
         assert_eq!(
             step_class(&ModifierKind::PixelSort(PixelSort {
@@ -181,6 +181,63 @@ mod tests {
             })),
             StepClass::Scanline { dir: (0, 1) }
         );
+    }
+
+    /// The defect this phase fixed, pinned so it cannot return.
+    ///
+    /// Chromatic aberration's displacement grows with distance from the image
+    /// centre, so on a large image a centre-ish tile still needs input from far
+    /// away. The old taxonomy dilated by `amount` (5px here) and produced a
+    /// region that missed almost all of it.
+    #[test]
+    fn chromatic_aberration_fetches_beyond_a_bounded_apron() {
+        const BIG: f32 = 4000.0;
+        let ca = ModifierKind::ChromaticAberration(ChromaticAberration { amount: 5.0 });
+        let tile = [3000.0, 3000.0, 3200.0, 3200.0];
+
+        let needed = input_needed(step_class(&ca), tile, BIG, BIG);
+        assert_eq!(needed, [0.0, 0.0, BIG, BIG]);
+
+        // What the previous hand-written mapping would have fetched.
+        let old = input_needed(
+            StepClass::Kernel {
+                apron_px: 5.0,
+                separable: false,
+            },
+            tile,
+            BIG,
+            BIG,
+        );
+        assert_eq!(old, [2995.0, 2995.0, 3205.0, 3205.0]);
+    }
+
+    /// `StepClass` and `EffectClass` are two views of one declaration. Walking
+    /// every modifier type catches a new kind that classifies inconsistently,
+    /// which is what previously let chromatic aberration claim a bounded apron
+    /// in the ROI taxonomy while declaring `FullFrame` to everyone else.
+    #[test]
+    fn step_class_agrees_with_effect_class_for_every_kind() {
+        use crate::modifiers::ModifierType;
+
+        for t in ModifierType::ALL {
+            let kind = ModifierKind::from(t.clone());
+            let name = kind.name();
+            let step = step_class(&kind);
+            let effect = kind.effect_class();
+
+            let agrees = match (step, effect) {
+                (StepClass::Pointwise, c) => c.is_pointwise(),
+                (StepClass::WholeFrame, c) => c.is_fragment(),
+                (StepClass::Kernel { apron_px, .. }, c) => c.separable_apron() == Some(apron_px),
+                (StepClass::Scanline { .. }, c) => c.is_compute_scanline(),
+            };
+            assert!(
+                agrees,
+                "{name}: StepClass {step:?} and EffectClass {effect:?} describe \
+                 different input reaches, so ROI and the backend would disagree \
+                 about how much input this stage needs."
+            );
+        }
     }
 
     #[test]

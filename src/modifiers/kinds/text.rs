@@ -104,8 +104,14 @@ impl ModifierImpl for Text {
         !self.content.is_empty() && self.opacity > 0.0
     }
 
+    /// Composites a pre-rasterized layer, so each output pixel reads only the
+    /// co-located input pixel. The raster itself is a side input built at this
+    /// stage's own geometry, not something fetched from the upstream frame.
     fn input_request(&self) -> InputRequest {
-        InputRequest::FullFrame
+        InputRequest::Neighborhood {
+            radius_px: 0.0,
+            separable: false,
+        }
     }
 
     fn apply_param(&mut self, param: ModifierParam, _img_size: Option<(u32, u32)>) {

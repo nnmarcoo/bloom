@@ -34,6 +34,7 @@ impl ModifierImpl for GaussianBlur {
     fn input_request(&self) -> InputRequest {
         InputRequest::Neighborhood {
             radius_px: self.radius,
+            separable: true,
         }
     }
 

@@ -30,6 +30,13 @@ impl ModifierImpl for ChromaticAberration {
         self.amount != 0.0
     }
 
+    /// Genuinely full-frame, despite `amount` looking like a radius.
+    ///
+    /// The fringe offset scales the sample coordinate about the image centre
+    /// (`0.5 + offset * (1 ± amount)`), so displacement grows with distance
+    /// from the centre and peaks at the corners — for `amount` 5.0 on a 4000px
+    /// image that is thousands of pixels, not five. There is no bounded apron
+    /// to declare.
     fn input_request(&self) -> InputRequest {
         InputRequest::FullFrame
     }
