@@ -34,6 +34,22 @@ pub struct DisplayUniforms {
     pub crop_uv: [f32; 4],
 }
 
+/// Roughly how far outside the viewport a tile sits, in tile-widths.
+///
+/// 0 means visible. Feeds the residency margin so a tile just off screen is not
+/// evicted, only to be needed again as soon as the user pans.
+pub(crate) fn tile_rings_away(rect: Option<(Vec2, Vec2)>) -> u32 {
+    let Some((min, max)) = rect else {
+        return 0;
+    };
+    let span_x = (max.x - min.x).abs().max(1e-6);
+    let span_y = (max.y - min.y).abs().max(1e-6);
+    // Distance from the NDC box [-1, 1], measured in this tile's own size.
+    let dx = (min.x - 1.0).max(-1.0 - max.x).max(0.0) / span_x;
+    let dy = (min.y - 1.0).max(-1.0 - max.y).max(0.0) / span_y;
+    dx.max(dy).ceil() as u32
+}
+
 pub(crate) fn tile_ndc_culled(rect: Option<(Vec2, Vec2)>) -> bool {
     matches!(
         rect,
@@ -205,7 +221,9 @@ impl ViewPipeline {
                 || tile.last_crop_uv != Some(uniforms.crop_uv)
             {
                 queue.write_buffer(&tile.uniform_buffer, 0, bytes_of(uniforms));
-                tile.last_ndc_rect = Some(ndc_rect_of_transform(&uniforms.transform));
+                let ndc_rect = ndc_rect_of_transform(&uniforms.transform);
+                tile.last_ndc_rect = Some(ndc_rect);
+                tile.rings_away = tile_rings_away(Some(ndc_rect));
                 tile.last_transform = Some(uniforms.transform);
                 tile.last_crop_uv = Some(uniforms.crop_uv);
             }
@@ -290,6 +308,7 @@ impl ViewPipeline {
                     }),
                 );
                 tile.last_ndc_rect = Some(ndc);
+                tile.rings_away = tile_rings_away(Some(ndc));
                 tile.last_transform = Some(transform);
                 tile.last_crop_uv = Some(uniforms.crop_uv);
 

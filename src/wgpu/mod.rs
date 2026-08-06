@@ -7,6 +7,7 @@ mod gpu;
 mod large_image_probe;
 pub mod modifier_pipeline;
 pub mod passes;
+mod residency;
 mod scale;
 #[cfg(test)]
 mod test_device;
