@@ -149,11 +149,10 @@ mod tests {
             let mut v: Vec<u8> = Vec::new();
             match v.try_reserve_exact(bytes as usize) {
                 Ok(()) => {
-                    // Commit the reservation. `resize` is a zero-fill, which is
-                    // the point: it forces the pages to be real rather than a
-                    // lazy virtual mapping, which is what the load path does too.
-                    #[allow(clippy::slow_vector_initialization)]
-                    v.resize(bytes as usize, 0);
+                    // Commit the reservation: extend to full length, then touch
+                    // pages across the range so they are really backed rather
+                    // than a lazy virtual mapping.
+                    v.extend(std::iter::repeat_n(0u8, bytes as usize));
                     let step = (bytes as usize / 64).max(1);
                     let mut i = 0;
                     while i < v.len() {
