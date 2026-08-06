@@ -132,10 +132,7 @@ impl ScratchTarget {
     }
 }
 
-enum PlanItem<'a> {
-    Fused(Vec<&'a Modifier>),
-    Step(usize, &'a Modifier),
-}
+use crate::modifiers::plan::{PlanItem, plan_modifiers};
 
 const TILE_BUDGET: usize = 2;
 

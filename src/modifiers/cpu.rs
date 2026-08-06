@@ -1,6 +1,7 @@
 use rayon::prelude::*;
 
 use crate::modifiers::drawing_raster::LayerView;
+use crate::modifiers::plan::{PlanItem, plan_modifiers};
 use crate::modifiers::text_raster::TextRaster;
 use crate::modifiers::{Modifier, ModifierKind, motion_blur_samples};
 
@@ -20,58 +21,58 @@ pub(crate) fn render_full(
     let w = img_w as usize;
     let h = img_h as usize;
 
-    let mut segment: Vec<&Modifier> = Vec::new();
-    let flush_segment = |cur: &mut [u8], segment: &mut Vec<&Modifier>| {
-        if segment.is_empty() {
-            return;
-        }
-        apply_pointwise_segment(cur, img_w, img_h, segment);
-        segment.clear();
-    };
-
-    for (i, m) in modifiers.iter().enumerate() {
-        if !m.has_visible_effect() {
-            continue;
-        }
-        match &m.kind {
-            ModifierKind::GaussianBlur(gb) => {
-                flush_segment(&mut cur, &mut segment);
-                blur_full(&mut cur, w, h, gb.radius);
+    // Walk the shared plan rather than re-deriving the segmentation here: the
+    // GPU pipeline consumes the same plan, so the two backends cannot drift
+    // apart in how they group modifiers.
+    for item in plan_modifiers(modifiers) {
+        match item {
+            PlanItem::Fused(segment) => {
+                apply_pointwise_segment(&mut cur, img_w, img_h, &segment);
             }
-            ModifierKind::ChromaticAberration(ca) => {
-                flush_segment(&mut cur, &mut segment);
-                cur = chromatic_aberration_full(&cur, img_w, img_h, ca.amount);
-            }
-            ModifierKind::MotionBlur(mb) => {
-                flush_segment(&mut cur, &mut segment);
-                cur = motion_blur_full(&cur, img_w, img_h, mb.angle, mb.distance);
-            }
-            ModifierKind::Text(_) => {
-                flush_segment(&mut cur, &mut segment);
-                if let Some(Some(raster)) = text_layers.get(i) {
-                    text_full(&mut cur, img_w, img_h, raster);
+            // `i` indexes the original stack, which is what the positionally
+            // stored text and drawing rasters are keyed by.
+            PlanItem::Step(i, m) => match &m.kind {
+                ModifierKind::GaussianBlur(gb) => blur_full(&mut cur, w, h, gb.radius),
+                ModifierKind::ChromaticAberration(ca) => {
+                    cur = chromatic_aberration_full(&cur, img_w, img_h, ca.amount);
                 }
-            }
-            ModifierKind::Drawing(_) => {
-                flush_segment(&mut cur, &mut segment);
-                if let Some(Some(raster)) = drawing_layers.get(i) {
-                    drawing_full(&mut cur, img_w, raster);
+                ModifierKind::MotionBlur(mb) => {
+                    cur = motion_blur_full(&cur, img_w, img_h, mb.angle, mb.distance);
                 }
-            }
-            ModifierKind::PixelSort(ps) => {
-                flush_segment(&mut cur, &mut segment);
-                cur = crate::modifiers::pixel_sort::pixel_sort_cpu(
-                    &cur,
-                    w,
-                    h,
-                    ps.threshold,
-                    ps.angle,
-                );
-            }
-            _ => segment.push(m),
+                ModifierKind::Text(_) => {
+                    if let Some(Some(raster)) = text_layers.get(i) {
+                        text_full(&mut cur, img_w, img_h, raster);
+                    }
+                }
+                ModifierKind::Drawing(_) => {
+                    if let Some(Some(raster)) = drawing_layers.get(i) {
+                        drawing_full(&mut cur, img_w, raster);
+                    }
+                }
+                ModifierKind::PixelSort(ps) => {
+                    cur = crate::modifiers::pixel_sort::pixel_sort_cpu(
+                        &cur,
+                        w,
+                        h,
+                        ps.threshold,
+                        ps.angle,
+                    );
+                }
+                // `plan_modifiers` only emits a `Step` for modifiers the
+                // planner classifies as non-pointwise, and
+                // `planner_classification_covers_every_modifier_type` pins that
+                // set to exactly the arms above. A kind arriving here means a
+                // new non-pointwise modifier was added without a CPU
+                // implementation, which would otherwise render as a silent
+                // no-op.
+                other => debug_assert!(
+                    false,
+                    "{} is planned as a standalone step but has no CPU implementation",
+                    other.name()
+                ),
+            },
         }
     }
-    flush_segment(&mut cur, &mut segment);
     cur
 }
 

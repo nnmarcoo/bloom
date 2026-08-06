@@ -154,25 +154,3 @@ pub(super) fn tex_copy_info(
         aspect: iced::wgpu::TextureAspect::All,
     }
 }
-
-pub(super) fn plan_modifiers(modifiers: &[Modifier]) -> Vec<PlanItem<'_>> {
-    let mut plan: Vec<PlanItem> = Vec::new();
-    let mut current: Vec<&Modifier> = Vec::new();
-    for (i, m) in modifiers.iter().enumerate() {
-        if !m.has_visible_effect() {
-            continue;
-        }
-        if !m.kind.effect_class().is_pointwise() {
-            if !current.is_empty() {
-                plan.push(PlanItem::Fused(std::mem::take(&mut current)));
-            }
-            plan.push(PlanItem::Step(i, m));
-        } else {
-            current.push(m);
-        }
-    }
-    if !current.is_empty() {
-        plan.push(PlanItem::Fused(current));
-    }
-    plan
-}
