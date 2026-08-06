@@ -29,6 +29,8 @@ mod executor;
 mod geom;
 #[cfg(test)]
 mod goldens;
+#[cfg(test)]
+mod gpu_bench;
 
 use geom::*;
 
