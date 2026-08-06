@@ -4,24 +4,13 @@ use crate::modifiers::kinds::{
 };
 use crate::wgpu::media::image_data::ImageData;
 use crate::wgpu::passes::display::DisplayPass;
-use iced::wgpu::{
-    CommandEncoderDescriptor, DeviceDescriptor, Instance, PowerPreference, RequestAdapterOptions,
-};
+use iced::wgpu::CommandEncoderDescriptor;
 
 const GOLDEN_W: u32 = 96;
 const GOLDEN_H: u32 = 64;
 const FORCED_TILE_DIM: u32 = 48;
 
-pub(super) fn try_device() -> Option<(Device, Queue)> {
-    let instance = Instance::default();
-    let adapter = futures::executor::block_on(instance.request_adapter(&RequestAdapterOptions {
-        power_preference: PowerPreference::default(),
-        force_fallback_adapter: false,
-        compatible_surface: None,
-    }))
-    .ok()?;
-    futures::executor::block_on(adapter.request_device(&DeviceDescriptor::default())).ok()
-}
+pub(super) use crate::wgpu::test_device::try_device;
 
 fn test_pixels(w: u32, h: u32) -> Vec<u8> {
     let mut v = Vec::with_capacity((w * h * 4) as usize);
@@ -255,7 +244,7 @@ fn diff_stats(a: &[u8], b: &[u8], tol: u8) -> (u8, f64) {
     (max_d, over as f64 * 100.0 / a.len() as f64)
 }
 
-pub(super) static GPU_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(super) use crate::wgpu::test_device::GPU_LOCK;
 
 fn converge(
     mp: &mut ModifierPipeline,

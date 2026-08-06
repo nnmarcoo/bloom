@@ -1,4 +1,8 @@
+#[cfg(test)]
+mod bench;
 mod image;
+#[cfg(test)]
+mod oracle;
 mod raster;
 #[cfg(feature = "av")]
 mod video;

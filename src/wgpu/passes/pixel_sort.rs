@@ -278,22 +278,8 @@ mod tests {
     use super::*;
     use crate::modifiers::pixel_sort::{SortMode, pixel_sort_cpu};
 
-    use iced::wgpu::{
-        CommandEncoderDescriptor, DeviceDescriptor, Instance, PowerPreference,
-        RequestAdapterOptions,
-    };
-
-    fn try_device() -> Option<(Device, Queue)> {
-        let instance = Instance::default();
-        let adapter =
-            futures::executor::block_on(instance.request_adapter(&RequestAdapterOptions {
-                power_preference: PowerPreference::default(),
-                force_fallback_adapter: false,
-                compatible_surface: None,
-            }))
-            .ok()?;
-        futures::executor::block_on(adapter.request_device(&DeviceDescriptor::default())).ok()
-    }
+    use crate::wgpu::test_device::try_device;
+    use iced::wgpu::CommandEncoderDescriptor;
 
     fn pack(rgba: &[u8]) -> Vec<u32> {
         rgba.chunks_exact(4)

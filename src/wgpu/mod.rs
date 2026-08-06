@@ -6,6 +6,8 @@ mod gpu;
 pub mod modifier_pipeline;
 pub mod passes;
 mod scale;
+#[cfg(test)]
+mod test_device;
 mod tiled_source;
 mod view_pipeline;
 mod view_primitive;

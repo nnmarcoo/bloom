@@ -227,22 +227,11 @@ fn texture_entry(binding: u32) -> BindGroupLayoutEntry {
 mod tests {
     use super::*;
     use crate::wgpu::gpu;
+    use crate::wgpu::test_device::try_device;
     use iced::wgpu::{
-        CommandEncoderDescriptor, DeviceDescriptor, Extent3d, Instance, PowerPreference,
-        RequestAdapterOptions, TexelCopyBufferInfo, TexelCopyBufferLayout, TextureUsages,
+        CommandEncoderDescriptor, Extent3d, TexelCopyBufferInfo, TexelCopyBufferLayout,
+        TextureUsages,
     };
-
-    fn try_device() -> Option<(Device, Queue)> {
-        let instance = Instance::default();
-        let adapter =
-            futures::executor::block_on(instance.request_adapter(&RequestAdapterOptions {
-                power_preference: PowerPreference::default(),
-                force_fallback_adapter: false,
-                compatible_surface: None,
-            }))
-            .ok()?;
-        futures::executor::block_on(adapter.request_device(&DeviceDescriptor::default())).ok()
-    }
 
     fn rt(device: &Device, w: u32, h: u32, label: &str) -> iced::wgpu::Texture {
         gpu::texture_2d(

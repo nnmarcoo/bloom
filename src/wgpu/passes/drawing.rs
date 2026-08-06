@@ -234,22 +234,8 @@ mod tests {
     use super::*;
     use crate::modifiers::kinds::Stroke;
     use crate::modifiers::{Modifier, ModifierKind, cpu, drawing_raster};
-    use iced::wgpu::{
-        CommandEncoderDescriptor, DeviceDescriptor, Instance, PowerPreference,
-        RequestAdapterOptions,
-    };
-
-    fn try_device() -> Option<(Device, Queue)> {
-        let instance = Instance::default();
-        let adapter =
-            futures::executor::block_on(instance.request_adapter(&RequestAdapterOptions {
-                power_preference: PowerPreference::default(),
-                force_fallback_adapter: false,
-                compatible_surface: None,
-            }))
-            .ok()?;
-        futures::executor::block_on(adapter.request_device(&DeviceDescriptor::default())).ok()
-    }
+    use crate::wgpu::test_device::try_device;
+    use iced::wgpu::CommandEncoderDescriptor;
 
     fn gradient(w: u32, h: u32) -> Vec<u8> {
         let mut px = vec![0u8; (w * h * 4) as usize];
