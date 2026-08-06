@@ -175,20 +175,22 @@ impl Scheduler {
 /// **Document space** is the image's own coordinate system: tile rects,
 /// `proc_px`, crop windows, and every modifier parameter the user types. A
 /// 20px motion blur is 20 document pixels whether you are zoomed to 10% or
-/// 400%. These values belong to the document and are saved with it.
+/// 400%. These values define what the image *is*.
 ///
 /// **Device space** is what actually gets allocated and rasterized. It is
 /// document space multiplied by [`quality_scale_for`] — a runtime-only factor
 /// derived from zoom level and clamped further by VRAM
 /// ([`fit_process_scale`]). It changes as the user zooms or as memory
-/// pressure varies, and it must never be persisted or affect exported output.
+/// pressure varies, and it must never flow back into document space.
 ///
 /// The rule: modifier parameters are document-space and are converted to
-/// device space *at the point of use*, normally by normalising against the
-/// full image dimensions rather than the scaled texture. Chromatic aberration
-/// (`amount / full_w`) and motion blur (`distance / full_w`) both do this, so
-/// they are already scale-invariant. Gaussian blur instead derives its radius
-/// from the measured texture size, which is equivalent and more robust.
+/// device space *at the point of use*. Chromatic aberration (`amount /
+/// full_w`) and motion blur (`distance / full_w`) normalise against the full
+/// image, so the shader works in UV and is scale-invariant by construction.
+/// Gaussian blur instead scales explicitly — `radius * scale` in
+/// `execute_kernel_chain` — because it needs a device-space tap count. Both
+/// are correct; the blur path is just the one where the conversion is
+/// visible, and therefore the one to check first when a scaling bug appears.
 ///
 /// This factor is display-only: `physical_scale` defaults to 1.0 and is set
 /// solely by the view pipeline from the current zoom, while export renders

@@ -64,9 +64,11 @@ pub(super) fn tile_proc_rect(
         None => [tl, tt, fw, fh],
     };
 
-    // Document space above this line, device space below it: `px` and the two
-    // `UvRect`s stay in image coordinates, while `w`/`h` are the actual
-    // allocation and carry the runtime quality factor.
+    // `quality_scale` enters here and nowhere else in this function: `w`/`h`
+    // are the only device-space values produced, and they exist solely to size
+    // the allocation. Everything else stays independent of runtime quality --
+    // `px` in document pixels, `proc`/`src` normalised against the full image
+    // -- so a stage's geometry is unchanged by how far the user is zoomed out.
     let pw_px = (px[2] - px[0]).max(1.0);
     let ph_px = (px[3] - px[1]).max(1.0);
     let scale = if downscale { quality_scale } else { 1.0 };

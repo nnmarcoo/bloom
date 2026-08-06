@@ -348,13 +348,14 @@ impl ModifierKind {
 ///
 /// Any variant carrying a pixel distance — blur radius, motion blur distance,
 /// stroke size, text position — is in **document space**: image pixels,
-/// independent of zoom and of the runtime quality factor. These values are
-/// persisted with the document, so scaling one by a device-space factor before
-/// storing it would corrupt the file, not just the frame.
+/// independent of zoom and of the runtime quality factor. A 20px blur means
+/// 20 image pixels at every zoom level, and the same value must produce the
+/// same exported result regardless of what the viewport was showing.
 ///
 /// Conversion to device space happens at the point of use in the backend,
 /// normally by normalising against the full image dimensions (see
-/// `wgpu::modifier_pipeline::quality_scale_for`).
+/// `wgpu::modifier_pipeline::quality_scale_for`). Storing a device-scaled
+/// value back into one of these would make the edit depend on the viewport.
 #[derive(Debug, Clone)]
 pub enum ModifierParam {
     LevelsShadows(f32),
