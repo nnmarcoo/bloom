@@ -472,6 +472,14 @@ impl TiledSource {
                 residency::TileNeed::Evictable => {
                     // Dropping the resources frees the VRAM; the tile keeps its
                     // identity so it can be rebuilt on demand.
+                    //
+                    // Safe with respect to ModifierPipeline's cached outputs
+                    // only because the policy evicts nothing that is visible,
+                    // and the executor already drops `tile_outputs[ti]` for
+                    // every tile it culls. Were that to change, an evicted tile
+                    // could keep a processed output marked valid and the
+                    // pipeline would show stale pixels instead of a gap. See
+                    // `residency::tests::evicted_tiles_are_always_ones_the_executor_has_already_culled`.
                     tile.residency = None;
                 }
                 residency::TileNeed::Resident => {

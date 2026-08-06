@@ -247,6 +247,37 @@ mod tests {
         );
     }
 
+    /// Evicting a tile must never leave a processed output behind that is still
+    /// marked valid, or the pipeline would display stale pixels rather than
+    /// simply missing ones — a silent corruption instead of a visible gap.
+    ///
+    /// Nothing enforces this directly. It holds because the executor drops
+    /// `tile_outputs[ti]` for every tile failing `tile_ndc_culled`, and this
+    /// policy only ever evicts tiles that are not visible. The evicted set is
+    /// therefore a subset of the culled set. That relationship is the invariant;
+    /// this test pins it so a change to either side has to confront it.
+    #[test]
+    fn evicted_tiles_are_always_ones_the_executor_has_already_culled() {
+        let tiles = [
+            tile(true, 0),                 // visible
+            tile(false, 1),                // culled, inside the margin
+            tile(false, MARGIN_RINGS + 5), // culled, outside the margin
+        ];
+        // A budget too small for the margin, forcing the tightest eviction the
+        // policy can produce.
+        let p = plan(&tiles, one_tile_bytes());
+
+        for (i, t) in tiles.iter().enumerate() {
+            if p.needs[i] == TileNeed::Evictable {
+                assert!(
+                    !t.visible,
+                    "tile {i} was evicted while visible; the executor would keep \
+                     its processed output marked valid and show stale pixels"
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_zero_budget_still_keeps_visible_tiles() {
         let p = plan(&[tile(true, 0), tile(false, 1)], 0);
