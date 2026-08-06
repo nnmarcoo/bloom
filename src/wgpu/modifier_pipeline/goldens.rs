@@ -748,6 +748,49 @@ fn roi_pointwise_then_blur_partial_viewport() {
     run_roi_golden("roi/pointwise+blur", &chain, 1024, 0.42, 4, 2048, 2048);
 }
 
+/// A trailing resize must not disturb the preview.
+///
+/// The executor drops resize from its plan (it cannot express a mid-chain
+/// geometry change), so the GPU output should match a chain with the resize
+/// removed entirely -- and critically, must not panic on the passthrough
+/// debug assert or produce mis-sized tiles.
+#[test]
+fn golden_trailing_resize_is_dropped_from_the_preview() {
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let pixels = test_pixels(GOLDEN_W, GOLDEN_H);
+    let image = ImageData::new(pixels.clone(), GOLDEN_W, GOLDEN_H);
+
+    let resize = Modifier::new(ModifierKind::Resize(Resize {
+        mode: ResizeMode::Percent,
+        width: 50.0,
+        height: 50.0,
+        filter: ResizeFilter::Lanczos,
+        lock_aspect: true,
+    }));
+
+    let mut with_resize = blur_chain();
+    with_resize.push(resize);
+
+    let mut outs: Vec<Vec<u8>> = Vec::new();
+    for chain in [with_resize, blur_chain()] {
+        let source = make_source(&device, &queue, &image, Some(FORCED_TILE_DIM));
+        let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, GOLDEN_W, GOLDEN_H);
+        converge(&mut mp, &device, &queue, &source, &chain, "trailing-resize");
+        outs.push(assemble(&device, &queue, &mp, &source));
+    }
+
+    let (max_d, pct) = diff_stats(&outs[0], &outs[1], 0);
+    assert_eq!(
+        max_d, 0,
+        "a trailing resize changed the preview: max diff {max_d} ({pct:.3}% over)"
+    );
+}
+
 #[test]
 fn golden_ca_single_tile() {
     run_golden("ca/1-tile", &ca_chain(), None, 4);

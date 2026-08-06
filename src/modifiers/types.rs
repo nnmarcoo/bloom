@@ -7,7 +7,8 @@ use crate::modifiers::gpu::{ModEntry, TileInfo};
 use crate::modifiers::kinds::{
     BrightnessContrast, ChromaticAberration, ColorBalance, Crop, Drawing, Duotone, Exposure,
     GaussianBlur, Grain, Grayscale, Halftone, HueSaturation, Invert, Levels, MotionBlur, PixelSort,
-    Posterize, RadialBlur, Sepia, Solarize, Temperature, Text, Threshold, Trim, Vibrance, Vignette,
+    Posterize, RadialBlur, Resize, Sepia, Solarize, Temperature, Text, Threshold, Trim, Vibrance,
+    Vignette,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -273,6 +274,7 @@ define_modifiers!(
     Halftone => "Halftone" @ "Distort",
     PixelSort => "Pixel Sort" @ "Distort",
     Crop => "Crop" @ "Transform",
+    Resize => "Resize" @ "Transform",
     Trim => "Trim" @ "Time",
     Text => "Text" @ "Create",
     Drawing => "Drawing" @ "Create",
@@ -404,6 +406,11 @@ pub enum ModifierParam {
     CropY(f32),
     CropWidth(f32),
     CropHeight(f32),
+    ResizeWidth(f32),
+    ResizeHeight(f32),
+    ResizeMode(crate::modifiers::kinds::ResizeMode),
+    ResizeFilter(crate::modifiers::kinds::ResizeFilter),
+    ResizeLockAspect(bool),
     TrimStart(f32, std::time::Duration),
     TrimEnd(f32, std::time::Duration),
     TextContent(String),

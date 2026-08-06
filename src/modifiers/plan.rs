@@ -69,13 +69,15 @@ impl StageSpec {
 
 /// The dimensions a modifier produces, or `None` when it preserves its input.
 ///
-/// Every modifier is currently dimension-preserving: crop is still hoisted out
-/// of the stack and applied as a sampling window after the chain, and no resize
-/// modifier exists yet. This function is where both of those become ordinary
-/// stages.
+/// Resize resolves here rather than storing resolved pixels, so a percentage
+/// tracks whatever its input actually turns out to be. Crop is still hoisted
+/// out of the stack and applied as a sampling window after the chain; making it
+/// an ordinary stage is the remaining half of this function's purpose.
 fn output_spec(kind: &ModifierKind, input: ImageSpec) -> Option<ImageSpec> {
-    let _ = (kind, input);
-    None
+    match kind {
+        ModifierKind::Resize(r) => Some(r.output_for(input)),
+        _ => None,
+    }
 }
 
 /// Resolves the geometry of every plan item, given the source dimensions.
@@ -103,6 +105,26 @@ pub fn chain_output_spec(source: ImageSpec, plan: &[PlanItem]) -> ImageSpec {
     infer_specs(source, plan)
         .last()
         .map_or(source, |s| s.output)
+}
+
+/// Whether a resize sits anywhere other than the end of the stack.
+///
+/// The GPU preview executes the chain in one coordinate space, so it cannot
+/// render a stage that follows a dimension change. Until the tiler learns
+/// per-stage geometry, a resize is only supported as the final visible
+/// modifier; the edit layer uses this to refuse the placements that would make
+/// the preview and the export disagree.
+///
+/// Modifiers with no visible effect do not count as "after" a resize, since
+/// they are dropped from the plan anyway.
+pub fn resize_is_mid_chain(modifiers: &[Modifier]) -> bool {
+    let last_visible = modifiers
+        .iter()
+        .rposition(|m| m.has_visible_effect())
+        .unwrap_or(0);
+    modifiers.iter().enumerate().any(|(i, m)| {
+        m.has_visible_effect() && matches!(m.kind, ModifierKind::Resize(_)) && i != last_visible
+    })
 }
 
 /// Reduces a modifier stack to its execution plan.
@@ -134,7 +156,7 @@ mod tests {
     use crate::modifiers::ModifierKind;
     use crate::modifiers::kinds::{
         ChromaticAberration, Drawing, Exposure, GaussianBlur, MotionBlur, PixelSort, Posterize,
-        Stroke, Text,
+        Resize, ResizeFilter, ResizeMode, Stroke, Text,
     };
 
     fn m(kind: ModifierKind) -> Modifier {
@@ -177,11 +199,11 @@ mod tests {
         assert_eq!(chain_output_spec(SRC, &[]), SRC);
     }
 
-    /// Until a resize modifier exists, geometry is constant through the chain.
-    /// This is the invariant that makes Phase 2 byte-neutral; when resize lands
-    /// it should fail, and the failure is the signal to update it.
+    /// Everything except resize is dimension-preserving. Crop is the notable
+    /// absence: it is still hoisted out of the stack, so it does not appear
+    /// here even though it changes geometry.
     #[test]
-    fn every_stage_is_currently_passthrough() {
+    fn only_resize_changes_dimensions() {
         let mods = vec![
             exposure(),
             blur(),
@@ -199,13 +221,99 @@ mod tests {
 
         assert_eq!(specs.len(), plan.len(), "one spec per plan item");
         for (i, s) in specs.iter().enumerate() {
-            assert!(
-                s.is_passthrough(),
-                "stage {i} resizes, but no modifier declares an output spec yet"
-            );
+            assert!(s.is_passthrough(), "stage {i} unexpectedly resizes");
             assert_eq!(s.input, SRC);
         }
         assert_eq!(chain_output_spec(SRC, &plan), SRC);
+    }
+
+    fn resize_pct(pct: f32) -> Modifier {
+        m(ModifierKind::Resize(Resize {
+            mode: ResizeMode::Percent,
+            width: pct,
+            height: pct,
+            filter: ResizeFilter::Lanczos,
+            lock_aspect: true,
+        }))
+    }
+
+    #[test]
+    fn resize_declares_its_output_and_later_stages_follow() {
+        let mods = vec![exposure(), resize_pct(50.0), blur()];
+        let plan = plan_modifiers(&mods);
+        let specs = infer_specs(SRC, &plan);
+
+        // exposure (passthrough) -> resize (halves) -> blur (at the new size)
+        assert_eq!(specs[0].input, SRC);
+        assert_eq!(specs[0].output, SRC);
+        assert_eq!(specs[1].input, SRC);
+        assert_eq!(specs[1].output, ImageSpec::new(SRC.w / 2, SRC.h / 2));
+        assert_eq!(specs[2].input, ImageSpec::new(SRC.w / 2, SRC.h / 2));
+        assert_eq!(chain_output_spec(SRC, &plan), ImageSpec::new(SRC.w / 2, SRC.h / 2));
+    }
+
+    /// A percent resize resolves against its actual input, so an upstream
+    /// resize compounds rather than being ignored. This is why the mode is
+    /// stored rather than resolved at edit time.
+    #[test]
+    fn percent_resizes_compound() {
+        let mods = vec![resize_pct(50.0), resize_pct(50.0)];
+        let plan = plan_modifiers(&mods);
+        assert_eq!(
+            chain_output_spec(SRC, &plan),
+            ImageSpec::new(SRC.w / 4, SRC.h / 4)
+        );
+    }
+
+    /// 50% then 200% returns to the original dimensions but is emphatically
+    /// not a no-op: the detail lost in the middle is gone. Both stages must
+    /// survive planning, or the render would skip the degradation the user
+    /// asked for.
+    #[test]
+    fn opposing_resizes_are_not_collapsed() {
+        let mods = vec![resize_pct(50.0), resize_pct(200.0)];
+        let plan = plan_modifiers(&mods);
+        assert_eq!(plan.len(), 2, "both resizes must remain in the plan");
+        assert_eq!(chain_output_spec(SRC, &plan), SRC);
+    }
+
+    /// An identity resize stays in the plan too. Dropping it would make the
+    /// chain's geometry implicit, and it costs nothing: `resample` returns
+    /// early when the dimensions already match.
+    #[test]
+    fn identity_resize_is_retained() {
+        let mods = vec![resize_pct(100.0)];
+        let plan = plan_modifiers(&mods);
+        assert_eq!(plan.len(), 1);
+        assert_eq!(chain_output_spec(SRC, &plan), SRC);
+    }
+
+    #[test]
+    fn resize_at_the_end_is_not_mid_chain() {
+        assert!(!resize_is_mid_chain(&[exposure(), blur(), resize_pct(50.0)]));
+        assert!(!resize_is_mid_chain(&[resize_pct(50.0)]));
+        assert!(!resize_is_mid_chain(&[exposure(), blur()]));
+    }
+
+    #[test]
+    fn resize_followed_by_a_visible_stage_is_mid_chain() {
+        assert!(resize_is_mid_chain(&[resize_pct(50.0), blur()]));
+        assert!(resize_is_mid_chain(&[
+            exposure(),
+            resize_pct(50.0),
+            exposure()
+        ]));
+        // Two resizes: the first one has a successor, so it counts.
+        assert!(resize_is_mid_chain(&[resize_pct(50.0), resize_pct(50.0)]));
+    }
+
+    /// An invisible trailing modifier does not strand a resize mid-chain,
+    /// because planning drops it before any backend sees it.
+    #[test]
+    fn invisible_trailing_modifiers_do_not_count() {
+        let mut hidden = exposure();
+        hidden.enabled = false;
+        assert!(!resize_is_mid_chain(&[resize_pct(50.0), hidden]));
     }
 
     /// Specs must chain: each stage's input is the previous stage's output.
@@ -327,6 +435,7 @@ mod tests {
             "Text",
             "Drawing",
             "Pixel Sort",
+            "Resize",
         ];
 
         for t in ModifierType::ALL {

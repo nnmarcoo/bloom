@@ -1,6 +1,7 @@
 use rayon::prelude::*;
 
 use crate::modifiers::drawing_raster::LayerView;
+use crate::modifiers::kinds::ResizeFilter;
 use crate::modifiers::plan::{ImageSpec, PlanItem, infer_specs, plan_modifiers};
 use crate::modifiers::text_raster::TextRaster;
 use crate::modifiers::{Modifier, ModifierKind, motion_blur_samples};
@@ -69,6 +70,13 @@ pub(crate) fn render_full(
                         ps.threshold,
                         ps.angle,
                     );
+                }
+                // The only stage whose output geometry differs from its input.
+                // `spec.output` is authoritative -- it is what every later
+                // stage was sized against by `infer_specs`.
+                ModifierKind::Resize(r) => {
+                    let out = spec.output;
+                    cur = resample(&cur, img_w, img_h, out.w, out.h, r.filter);
                 }
                 // `plan_modifiers` only emits a `Step` for modifiers the
                 // planner classifies as non-pointwise, and
@@ -330,6 +338,131 @@ pub(crate) fn pixel_to_f32(p: &[u8]) -> [f32; 4] {
     ]
 }
 
+fn lanczos3(x: f32) -> f32 {
+    const A: f32 = 3.0;
+    let x = x.abs();
+    if x < 1e-6 {
+        return 1.0;
+    }
+    if x >= A {
+        return 0.0;
+    }
+    let px = std::f32::consts::PI * x;
+    (px.sin() / px) * ((px / A).sin() / (px / A))
+}
+
+/// Resamples `src` to `dst_w` x `dst_h`.
+///
+/// Separable: one horizontal pass into a scratch buffer, then one vertical
+/// pass. The filter radius is scaled by the *reciprocal* of the scale factor
+/// when minifying, which is what makes a downscale average its input rather
+/// than point-sample it -- a fixed-radius kernel would alias badly at large
+/// reductions.
+///
+/// `Nearest` deliberately ignores that: its blockiness is the reason to pick
+/// it, so it stays a true point sample in both directions.
+pub(crate) fn resample(
+    src: &[u8],
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+    filter: ResizeFilter,
+) -> Vec<u8> {
+    if (src_w, src_h) == (dst_w, dst_h) {
+        return src.to_vec();
+    }
+
+    // Per-axis kernel: `support` is the half-width in *source* pixels, and
+    // `weight` is evaluated in kernel space.
+    let axis = |dst: u32, src: u32| -> (f32, f32) {
+        let scale = dst as f32 / src as f32;
+        // Minifying (scale < 1) widens the footprint in source space.
+        let inv = if scale < 1.0 { 1.0 / scale } else { 1.0 };
+        (scale, inv)
+    };
+    let radius = |f: ResizeFilter| -> f32 {
+        match f {
+            ResizeFilter::Nearest => 0.0,
+            ResizeFilter::Bilinear => 1.0,
+            ResizeFilter::Lanczos => 3.0,
+        }
+    };
+    let weight = |f: ResizeFilter, x: f32| -> f32 {
+        match f {
+            ResizeFilter::Nearest => 1.0,
+            ResizeFilter::Bilinear => (1.0 - x.abs()).max(0.0),
+            ResizeFilter::Lanczos => lanczos3(x),
+        }
+    };
+
+    let one_axis = |input: &[u8], in_w: u32, in_h: u32, out_len: u32, horizontal: bool| -> Vec<u8> {
+        let (out_w, out_h) = if horizontal {
+            (out_len, in_h)
+        } else {
+            (in_w, out_len)
+        };
+        let src_len = if horizontal { in_w } else { in_h };
+        let (scale, inv) = axis(out_len, src_len);
+        let r = radius(filter) * inv;
+
+        let mut out = vec![0u8; out_w as usize * out_h as usize * 4];
+        out.par_chunks_mut(out_w as usize * 4)
+            .enumerate()
+            .for_each(|(row, out_row)| {
+                for col in 0..out_w as usize {
+                    let o = if horizontal { col } else { row };
+                    // Centre of this output sample, in source coordinates.
+                    let center = (o as f32 + 0.5) / scale;
+
+                    if matches!(filter, ResizeFilter::Nearest) {
+                        let s = (center.floor().max(0.0) as u32).min(src_len - 1);
+                        let (sx, sy) = if horizontal {
+                            (s, row as u32)
+                        } else {
+                            (col as u32, s)
+                        };
+                        let base = (sy as usize * in_w as usize + sx as usize) * 4;
+                        out_row[col * 4..col * 4 + 4].copy_from_slice(&input[base..base + 4]);
+                        continue;
+                    }
+
+                    let lo = (center - r).floor().max(0.0) as u32;
+                    let hi = ((center + r).ceil() as u32).min(src_len);
+                    let mut acc = [0.0f32; 4];
+                    let mut wsum = 0.0f32;
+                    for s in lo..hi {
+                        let d = (s as f32 + 0.5 - center) / inv;
+                        let wt = weight(filter, d);
+                        if wt == 0.0 {
+                            continue;
+                        }
+                        let (sx, sy) = if horizontal {
+                            (s, row as u32)
+                        } else {
+                            (col as u32, s)
+                        };
+                        let base = (sy as usize * in_w as usize + sx as usize) * 4;
+                        for c in 0..4 {
+                            acc[c] += input[base + c] as f32 * wt;
+                        }
+                        wsum += wt;
+                    }
+                    // A Lanczos kernel has negative lobes, so normalise by the
+                    // actual weight sum rather than assuming it is 1.0.
+                    let n = if wsum.abs() < 1e-6 { 1.0 } else { wsum };
+                    for c in 0..4 {
+                        out_row[col * 4 + c] = (acc[c] / n).round().clamp(0.0, 255.0) as u8;
+                    }
+                }
+            });
+        out
+    };
+
+    let mid = one_axis(src, src_w, src_h, dst_w, true);
+    one_axis(&mid, dst_w, src_h, dst_h, false)
+}
+
 pub(crate) fn f32_to_pixel(c: [f32; 4]) -> [u8; 4] {
     [
         (c[0] * 255.0).round() as u8,
@@ -558,6 +691,137 @@ mod pointwise_tests {
             [0.3, 0.7, 0.2, 1.0],
         );
         assert!((neutral[0] - 0.3).abs() < 1e-5, "amount 0 is identity");
+    }
+}
+
+#[cfg(test)]
+mod resample_tests {
+    use super::{render_full, resample};
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+    use crate::modifiers::{Modifier, ModifierKind};
+
+    /// Left half black, right half white -- a single vertical edge, which is
+    /// what makes filter differences legible.
+    fn split(w: u32, h: u32) -> Vec<u8> {
+        let mut v = Vec::with_capacity((w * h * 4) as usize);
+        for _ in 0..h {
+            for x in 0..w {
+                let c = if x < w / 2 { 0u8 } else { 255u8 };
+                v.extend_from_slice(&[c, c, c, 255]);
+            }
+        }
+        v
+    }
+
+    fn px(buf: &[u8], w: u32, x: u32, y: u32) -> [u8; 4] {
+        let b = ((y * w + x) * 4) as usize;
+        [buf[b], buf[b + 1], buf[b + 2], buf[b + 3]]
+    }
+
+    #[test]
+    fn resample_produces_the_requested_dimensions() {
+        for f in ResizeFilter::ALL {
+            let out = resample(&split(64, 32), 64, 32, 21, 47, f);
+            assert_eq!(out.len(), 21 * 47 * 4, "{} produced a wrong-sized buffer", f.label());
+        }
+    }
+
+    #[test]
+    fn identity_resample_is_byte_exact() {
+        let src = split(32, 16);
+        for f in ResizeFilter::ALL {
+            assert_eq!(resample(&src, 32, 16, 32, 16, f), src, "{}", f.label());
+        }
+    }
+
+    /// Nearest must not invent intermediate values -- that blockiness is the
+    /// only reason to choose it.
+    #[test]
+    fn nearest_preserves_the_source_palette() {
+        let out = resample(&split(64, 8), 64, 8, 27, 8, ResizeFilter::Nearest);
+        for i in (0..out.len()).step_by(4) {
+            assert!(
+                out[i] == 0 || out[i] == 255,
+                "nearest produced a blended value {} at byte {i}",
+                out[i]
+            );
+        }
+    }
+
+    /// Bilinear and Lanczos must blend across the edge; if they did not, they
+    /// would be point sampling under another name.
+    #[test]
+    fn smooth_filters_blend_across_an_edge() {
+        for f in [ResizeFilter::Bilinear, ResizeFilter::Lanczos] {
+            let out = resample(&split(64, 8), 64, 8, 32, 8, f);
+            let blended = (0..32).any(|x| {
+                let v = px(&out, 32, x, 4)[0];
+                v > 8 && v < 247
+            });
+            assert!(blended, "{} produced no intermediate values", f.label());
+        }
+    }
+
+    /// A large downscale must average its input rather than point-sample it.
+    /// With a fixed-radius kernel this aliases: the result depends on which
+    /// source column each output pixel happens to land on. Averaging makes the
+    /// two halves come out near the extremes with a smooth transition.
+    #[test]
+    fn large_downscale_averages_rather_than_aliases() {
+        // 512 -> 8 is a 64x reduction; each output pixel covers 64 source px.
+        let out = resample(&split(512, 8), 512, 8, 8, 8, ResizeFilter::Lanczos);
+        let left = px(&out, 8, 0, 4)[0];
+        let right = px(&out, 8, 7, 4)[0];
+        assert!(left < 16, "left edge should stay dark, got {left}");
+        assert!(right > 239, "right edge should stay light, got {right}");
+    }
+
+    #[test]
+    fn alpha_survives_resampling() {
+        let src = vec![255u8; 16 * 16 * 4];
+        for f in ResizeFilter::ALL {
+            let out = resample(&src, 16, 16, 9, 9, f);
+            assert!(
+                out.chunks(4).all(|p| p[3] == 255),
+                "{} did not preserve opaque alpha",
+                f.label()
+            );
+        }
+    }
+
+    /// End-to-end through the plan: `render_full` must return a buffer at the
+    /// chain's output size, not the source size.
+    #[test]
+    fn render_full_returns_the_resized_buffer() {
+        let chain = vec![Modifier::new(ModifierKind::Resize(Resize {
+            mode: ResizeMode::Pixels,
+            width: 20.0,
+            height: 10.0,
+            filter: ResizeFilter::Bilinear,
+            lock_aspect: false,
+        }))];
+        let out = render_full(&chain, &[], &[], &split(64, 32), 64, 32);
+        assert_eq!(out.len(), 20 * 10 * 4);
+    }
+
+    /// A resize mid-chain must leave later stages operating at the new size.
+    /// Before `infer_specs` was wired up this would panic on a buffer/geometry
+    /// mismatch in the debug assert.
+    #[test]
+    fn a_stage_after_a_resize_runs_at_the_new_size() {
+        use crate::modifiers::kinds::GaussianBlur;
+        let chain = vec![
+            Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: 50.0,
+                height: 50.0,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            })),
+            Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 2.0 })),
+        ];
+        let out = render_full(&chain, &[], &[], &split(64, 32), 64, 32);
+        assert_eq!(out.len(), 32 * 16 * 4);
     }
 }
 

@@ -128,8 +128,9 @@ struct Geom {
 fn geom_of(data: &ExportData) -> Geom {
     // `img_w`/`img_h` describe the buffer `render_full` produces, which is what
     // the crop window and `fill_row` index into — not necessarily the source
-    // size. They coincide today because every stage is passthrough; deriving
-    // them from the chain keeps that correct once a stage can resize.
+    // size. A Resize in the chain makes the two differ, which is why these come
+    // from the plan rather than from `data.width`/`data.height`. Crop is stored
+    // in normalised UV, so it lands on the resized buffer without conversion.
     let plan = plan_modifiers(&data.modifiers);
     let processed = chain_output_spec(ImageSpec::new(data.width, data.height), &plan);
     let img_w = processed.w;
@@ -410,6 +411,73 @@ mod tests {
             "geom_of must size the processed buffer from the chain"
         );
         assert_eq!((geom.out_w, geom.out_h), (w, h));
+    }
+
+    fn resize_data(w: u32, h: u32, modifiers: Vec<Modifier>, crop: Option<[f32; 4]>) -> ExportData {
+        ExportData {
+            source: ExportSource::Frames {
+                frames: vec![ExportFrame {
+                    pixels: Arc::new(vec![0u8; (w * h * 4) as usize]),
+                    delay: Duration::ZERO,
+                }],
+                still_index: 0,
+            },
+            width: w,
+            height: h,
+            modifiers,
+            crop,
+            rotation: 0,
+            trim: None,
+        }
+    }
+
+    /// The exported dimensions must follow a resize, not the source.
+    #[test]
+    fn export_dimensions_follow_a_resize() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        let data = resize_data(
+            128,
+            96,
+            vec![Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: 50.0,
+                height: 50.0,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            }))],
+            None,
+        );
+        let geom = geom_of(&data);
+        assert_eq!((geom.img_w, geom.img_h), (64, 48));
+        assert_eq!((geom.out_w, geom.out_h), (64, 48));
+    }
+
+    /// Crop is stored in normalised UV, so it must land on the *resized*
+    /// buffer. Half of a half-sized image is a quarter of the original.
+    #[test]
+    fn crop_applies_to_the_resized_buffer() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        let data = resize_data(
+            128,
+            96,
+            vec![Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: 50.0,
+                height: 50.0,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            }))],
+            Some([0.0, 0.0, 0.5, 0.5]),
+        );
+        let geom = geom_of(&data);
+        assert_eq!(
+            (geom.img_w, geom.img_h),
+            (64, 48),
+            "crop must not change the processed buffer size"
+        );
+        assert_eq!((geom.out_w, geom.out_h), (32, 24));
     }
 
     #[test]

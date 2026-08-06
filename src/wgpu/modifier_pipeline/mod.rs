@@ -204,6 +204,10 @@ fn quality_scale_for(physical_scale: f32) -> f32 {
     }
 }
 
+fn is_resize(kind: &ModifierKind) -> bool {
+    matches!(kind, ModifierKind::Resize(_))
+}
+
 const ROI_MARGIN_PX: f32 = 256.0;
 
 const PROCESS_VRAM_BUDGET_MIN: u64 = 512 * 1024 * 1024;
@@ -484,17 +488,34 @@ impl ModifierPipeline {
             }
         }
 
-        let plan_vec = plan_modifiers(modifiers);
+        let mut plan_vec = plan_modifiers(modifiers);
+
+        // The tiled executor works in a single coordinate space: tiles are
+        // carved from the source, `proc_px` is document-space throughout, and
+        // ROI walks backward through one geometry. A stage that changes
+        // dimensions mid-chain would put the stages on either side of it in
+        // different spaces, which this executor cannot express.
+        //
+        // Resize is therefore dropped from the *preview* plan. Doing so is
+        // sound only because resampling commutes with nothing downstream of it
+        // here: `resize_is_last_or_absent` rejects the mid-chain case at the
+        // edit layer, so anything dropped has no successor whose result could
+        // depend on it. Export is unaffected -- it runs `cpu::render_full`,
+        // which honours the resize.
+        //
+        // The visible consequence is that the preview shows the pre-resize
+        // pixels; the display transform already scales tiles to fit, so the
+        // framing is right even though the resampling is not previewed.
+        plan_vec.retain(|item| !matches!(item, PlanItem::Step(_, m) if is_resize(&m.kind)));
 
         if plan_vec.is_empty() {
             return;
         }
 
-        // Document geometry for this plan. Every stage is passthrough today, so
-        // the executor can keep treating the source size as chain-wide; the
-        // assert makes that assumption explicit and will fire the moment a
-        // resizing modifier lands, pointing at the code that has to stop
-        // assuming it.
+        // With resize removed, every remaining stage must be passthrough. This
+        // assert now guards the *invariant the executor relies on* rather than
+        // the absence of resize, so a future geometry-changing modifier still
+        // trips it.
         let source_spec = ImageSpec::new(source.full_width, source.full_height);
         debug_assert!(
             infer_specs(source_spec, &plan_vec)
