@@ -14,9 +14,19 @@
 //! is a policy we impose.
 //!
 //! Visibility does the real work. A viewport shows a handful of tiles at any
-//! zoom, so keeping the visible set plus a small margin bounds residency near
-//! the working set on every machine, whatever its VRAM. The byte ceiling is a
-//! backstop for the case visibility cannot help with, described below.
+//! zoom, so keeping exactly the visible set bounds residency near the working
+//! set on every machine, whatever its VRAM. The byte ceiling is a backstop for
+//! the case visibility cannot help with, described below.
+//!
+//! There is deliberately no prefetch margin. An earlier version kept a ring of
+//! off-screen neighbours so panning would not stall, which was wrong three ways:
+//! a ring's perimeter costs more than the visible set it surrounds (8 extra
+//! tiles around a single visible one, 32 around a 7x7 view), it prefetches all
+//! eight directions to cover movement in one, and under the default budget it
+//! never got any tiles at all because the visible set had already spent it. If
+//! panning stalls turn out to be a real, measured problem, the fix is a
+//! directional prefetch driven by the pan delta — a few tiles along the axis of
+//! travel — not a ring.
 //!
 //! # When visibility is not enough
 //!
@@ -44,7 +54,7 @@ pub const DEFAULT_BUDGET_BYTES: u64 = 1024 * 1024 * 1024;
 /// What a tile needs from the residency policy this frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TileNeed {
-    /// On screen, or close enough that panning will reach it shortly.
+    /// On screen; must hold GPU memory.
     Resident,
     /// Off screen; its memory can be reclaimed.
     Evictable,
@@ -55,9 +65,6 @@ pub enum TileNeed {
 pub struct TileFacts {
     /// False when the tile is outside the viewport (`tile_ndc_culled`).
     pub visible: bool,
-    /// Rough distance from the viewport in tile widths; 0 when visible. Used to
-    /// keep the nearest off-screen tiles resident so panning does not stall.
-    pub rings_away: u32,
     pub width: u32,
     pub height: u32,
     pub mip_count: u32,
@@ -81,23 +88,14 @@ pub struct Plan {
     pub over_budget: bool,
 }
 
-/// How many rings of off-screen tiles to keep for panning headroom.
-///
-/// One ring is a good trade: it absorbs a pan of up to a tile without a stall,
-/// while costing far less than the visible set itself on a large image. Larger
-/// values erode the point of evicting at all.
-pub const MARGIN_RINGS: u32 = 1;
-
 /// Decides residency for one source.
 ///
-/// Visible tiles are always wanted. Tiles within [`MARGIN_RINGS`] are wanted
-/// next, nearest first. Anything further out is evictable.
+/// Visible tiles are resident; everything else is evictable.
 ///
-/// The budget is applied only to the margin: visible tiles are never demoted,
-/// because a missing visible tile is a hole in the image, whereas a missing
-/// margin tile is only a stall when panning reaches it. If the visible set alone
-/// exceeds the budget, `over_budget` says so and the caller decides how to
-/// degrade.
+/// Visible tiles are never demoted, even over budget: a missing visible tile is
+/// a hole in the image, and no byte ceiling is worth that. When the visible set
+/// alone exceeds the budget, `over_budget` reports it so the caller can degrade
+/// detail — a coarser mip level — while keeping coverage.
 pub fn plan(tiles: &[TileFacts], budget_bytes: u64) -> Plan {
     let mut needs = vec![TileNeed::Evictable; tiles.len()];
     let mut resident_bytes = 0u64;
@@ -109,32 +107,10 @@ pub fn plan(tiles: &[TileFacts], budget_bytes: u64) -> Plan {
         }
     }
 
-    let over_budget = resident_bytes > budget_bytes;
-
-    // Spend whatever is left on the margin, nearest rings first.
-    if !over_budget {
-        let mut margin: Vec<(usize, u32)> = tiles
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| !t.visible && t.rings_away <= MARGIN_RINGS)
-            .map(|(i, t)| (i, t.rings_away))
-            .collect();
-        margin.sort_by_key(|(_, rings)| *rings);
-
-        for (i, _) in margin {
-            let bytes = tiles[i].bytes();
-            if resident_bytes + bytes > budget_bytes {
-                break;
-            }
-            needs[i] = TileNeed::Resident;
-            resident_bytes += bytes;
-        }
-    }
-
     Plan {
+        over_budget: resident_bytes > budget_bytes,
         needs,
         resident_bytes,
-        over_budget,
     }
 }
 
@@ -144,10 +120,9 @@ mod tests {
 
     const HUGE: u64 = u64::MAX;
 
-    fn tile(visible: bool, rings_away: u32) -> TileFacts {
+    fn tile(visible: bool) -> TileFacts {
         TileFacts {
             visible,
-            rings_away,
             width: 1024,
             height: 1024,
             mip_count: 1,
@@ -155,29 +130,14 @@ mod tests {
     }
 
     fn one_tile_bytes() -> u64 {
-        tile(true, 0).bytes()
+        tile(true).bytes()
     }
 
     #[test]
-    fn visible_tiles_are_resident() {
-        let p = plan(&[tile(true, 0), tile(false, 9)], HUGE);
+    fn visible_tiles_are_resident_and_others_are_not() {
+        let p = plan(&[tile(true), tile(false)], HUGE);
         assert_eq!(p.needs, [TileNeed::Resident, TileNeed::Evictable]);
-    }
-
-    #[test]
-    fn distant_tiles_are_evictable() {
-        let p = plan(&[tile(false, MARGIN_RINGS + 1)], HUGE);
-        assert_eq!(p.needs, [TileNeed::Evictable]);
-    }
-
-    #[test]
-    fn the_margin_ring_is_kept_for_panning() {
-        let p = plan(&[tile(true, 0), tile(false, 1)], HUGE);
-        assert_eq!(
-            p.needs,
-            [TileNeed::Resident, TileNeed::Resident],
-            "a tile one ring out should stay resident so panning does not stall"
-        );
+        assert_eq!(p.resident_bytes, one_tile_bytes());
     }
 
     #[test]
@@ -188,31 +148,18 @@ mod tests {
         assert!(!p.over_budget);
     }
 
+    /// Residency tracks what is on screen, not how large the image is. This is
+    /// the property the whole design rests on: a 49-tile source with two tiles
+    /// visible must cost two tiles, not 49.
     #[test]
-    fn the_budget_trims_the_margin_before_anything_visible() {
-        // Room for the visible tile and one more, but two margin tiles want in.
-        let budget = one_tile_bytes() * 2;
-        let p = plan(&[tile(true, 0), tile(false, 1), tile(false, 1)], budget);
-        assert_eq!(p.needs[0], TileNeed::Resident, "visible must survive");
-        let kept = p.needs.iter().filter(|n| **n == TileNeed::Resident).count();
-        assert_eq!(
-            kept, 2,
-            "the budget should cap the margin at one extra tile"
-        );
-        assert!(p.resident_bytes <= budget);
-        assert!(!p.over_budget);
-    }
+    fn residency_follows_visibility_not_image_size() {
+        let mut tiles: Vec<TileFacts> = (0..49).map(|_| tile(false)).collect();
+        tiles[10] = tile(true);
+        tiles[11] = tile(true);
 
-    #[test]
-    fn nearer_margin_tiles_win_the_remaining_budget() {
-        let budget = one_tile_bytes() * 2;
-        let p = plan(&[tile(true, 0), tile(false, 2), tile(false, 1)], budget);
-        assert_eq!(
-            p.needs[2],
-            TileNeed::Resident,
-            "the closer margin tile should be preferred"
-        );
-        assert_eq!(p.needs[1], TileNeed::Evictable);
+        let p = plan(&tiles, HUGE);
+        assert_eq!(p.resident_bytes, one_tile_bytes() * 2);
+        assert!(!p.over_budget);
     }
 
     /// The case visibility cannot solve: zoomed out with mipmaps disabled, every
@@ -221,7 +168,7 @@ mod tests {
     /// because a missing visible tile is a hole in the image.
     #[test]
     fn a_visible_set_over_budget_is_reported_not_dropped() {
-        let tiles: Vec<TileFacts> = (0..49).map(|_| tile(true, 0)).collect();
+        let tiles: Vec<TileFacts> = (0..49).map(|_| tile(true)).collect();
         let budget = one_tile_bytes() * 4;
         let p = plan(&tiles, budget);
 
@@ -239,10 +186,10 @@ mod tests {
     /// Mipped tiles cost more, so the same budget holds fewer of them.
     #[test]
     fn mip_chains_are_charged_against_the_budget() {
-        let mut mipped = tile(false, 1);
+        let mut mipped = tile(false);
         mipped.mip_count = 11;
         assert!(
-            mipped.bytes() > tile(false, 1).bytes(),
+            mipped.bytes() > tile(false).bytes(),
             "a mip chain must be accounted for, not ignored"
         );
     }
@@ -253,34 +200,29 @@ mod tests {
     ///
     /// Nothing enforces this directly. It holds because the executor drops
     /// `tile_outputs[ti]` for every tile failing `tile_ndc_culled`, and this
-    /// policy only ever evicts tiles that are not visible. The evicted set is
-    /// therefore a subset of the culled set. That relationship is the invariant;
-    /// this test pins it so a change to either side has to confront it.
+    /// policy evicts exactly the tiles that are not visible — the two sets are
+    /// identical. This test pins that equivalence so a change to either side has
+    /// to confront it.
     #[test]
-    fn evicted_tiles_are_always_ones_the_executor_has_already_culled() {
-        let tiles = [
-            tile(true, 0),                 // visible
-            tile(false, 1),                // culled, inside the margin
-            tile(false, MARGIN_RINGS + 5), // culled, outside the margin
-        ];
-        // A budget too small for the margin, forcing the tightest eviction the
-        // policy can produce.
-        let p = plan(&tiles, one_tile_bytes());
+    fn the_evicted_set_is_exactly_the_set_the_executor_culls() {
+        let tiles = [tile(true), tile(false), tile(true), tile(false)];
+        // A budget of zero, so any tendency to evict under pressure shows up.
+        let p = plan(&tiles, 0);
 
         for (i, t) in tiles.iter().enumerate() {
-            if p.needs[i] == TileNeed::Evictable {
-                assert!(
-                    !t.visible,
-                    "tile {i} was evicted while visible; the executor would keep \
-                     its processed output marked valid and show stale pixels"
-                );
-            }
+            let evicted = p.needs[i] == TileNeed::Evictable;
+            assert_eq!(
+                evicted, !t.visible,
+                "tile {i}: eviction must track visibility exactly. Evicting a \
+                 visible tile would leave its processed output marked valid, \
+                 showing stale pixels instead of a gap."
+            );
         }
     }
 
     #[test]
     fn a_zero_budget_still_keeps_visible_tiles() {
-        let p = plan(&[tile(true, 0), tile(false, 1)], 0);
+        let p = plan(&[tile(true), tile(false)], 0);
         assert_eq!(p.needs[0], TileNeed::Resident);
         assert_eq!(p.needs[1], TileNeed::Evictable);
         assert!(p.over_budget);

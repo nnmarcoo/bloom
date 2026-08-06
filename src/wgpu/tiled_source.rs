@@ -49,10 +49,6 @@ pub struct Tile {
     pub width: u32,
     pub height: u32,
     pub mip_count: u32,
-    /// Roughly how many tile-widths outside the viewport this tile sits; 0 when
-    /// visible. Drives the residency margin, so panning does not stall on a tile
-    /// that was evicted just off screen.
-    pub rings_away: u32,
 }
 
 impl Tile {
@@ -408,10 +404,6 @@ impl TiledSource {
                     width: tw,
                     height: th,
                     mip_count,
-                    // Recomputed each frame alongside last_ndc_rect; 0 until
-                    // then, which keeps every tile resident before the first
-                    // transform is known.
-                    rings_away: 0,
                 });
             }
         }
@@ -456,7 +448,6 @@ impl TiledSource {
             .iter()
             .map(|t| residency::TileFacts {
                 visible: !crate::wgpu::view_pipeline::tile_ndc_culled(t.last_ndc_rect),
-                rings_away: t.rings_away,
                 width: t.width,
                 height: t.height,
                 mip_count: t.mip_count,
@@ -474,12 +465,12 @@ impl TiledSource {
                     // identity so it can be rebuilt on demand.
                     //
                     // Safe with respect to ModifierPipeline's cached outputs
-                    // only because the policy evicts nothing that is visible,
-                    // and the executor already drops `tile_outputs[ti]` for
-                    // every tile it culls. Were that to change, an evicted tile
-                    // could keep a processed output marked valid and the
-                    // pipeline would show stale pixels instead of a gap. See
-                    // `residency::tests::evicted_tiles_are_always_ones_the_executor_has_already_culled`.
+                    // because the policy evicts exactly the tiles the executor
+                    // culls, and culling already drops `tile_outputs[ti]`. Were
+                    // the two to diverge, an evicted tile could keep a processed
+                    // output marked valid and the pipeline would show stale
+                    // pixels instead of a gap. See
+                    // `residency::tests::the_evicted_set_is_exactly_the_set_the_executor_culls`.
                     tile.residency = None;
                 }
                 residency::TileNeed::Resident => {
@@ -718,7 +709,6 @@ mod residency_tests {
         // Put every tile far off screen: nothing is visible or in the margin.
         for t in &mut source.tiles {
             t.last_ndc_rect = Some((vec2(50.0, 50.0), vec2(51.0, 51.0)));
-            t.rings_away = 99;
         }
         let bytes = source
             .apply_residency(&device, &queue, &image, ctx, u64::MAX)
@@ -731,7 +721,6 @@ mod residency_tests {
 
         // Bring the first tile back on screen.
         source.tiles[0].last_ndc_rect = Some((vec2(-0.5, -0.5), vec2(0.5, 0.5)));
-        source.tiles[0].rings_away = 0;
         let bytes = source
             .apply_residency(&device, &queue, &image, ctx, u64::MAX)
             .expect("host pixels available");
@@ -766,7 +755,6 @@ mod residency_tests {
         image.release_pixels();
         for t in &mut source.tiles {
             t.last_ndc_rect = Some((vec2(50.0, 50.0), vec2(51.0, 51.0)));
-            t.rings_away = 99;
         }
 
         assert!(
