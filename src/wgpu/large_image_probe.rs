@@ -98,8 +98,8 @@ mod tests {
 
         println!("\n{:-<78}", "");
         println!(
-            "  {:>15} {:>10} {:>14} {:>14} {:>14}",
-            "source", "Gpx", "one copy GB", "host peak GB", "VRAM GB"
+            "  {:>15} {:>8} {:>13} {:>13} {:>11} {:>11}",
+            "source", "Gpx", "one copy GB", "host peak GB", "VRAM GB", "+mips GB"
         );
         println!("{:-<78}", "");
         for (w, h) in [
@@ -111,12 +111,14 @@ mod tests {
         ] {
             let one = full_size_bytes(w, h);
             println!(
-                "  {:>15} {:>10.2} {:>14.1} {:>14.1} {:>14.1}",
+                "  {:>15} {:>8.2} {:>13.1} {:>13.1} {:>11.1} {:>11.1}",
                 format!("{w}x{h}"),
                 (w * h) as f64 / 1e9,
                 gb(one),
                 gb(one * peak_host as f64),
                 gb(one),
+                // A full mip chain converges to 4/3 of the base level.
+                gb(one * 4.0 / 3.0),
             );
         }
         println!("{:-<78}", "");
@@ -126,10 +128,71 @@ mod tests {
              figures above; a 32-bit float source, 2.5x."
         );
         println!(
-            "\n  The crash is residency, not throughput: no amount of shader\n  \
-             tuning changes these numbers. Note also that a single full-size\n  \
-             allocation usually succeeds — it is the several coexisting copies\n  \
-             that exhaust memory, which is why the failure looks intermittent.\n"
+            "\n  VRAM is the binding constraint, not host RAM. Host peak is large\n  \
+             but a workstation can carry it; VRAM cannot. The `mipmap_zoom_out`\n  \
+             preference defaults to on, which adds a full mip chain (~33%) on top\n  \
+             of the figures in the VRAM column.\n\n  \
+             Discrete GPUs in the 8-12GB class therefore cannot hold the source\n  \
+             for a 50000x50000 image at all, before any processing scratch (which\n  \
+             has its own 512MB..4GB budget). `gpu::texture_2d` returns a Texture\n  \
+             rather than a Result, so exhausting VRAM aborts the process instead\n  \
+             of degrading.\n"
+        );
+    }
+
+    /// The largest image whose source tiles fit in this GPU's memory.
+    ///
+    /// wgpu does not expose total VRAM, so this walks real texture allocations
+    /// until one fails, which also exercises the failure mode: `create_texture`
+    /// returns a `Texture` rather than a `Result`, so running out aborts rather
+    /// than returning an error the caller could handle.
+    #[test]
+    #[ignore = "diagnostic; allocates GPU memory; run with --release --ignored --nocapture"]
+    fn probe_vram_ceiling() {
+        use crate::wgpu::test_device::{GPU_LOCK, try_device};
+        use iced::wgpu::{TextureFormat, TextureUsages};
+
+        let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((device, _queue)) = try_device() else {
+            eprintln!("probe_vram_ceiling: no adapter, skipping");
+            return;
+        };
+
+        let limit = device.limits().max_texture_dimension_2d;
+        println!("\nGPU source-tile residency probe");
+        println!("  max_texture_dimension_2d = {limit}");
+
+        // Allocate full-size tiles one at a time, mimicking TiledSource.
+        let tile = limit;
+        let per_tile = full_size_bytes(tile as u64, tile as u64);
+        let mut held = Vec::new();
+        let mut total = 0.0f64;
+        for i in 0..64 {
+            let t = crate::wgpu::gpu::texture_2d(
+                &device,
+                tile,
+                tile,
+                TextureFormat::Rgba8Unorm,
+                TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                Some("vram-probe"),
+            );
+            held.push(t);
+            total += per_tile;
+            if i % 4 == 0 || total > 6e9 {
+                println!("  {:>3} tiles  {:>7.2} GB resident", held.len(), gb(total));
+            }
+            if total > 12e9 {
+                println!("  stopping at 12 GB without a failure");
+                break;
+            }
+        }
+        println!(
+            "\n  Allocated {} tiles of {tile}x{tile} ({:.2} GB) without failing.\n  \
+             Note this only proves the driver accepted the allocations; it may be\n  \
+             spilling to host memory, which is itself a severe slowdown rather\n  \
+             than a clean error.\n",
+            held.len(),
+            gb(total)
         );
     }
 
