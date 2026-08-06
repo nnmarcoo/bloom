@@ -32,6 +32,10 @@ pub struct TileResidency {
     /// at the right scale is reused; one built at a different zoom must be
     /// rebuilt, which is what lets zoom changes take effect.
     pub scale: f32,
+    /// Mip levels this texture actually has. Smaller than the tile's nominal
+    /// `mip_count` when the quality scale shrank it, so anything regenerating
+    /// mips must use this rather than the tile's full-size figure.
+    pub mip_count: u32,
     pub _source_texture: Texture,
     pub source_view: TextureView,
     pub zoom_out_bind_group: BindGroup,
@@ -305,6 +309,14 @@ fn build_residency(
     label: &str,
 ) -> TileResidency {
     let (width, height) = (spec.w, spec.h);
+    // Mip levels must suit the texture actually allocated, not the tile's full
+    // size. A 100x50 tile has 7 levels, but at 1/16 scale it is 6x3, which
+    // supports 3 — asking for 7 is a validation error that aborts the process.
+    let mip_count = if mip_count > 1 {
+        mip_count.min(gpu::hw_mip_count(device_spec.w, device_spec.h))
+    } else {
+        1
+    };
     let source_texture = gpu::texture_2d_mipmapped(
         device,
         device_spec.w,
@@ -406,6 +418,7 @@ fn build_residency(
 
     TileResidency {
         scale: device_spec.w as f32 / spec.w as f32,
+        mip_count,
         _source_texture: source_texture,
         source_view,
         zoom_out_bind_group,
@@ -697,12 +710,12 @@ impl TiledSource {
                 &mut scratch,
             );
 
-            if needs_mips && tile.mip_count > 1 {
+            if needs_mips && res.mip_count > 1 {
                 regen_tile_mipmaps(
                     device,
                     queue,
                     &res._source_texture,
-                    tile.mip_count,
+                    res.mip_count,
                     blit_pipeline,
                     blit_bgl,
                     linear_sampler,
@@ -729,12 +742,12 @@ impl TiledSource {
             let Some(res) = tile.residency.as_ref() else {
                 continue;
             };
-            if tile.mip_count > 1 {
+            if res.mip_count > 1 {
                 gpu::generate_hw_mipmaps(
                     mip_encoder(&mut encoder, device),
                     device,
                     &res._source_texture,
-                    tile.mip_count,
+                    res.mip_count,
                     TextureFormat::Rgba8Unorm,
                     blit_pipeline,
                     blit_bgl,
@@ -1030,6 +1043,87 @@ mod residency_tests {
             quarter.0 < full.0 && quarter.1 < full.1,
             "zooming out should have rebuilt smaller: {full:?} -> {quarter:?}"
         );
+    }
+
+    /// Zooming far out on a small image must not request more mip levels than
+    /// the shrunken texture can hold.
+    ///
+    /// `mip_count` is computed once from the tile's full size, but the texture
+    /// now shrinks with zoom. A 100x50 tile has 7 levels; at 1/16 scale it is
+    /// 6x3, which supports 3. Asking wgpu for 7 aborts the process — the crash
+    /// is a STATUS_STACK_BUFFER_OVERRUN, not a Rust panic, so nothing catches it.
+    #[test]
+    fn zooming_far_out_on_a_small_image_does_not_overrun_mip_levels() {
+        let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((device, queue)) = try_device() else {
+            eprintln!("zooming_far_out_on_a_small_image: no adapter, skipping");
+            return;
+        };
+
+        // Mipmaps on, matching the shipped default.
+        let (w, h) = (100u32, 50u32);
+        let image = ImageData::new(vec![128u8; (w * h * 4) as usize], w, h);
+        let display = DisplayPass::new(&device, TextureFormat::Rgba8Unorm);
+        let (blit_pipeline, blit_bgl) = gpu::blit_pipeline(&device, TextureFormat::Rgba8Unorm);
+        let sampler = device.create_sampler(&iced::wgpu::SamplerDescriptor::default());
+        let mut source = TiledSource::new(
+            &device,
+            &queue,
+            &image,
+            &display,
+            &sampler,
+            &sampler,
+            &sampler,
+            true,
+            &blit_pipeline,
+            &blit_bgl,
+            None,
+        )
+        .expect("tiled source");
+
+        let ctx = ResidencyCtx {
+            display_pass: &display,
+            trilinear_sampler: &sampler,
+            nearest_sampler: &sampler,
+            linear_sampler: &sampler,
+            blit_pipeline: &blit_pipeline,
+            blit_bgl: &blit_bgl,
+            mipmap_zoom_out: true,
+        };
+
+        for t in &mut source.tiles {
+            t.last_ndc_rect = Some((vec2(-0.5, -0.5), vec2(0.5, 0.5)));
+        }
+
+        // Sweep out to extreme zoom, the way scrolling does.
+        for phys in [0.5f32, 0.25, 0.125, 0.0625, 0.03125, 0.015, 0.005, 0.001] {
+            source.physical_scale = phys;
+            source
+                .apply_residency(&device, &queue, &image, ctx, u64::MAX)
+                .expect("host pixels available");
+
+            for (i, t) in source.tiles.iter().enumerate() {
+                let res = t.residency.as_ref().expect("visible tile is resident");
+                let size = res._source_texture.size();
+                let levels = res._source_texture.mip_level_count();
+                let max_levels = gpu::hw_mip_count(size.width, size.height);
+                assert!(
+                    levels <= max_levels,
+                    "phys={phys}: tile {i} is {}x{} with {levels} mip levels, but                      that size supports at most {max_levels}",
+                    size.width,
+                    size.height
+                );
+                assert_eq!(
+                    levels, res.mip_count,
+                    "phys={phys}: tile {i} records {} mip levels but the texture                      has {levels}; regeneration would address levels that do not                      exist",
+                    res.mip_count
+                );
+            }
+
+            // Regenerating mips walks every level, so it is the other place a
+            // stale count aborts the process.
+            source.regen_mipmaps(&device, &queue, &blit_pipeline, &blit_bgl, &sampler);
+        }
     }
 
     /// Without host pixels an evicted tile cannot be rebuilt, so the policy must
