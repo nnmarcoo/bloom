@@ -232,8 +232,8 @@ impl ViewPipeline {
         for tile in &mut source.tiles {
             let tx = tile.x as f32;
             let ty = tile.y as f32;
-            let tw = tile.width as f32;
-            let th = tile.height as f32;
+            let tw = tile.width() as f32;
+            let th = tile.height() as f32;
 
             let isec_left = crop_left.max(tx);
             let isec_right = crop_right.min(tx + tw);

@@ -441,8 +441,8 @@ impl ModifierPipeline {
                 let cover = o.proc_px.unwrap_or([
                     tile.x as f32,
                     tile.y as f32,
-                    (tile.x + tile.width) as f32,
-                    (tile.y + tile.height) as f32,
+                    (tile.x + tile.width()) as f32,
+                    (tile.y + tile.height()) as f32,
                 ]);
                 if cover[0] < dr[2] && dr[0] < cover[2] && cover[1] < dr[3] && dr[1] < cover[3] {
                     o.valid = false;
@@ -475,8 +475,8 @@ impl ModifierPipeline {
         for t in &source.tiles {
             if !tile_ndc_culled(t.last_ndc_rect) {
                 n_proc += 1;
-                tw = tw.max(t.width);
-                th = th.max(t.height);
+                tw = tw.max(t.width());
+                th = th.max(t.height());
             }
         }
         let fit = fit_process_scale(tw, th, n_proc, 1, process_vram_budget(device), proc_scale);

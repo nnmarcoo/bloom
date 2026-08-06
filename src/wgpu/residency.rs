@@ -41,7 +41,29 @@
 // wiring is the next step; until then the dead-code lint is expected.
 #![allow(dead_code)]
 
+use crate::modifiers::plan::ImageSpec;
 use crate::wgpu::tiled_source::tile_resident_bytes;
+
+/// The resolution to load source tiles at, for a given zoom.
+///
+/// Zoomed out, a tile is drawn into far fewer pixels than it contains, so
+/// loading it at full resolution spends VRAM on detail the display cannot
+/// resolve. Fitting a 50000x50000 image to a 4K screen is a ~13x reduction: at
+/// full resolution its tiles want 13.15GB, at 1/8 they want 0.21GB, and 1/8 is
+/// still finer than the screen can show.
+///
+/// Deliberately the same formula the processing path uses for `proc_scale`,
+/// including snapping *up* to a power of two. The snapping is what keeps
+/// residency stable — a continuous zoom produces only five distinct levels
+/// between 0.05 and 1.0, so scrolling does not thrash tiles in and out.
+///
+/// Capped at 1.0: there is no more detail in the source than the source has.
+pub fn tile_scale_for_zoom(physical_scale: f32) -> f32 {
+    if physical_scale <= 0.0 {
+        return 1.0;
+    }
+    physical_scale.log2().ceil().exp2().min(1.0)
+}
 
 /// Default ceiling on source-tile VRAM.
 ///
@@ -65,14 +87,24 @@ pub enum TileNeed {
 pub struct TileFacts {
     /// False when the tile is outside the viewport (`tile_ndc_culled`).
     pub visible: bool,
-    pub width: u32,
-    pub height: u32,
+    /// The tile's document geometry — its size in the source image, independent
+    /// of what resolution we choose to load it at.
+    pub spec: ImageSpec,
+    /// Runtime quality factor from [`tile_scale_for_zoom`]. Combined with `spec`
+    /// this gives the texture actually allocated.
+    pub scale: f32,
     pub mip_count: u32,
 }
 
 impl TileFacts {
+    /// The texture size this tile will actually occupy.
+    pub fn device_spec(&self) -> ImageSpec {
+        self.spec.scaled(self.scale)
+    }
+
     fn bytes(&self) -> u64 {
-        tile_resident_bytes(self.width, self.height, self.mip_count)
+        let d = self.device_spec();
+        tile_resident_bytes(d.w, d.h, self.mip_count)
     }
 }
 
@@ -123,8 +155,8 @@ mod tests {
     fn tile(visible: bool) -> TileFacts {
         TileFacts {
             visible,
-            width: 1024,
-            height: 1024,
+            spec: ImageSpec::new(1024, 1024),
+            scale: 1.0,
             mip_count: 1,
         }
     }
@@ -180,6 +212,75 @@ mod tests {
         assert!(
             p.resident_bytes > budget,
             "resident_bytes should report the real demand, not a clamped figure"
+        );
+    }
+
+    /// Zooming out must reduce what a tile costs, not just what is drawn. This
+    /// is the mechanism that makes a gigapixel image viewable: fit-to-screen
+    /// loads eighth-resolution tiles, which is still finer than the display.
+    #[test]
+    fn zooming_out_reduces_what_a_tile_costs() {
+        let full = tile(true);
+        let mut eighth = tile(true);
+        eighth.scale = 0.125;
+
+        assert_eq!(eighth.device_spec(), ImageSpec::new(128, 128));
+        assert_eq!(
+            eighth.bytes() * 64,
+            full.bytes(),
+            "an eighth in each axis is a 64th of the pixels"
+        );
+    }
+
+    /// The scale never inflates a tile past its own resolution: there is no more
+    /// detail in the source than the source has.
+    #[test]
+    fn tile_scale_is_capped_at_full_resolution() {
+        assert_eq!(tile_scale_for_zoom(4.0), 1.0);
+        assert_eq!(tile_scale_for_zoom(1.0), 1.0);
+        assert_eq!(
+            tile_scale_for_zoom(0.0),
+            1.0,
+            "degenerate zoom must be safe"
+        );
+    }
+
+    /// Snapping to powers of two is what keeps residency stable while zooming;
+    /// without it every scroll tick would resize every tile.
+    #[test]
+    fn tile_scale_snaps_up_to_powers_of_two() {
+        assert_eq!(tile_scale_for_zoom(0.5), 0.5);
+        assert_eq!(tile_scale_for_zoom(0.3), 0.5, "snaps up, never down");
+        assert_eq!(tile_scale_for_zoom(0.26), 0.5);
+        assert_eq!(tile_scale_for_zoom(0.25), 0.25);
+        // 50000x50000 fit to a 4K screen.
+        assert_eq!(tile_scale_for_zoom(3840.0 / 50000.0), 0.125);
+    }
+
+    /// The motivating case end to end: a gigapixel source zoomed to fit must
+    /// cost a fraction of what it costs at full resolution.
+    #[test]
+    fn a_gigapixel_source_zoomed_to_fit_is_affordable() {
+        let scale = tile_scale_for_zoom(3840.0 / 50000.0);
+        let tiles: Vec<TileFacts> = (0..49)
+            .map(|_| TileFacts {
+                visible: true,
+                spec: ImageSpec::new(8192, 8192),
+                scale,
+                mip_count: 1,
+            })
+            .collect();
+
+        let p = plan(&tiles, DEFAULT_BUDGET_BYTES);
+        assert!(
+            !p.over_budget,
+            "zoomed to fit, a 50000^2 source should fit the default budget;              got {} bytes",
+            p.resident_bytes
+        );
+        assert!(
+            p.resident_bytes < 1_000_000_000,
+            "expected well under a gigabyte, got {}",
+            p.resident_bytes
         );
     }
 

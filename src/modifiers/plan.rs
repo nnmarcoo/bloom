@@ -51,6 +51,20 @@ impl ImageSpec {
             h: h.max(1),
         }
     }
+
+    /// This spec reduced by a runtime quality factor.
+    ///
+    /// The result is a *device* size, not document geometry: it says how large a
+    /// texture to allocate, never how large the image is. Keeping the scale
+    /// outside `ImageSpec` is deliberate — a spec that carried its own quality
+    /// factor could let a preview's reduction leak into an export, which is the
+    /// mistake this type exists to prevent.
+    pub fn scaled(self, scale: f32) -> Self {
+        Self::new(
+            (self.w as f32 * scale).round() as u32,
+            (self.h as f32 * scale).round() as u32,
+        )
+    }
 }
 
 /// The input and output geometry of one plan item.

@@ -62,8 +62,8 @@ fn pr_with_roi(
 ) -> ProcRect {
     let tl = tile.x as f32;
     let tt = tile.y as f32;
-    let fw = tl + tile.width as f32;
-    let fh = tt + tile.height as f32;
+    let fw = tl + tile.width() as f32;
+    let fh = tt + tile.height() as f32;
     let margin = if downscale { 0.0 } else { ROI_MARGIN_PX };
     let s = snap_region(
         [
@@ -85,7 +85,7 @@ fn pr_with_roi(
     };
     let src = UvRect {
         origin: [tl / full_w, tt / full_h],
-        size: [tile.width as f32 / full_w, tile.height as f32 / full_h],
+        size: [tile.width() as f32 / full_w, tile.height() as f32 / full_h],
     };
     ProcRect {
         px,
@@ -195,8 +195,8 @@ impl ModifierPipeline {
                 let tile_info = TileInfo {
                     tile_x: tile.x,
                     tile_y: tile.y,
-                    tile_w: tile.width,
-                    tile_h: tile.height,
+                    tile_w: tile.width(),
+                    tile_h: tile.height(),
                     full_w: source.full_width,
                     full_h: source.full_height,
                 };
@@ -296,8 +296,8 @@ impl ModifierPipeline {
                 u_disp = [
                     u_disp[0].min(t.x as f32),
                     u_disp[1].min(t.y as f32),
-                    u_disp[2].max((t.x + t.width) as f32),
-                    u_disp[3].max((t.y + t.height) as f32),
+                    u_disp[2].max((t.x + t.width()) as f32),
+                    u_disp[3].max((t.y + t.height()) as f32),
                 ];
             }
         }
@@ -355,8 +355,8 @@ impl ModifierPipeline {
                 [
                     g[0].max(tile.x as f32),
                     g[1].max(tile.y as f32),
-                    g[2].min((tile.x + tile.width) as f32),
-                    g[3].min((tile.y + tile.height) as f32),
+                    g[2].min((tile.x + tile.width()) as f32),
+                    g[3].min((tile.y + tile.height()) as f32),
                 ]
             });
             if roi[2] <= roi[0] || roi[3] <= roi[1] {
@@ -992,8 +992,8 @@ impl ModifierPipeline {
             let tr = [
                 tile.x as f32,
                 tile.y as f32,
-                (tile.x + tile.width) as f32,
-                (tile.y + tile.height) as f32,
+                (tile.x + tile.width()) as f32,
+                (tile.y + tile.height()) as f32,
             ];
             let ix = [
                 tr[0].max(rect[0]),
@@ -1033,8 +1033,8 @@ impl ModifierPipeline {
             let tr = [
                 tile.x as f32,
                 tile.y as f32,
-                (tile.x + tile.width) as f32,
-                (tile.y + tile.height) as f32,
+                (tile.x + tile.width()) as f32,
+                (tile.y + tile.height()) as f32,
             ];
             let uniforms = build_segment_uniforms(
                 &[],

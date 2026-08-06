@@ -4,6 +4,7 @@ use iced::wgpu::{
     Sampler, TexelCopyBufferLayout, Texture, TextureFormat, TextureUsages, TextureView,
 };
 
+use crate::modifiers::plan::ImageSpec;
 use crate::wgpu::{
     error::ViewError,
     gpu,
@@ -46,8 +47,10 @@ pub struct Tile {
     pub isec_px: Option<[f32; 4]>,
     pub x: u32,
     pub y: u32,
-    pub width: u32,
-    pub height: u32,
+    /// The tile's document geometry: its size in the source image. What
+    /// resolution it is actually loaded at is a separate runtime decision, made
+    /// by [`crate::wgpu::residency`].
+    pub spec: ImageSpec,
     pub mip_count: u32,
 }
 
@@ -68,10 +71,21 @@ impl Tile {
         })
     }
 
-    /// The bytes this tile occupies in VRAM while resident, mip chain included.
+    /// The bytes this tile occupies in VRAM at the given quality scale, mip
+    /// chain included.
     #[allow(dead_code)] // Used by tests; production caller arrives with the render-loop wiring.
-    pub fn resident_bytes(&self) -> u64 {
-        tile_resident_bytes(self.width, self.height, self.mip_count)
+    pub fn resident_bytes(&self, scale: f32) -> u64 {
+        let d = self.spec.scaled(scale);
+        tile_resident_bytes(d.w, d.h, self.mip_count)
+    }
+
+    /// Convenience for the common `tile.spec.w` / `tile.spec.h` reads.
+    pub fn width(&self) -> u32 {
+        self.spec.w
+    }
+
+    pub fn height(&self) -> u32 {
+        self.spec.h
     }
 }
 
@@ -401,8 +415,7 @@ impl TiledSource {
                     isec_px: None,
                     x: tx,
                     y: ty,
-                    width: tw,
-                    height: th,
+                    spec: ImageSpec::new(tw, th),
                     mip_count,
                 });
             }
@@ -443,13 +456,18 @@ impl TiledSource {
             return None;
         }
 
+        // Zoom decides how much detail is worth loading. Zoomed out, a tile is
+        // drawn into far fewer pixels than it holds, so full resolution would
+        // spend VRAM on detail the display cannot resolve.
+        let scale = residency::tile_scale_for_zoom(self.physical_scale);
+
         let facts: Vec<residency::TileFacts> = self
             .tiles
             .iter()
             .map(|t| residency::TileFacts {
                 visible: !crate::wgpu::view_pipeline::tile_ndc_culled(t.last_ndc_rect),
-                width: t.width,
-                height: t.height,
+                spec: t.spec,
+                scale,
                 mip_count: t.mip_count,
             })
             .collect();
@@ -484,8 +502,8 @@ impl TiledSource {
                         &tile.uniform_buffer,
                         tile.x,
                         tile.y,
-                        tile.width,
-                        tile.height,
+                        tile.width(),
+                        tile.height(),
                         tile.mip_count,
                         full_width,
                         image_pixels.as_slice(),
@@ -537,8 +555,8 @@ impl TiledSource {
                 &res._source_texture,
                 tile.x,
                 tile.y,
-                tile.width,
-                tile.height,
+                tile.width(),
+                tile.height(),
                 full_width,
                 image_pixels.as_slice(),
                 &mut scratch,
@@ -733,7 +751,8 @@ mod residency_tests {
             source.tiles[0].source_view().is_some(),
             "rehydrated tiles must be sampleable again"
         );
-        assert_eq!(bytes, source.tiles[0].resident_bytes());
+        let scale = residency::tile_scale_for_zoom(source.physical_scale);
+        assert_eq!(bytes, source.tiles[0].resident_bytes(scale));
     }
 
     /// Without host pixels an evicted tile cannot be rebuilt, so the policy must

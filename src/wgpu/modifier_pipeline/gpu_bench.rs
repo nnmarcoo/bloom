@@ -90,8 +90,8 @@ mod tests {
         for t in &mut source.tiles {
             let tl = t.x as f32;
             let tt = t.y as f32;
-            let tr = tl + t.width as f32;
-            let tb = tt + t.height as f32;
+            let tr = tl + t.width() as f32;
+            let tb = tt + t.height() as f32;
             let isect = [
                 view[0].max(tl),
                 view[1].max(tt),
