@@ -13,6 +13,7 @@ pub mod menu;
 pub mod menu_button;
 pub mod modifier_picker;
 pub mod number_entry;
+pub mod option_picker;
 pub mod scale_entry;
 pub mod slide_in;
 pub mod text_overlay;

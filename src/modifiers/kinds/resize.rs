@@ -9,7 +9,7 @@ use crate::modifiers::plan::ImageSpec;
 use crate::modifiers::{InputRequest, ModifierImpl, ModifierParam, ViewCtx};
 use crate::widgets::value_slider::Fmt;
 
-use super::{finish, hash_f32, value_row};
+use super::{finish, hash_f32, picker_row, toggle_row, value_row};
 
 /// How a resize decides its target dimensions.
 ///
@@ -189,27 +189,27 @@ impl ModifierImpl for Resize {
             ResizeMode::Percent => "Width (%)",
         };
 
-        // Every control in this app is a slider -- there is no checkbox or
-        // dropdown widget yet -- so the discrete settings are exposed as
-        // stepped sliders rather than being unreachable. Height was previously
-        // hidden whenever `lock_aspect` was on, which it is by default, so the
-        // modifier shipped with exactly one usable control.
+        const MODES: [(ResizeMode, &str); 2] =
+            [(ResizeMode::Percent, "%"), (ResizeMode::Pixels, "px")];
+        const FILTERS: [(ResizeFilter, &str); 3] = [
+            (ResizeFilter::Nearest, "Nearest"),
+            (ResizeFilter::Bilinear, "Bilinear"),
+            (ResizeFilter::Lanczos, "Lanczos"),
+        ];
+
         let mut rows = column![
+            picker_row("Units", &MODES, self.mode, move |m| {
+                EditMsg::Update(index, ModifierParam::ResizeMode(m)).into()
+            }),
             value_row(unit, self.width, 1.0..=max_w, 1.0, fmt, move |v| {
                 EditMsg::Update(index, ModifierParam::ResizeWidth(v)).into()
             }),
-            value_row(
-                "Lock aspect",
-                if self.lock_aspect { 1.0 } else { 0.0 },
-                0.0..=1.0,
-                1.0,
-                Fmt::num(0),
-                move |v| {
-                    EditMsg::Update(index, ModifierParam::ResizeLockAspect(v >= 0.5)).into()
-                },
-            ),
         ];
 
+        // Height is only meaningful when the aspect is unlocked; with the lock
+        // on it is derived from width, so showing a dead control would be
+        // worse than hiding it. The toggle immediately below makes the state
+        // visible and reversible, which is what was missing before.
         if !self.lock_aspect {
             let height_label = match self.mode {
                 ResizeMode::Pixels => "Height (px)",
@@ -225,46 +225,13 @@ impl ModifierImpl for Resize {
             ));
         }
 
-        // 0 = Percent, 1 = Pixels.
-        rows = rows.push(value_row(
-            "Units: 0=%  1=px",
-            match self.mode {
-                ResizeMode::Percent => 0.0,
-                ResizeMode::Pixels => 1.0,
-            },
-            0.0..=1.0,
-            1.0,
-            Fmt::num(0),
-            move |v| {
-                let m = if v >= 0.5 {
-                    ResizeMode::Pixels
-                } else {
-                    ResizeMode::Percent
-                };
-                EditMsg::Update(index, ModifierParam::ResizeMode(m)).into()
-            },
-        ));
+        rows = rows.push(toggle_row("Lock ratio", self.lock_aspect, move |v| {
+            EditMsg::Update(index, ModifierParam::ResizeLockAspect(v)).into()
+        }));
 
-        // 0 = Nearest, 1 = Bilinear, 2 = Lanczos.
-        rows = rows.push(value_row(
-            "Filter: 0=near 1=bilin 2=lanc",
-            match self.filter {
-                ResizeFilter::Nearest => 0.0,
-                ResizeFilter::Bilinear => 1.0,
-                ResizeFilter::Lanczos => 2.0,
-            },
-            0.0..=2.0,
-            1.0,
-            Fmt::num(0),
-            move |v| {
-                let f = match v.round() as i32 {
-                    0 => ResizeFilter::Nearest,
-                    1 => ResizeFilter::Bilinear,
-                    _ => ResizeFilter::Lanczos,
-                };
-                EditMsg::Update(index, ModifierParam::ResizeFilter(f)).into()
-            },
-        ));
+        rows = rows.push(picker_row("Filter", &FILTERS, self.filter, move |f| {
+            EditMsg::Update(index, ModifierParam::ResizeFilter(f)).into()
+        }));
 
         finish(rows)
     }

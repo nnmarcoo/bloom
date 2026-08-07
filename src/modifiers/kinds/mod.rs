@@ -103,6 +103,97 @@ fn value_row<'a>(
     .into()
 }
 
+/// A labelled on/off switch.
+///
+/// Boolean parameters were previously expressed as 0..=1 sliders, which reads
+/// as a continuous value and gives no affordance for "this is a state, not a
+/// magnitude".
+fn toggle_row<'a>(
+    label: &'a str,
+    value: bool,
+    on_change: impl Fn(bool) -> Message + 'static,
+) -> Element<'a, Message> {
+    const TRACK_W: f32 = 26.0;
+    const TRACK_H: f32 = 14.0;
+    const KNOB: f32 = 10.0;
+
+    let knob = iced::widget::container(
+        iced::widget::Space::new()
+            .width(Length::Fixed(KNOB))
+            .height(Length::Fixed(KNOB)),
+    )
+    .style(move |theme: &iced::Theme| {
+        let palette = theme.extended_palette();
+        iced::widget::container::Style {
+            background: Some(iced::Background::Color(if value {
+                palette.primary.base.text
+            } else {
+                palette.background.base.text.scale_alpha(0.75)
+            })),
+            border: iced::border::rounded(KNOB / 2.0),
+            ..Default::default()
+        }
+    });
+
+    // The knob is pushed to one end with a Space, so the track needs no
+    // absolute positioning and stays correct under any theme or scale factor.
+    let track_inner = if value {
+        row![iced::widget::Space::new().width(Length::Fill), knob]
+    } else {
+        row![knob, iced::widget::Space::new().width(Length::Fill)]
+    };
+
+    let track = iced::widget::container(track_inner.align_y(Vertical::Center))
+        .width(Length::Fixed(TRACK_W))
+        .height(Length::Fixed(TRACK_H))
+        .padding([2, 2])
+        .style(move |theme: &iced::Theme| {
+            let palette = theme.extended_palette();
+            iced::widget::container::Style {
+                background: Some(iced::Background::Color(if value {
+                    palette.primary.base.color
+                } else {
+                    palette.background.strong.color
+                })),
+                border: iced::border::rounded(TRACK_H / 2.0),
+                ..Default::default()
+            }
+        });
+
+    row![
+        iced::widget::text(label)
+            .size(10)
+            .width(Length::Fixed(58.0))
+            .align_x(Horizontal::Left),
+        iced::widget::button(track)
+            .padding(0)
+            .on_press_with(move || on_change(!value))
+            .style(|_theme, _status| iced::widget::button::Style::default()),
+    ]
+    .align_y(Vertical::Center)
+    .spacing(4)
+    .into()
+}
+
+/// A labelled dropdown for a small fixed set of options.
+fn picker_row<'a, T: Copy + PartialEq + 'a>(
+    label: &'a str,
+    options: &'a [(T, &'a str)],
+    selected: T,
+    on_change: impl Fn(T) -> Message + 'a,
+) -> Element<'a, Message> {
+    row![
+        iced::widget::text(label)
+            .size(10)
+            .width(Length::Fixed(58.0))
+            .align_x(Horizontal::Left),
+        crate::widgets::option_picker::OptionPicker::new(options, selected, on_change),
+    ]
+    .align_y(Vertical::Center)
+    .spacing(4)
+    .into()
+}
+
 fn number_row<'a>(
     label: &'a str,
     value: f32,
