@@ -131,7 +131,6 @@ pub fn update(
             let is_crop = matches!(t, ModifierType::Crop);
             let is_text = matches!(t, ModifierType::Text);
             let is_draw = matches!(t, ModifierType::Drawing);
-            let is_resize = matches!(t, ModifierType::Resize);
             let already_has_crop =
                 is_crop && program.modifiers.iter().any(|m| m.kind.as_crop().is_some());
             if already_has_crop {
@@ -165,24 +164,8 @@ pub fn update(
             } else {
                 ModifierKind::from(t)
             };
-            // Appending after a resize would strand it mid-chain, which the GPU
-            // preview cannot render. Insert before the trailing resize instead
-            // so the new modifier still takes effect and resize stays last.
-            let insert_at = if is_resize {
-                program.modifiers.len()
-            } else {
-                program
-                    .modifiers
-                    .iter()
-                    .rposition(|m| {
-                        m.has_visible_effect() && matches!(m.kind, ModifierKind::Resize(_))
-                    })
-                    .unwrap_or(program.modifiers.len())
-            };
-            program
-                .modifiers_mut()
-                .insert(insert_at, Modifier::new(kind));
-            let idx = insert_at;
+            program.modifiers_mut().push(Modifier::new(kind));
+            let idx = program.modifiers.len() - 1;
             state.active = Some(idx);
             if is_text {
                 state.selected_tool = Tool::Text;
@@ -255,18 +238,6 @@ pub fn update(
                 let m = program.modifiers_mut().remove(src);
                 let insert_at = if tgt > src { tgt - 1 } else { tgt };
                 program.modifiers_mut().insert(insert_at, m);
-
-                // The GPU preview renders the chain in one coordinate space, so
-                // it drops resizes rather than rendering the stages after one.
-                // Allowing this reorder would make the preview disagree with
-                // the export, so undo it and say why.
-                if crate::modifiers::plan::resize_is_mid_chain(&program.modifiers) {
-                    let m = program.modifiers_mut().remove(insert_at);
-                    program.modifiers_mut().insert(src, m);
-                    return Task::done(Message::Notify(Notification::warning(
-                        "Resize must be the last modifier in the stack.",
-                    )));
-                }
                 program.mark_dirty();
                 if let Some(active) = state.active {
                     state.active = Some(if active == src {

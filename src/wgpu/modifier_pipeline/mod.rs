@@ -496,16 +496,17 @@ impl ModifierPipeline {
         // dimensions mid-chain would put the stages on either side of it in
         // different spaces, which this executor cannot express.
         //
-        // Resize is therefore dropped from the *preview* plan. Doing so is
-        // sound only because resampling commutes with nothing downstream of it
-        // here: `resize_is_last_or_absent` rejects the mid-chain case at the
-        // edit layer, so anything dropped has no successor whose result could
-        // depend on it. Export is unaffected -- it runs `cpu::render_full`,
-        // which honours the resize.
+        // Resize is therefore dropped from the *preview* plan. Export is
+        // unaffected: it runs `cpu::render_full`, which honours the resize at
+        // any position.
         //
-        // The visible consequence is that the preview shows the pre-resize
-        // pixels; the display transform already scales tiles to fit, so the
-        // framing is right even though the resampling is not previewed.
+        // KNOWN LIMITATION, not a design choice. When a resize sits mid-chain
+        // the preview renders the stages after it at the pre-resize geometry,
+        // so it disagrees with the export -- a blur following a 50% resize
+        // previews at half the relative radius it will export with. Nothing
+        // prevents that placement; the fix is teaching this executor per-stage
+        // geometry (chain segmentation), not restricting where the user may
+        // put a modifier.
         plan_vec.retain(|item| !matches!(item, PlanItem::Step(_, m) if is_resize(&m.kind)));
 
         if plan_vec.is_empty() {

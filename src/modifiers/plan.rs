@@ -107,26 +107,6 @@ pub fn chain_output_spec(source: ImageSpec, plan: &[PlanItem]) -> ImageSpec {
         .map_or(source, |s| s.output)
 }
 
-/// Whether a resize sits anywhere other than the end of the stack.
-///
-/// The GPU preview executes the chain in one coordinate space, so it cannot
-/// render a stage that follows a dimension change. Until the tiler learns
-/// per-stage geometry, a resize is only supported as the final visible
-/// modifier; the edit layer uses this to refuse the placements that would make
-/// the preview and the export disagree.
-///
-/// Modifiers with no visible effect do not count as "after" a resize, since
-/// they are dropped from the plan anyway.
-pub fn resize_is_mid_chain(modifiers: &[Modifier]) -> bool {
-    let last_visible = modifiers
-        .iter()
-        .rposition(|m| m.has_visible_effect())
-        .unwrap_or(0);
-    modifiers.iter().enumerate().any(|(i, m)| {
-        m.has_visible_effect() && matches!(m.kind, ModifierKind::Resize(_)) && i != last_visible
-    })
-}
-
 /// Reduces a modifier stack to its execution plan.
 pub fn plan_modifiers(modifiers: &[Modifier]) -> Vec<PlanItem<'_>> {
     let mut plan: Vec<PlanItem> = Vec::new();
@@ -286,34 +266,6 @@ mod tests {
         let plan = plan_modifiers(&mods);
         assert_eq!(plan.len(), 1);
         assert_eq!(chain_output_spec(SRC, &plan), SRC);
-    }
-
-    #[test]
-    fn resize_at_the_end_is_not_mid_chain() {
-        assert!(!resize_is_mid_chain(&[exposure(), blur(), resize_pct(50.0)]));
-        assert!(!resize_is_mid_chain(&[resize_pct(50.0)]));
-        assert!(!resize_is_mid_chain(&[exposure(), blur()]));
-    }
-
-    #[test]
-    fn resize_followed_by_a_visible_stage_is_mid_chain() {
-        assert!(resize_is_mid_chain(&[resize_pct(50.0), blur()]));
-        assert!(resize_is_mid_chain(&[
-            exposure(),
-            resize_pct(50.0),
-            exposure()
-        ]));
-        // Two resizes: the first one has a successor, so it counts.
-        assert!(resize_is_mid_chain(&[resize_pct(50.0), resize_pct(50.0)]));
-    }
-
-    /// An invisible trailing modifier does not strand a resize mid-chain,
-    /// because planning drops it before any backend sees it.
-    #[test]
-    fn invisible_trailing_modifiers_do_not_count() {
-        let mut hidden = exposure();
-        hidden.enabled = false;
-        assert!(!resize_is_mid_chain(&[resize_pct(50.0), hidden]));
     }
 
     /// Specs must chain: each stage's input is the previous stage's output.
