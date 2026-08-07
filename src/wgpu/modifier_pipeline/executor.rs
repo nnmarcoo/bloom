@@ -7,10 +7,11 @@ use std::hash::Hasher;
 /// Largest blur kernel radius evaluated directly; above this the pass renders
 /// into a reduced-scale target (`ks`).
 ///
-/// Must equal `MAX_DIRECT_RADIUS` in `modifiers::cpu`, which documents the
-/// measurements behind the value and what lowering it cost. If the two drift
-/// apart, preview and export pick different scales for the same radius.
-const MAX_KERNEL_RADIUS_PX: f32 = 64.0;
+/// Aliased to `modifiers::cpu::MAX_DIRECT_RADIUS` rather than restated, because
+/// if the two drift apart preview and export pick different scales for the same
+/// radius. That file documents the measurements behind the value and what
+/// lowering it cost.
+const MAX_KERNEL_RADIUS_PX: f32 = crate::modifiers::cpu::MAX_DIRECT_RADIUS;
 
 struct Stage {
     tex: Texture,

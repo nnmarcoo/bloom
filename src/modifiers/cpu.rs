@@ -399,9 +399,9 @@ fn apply_pointwise_segment(buf: &mut [u8], img_w: u32, img_h: u32, segment: &[&M
 /// Largest kernel radius, in pixels, evaluated directly. Above this the blur
 /// runs at a reduced scale (see [`blur_full`]).
 ///
-/// Must equal `MAX_KERNEL_RADIUS_PX` in the GPU executor;
-/// `scale_factor_matches_the_gpu_rule` fails if this is changed without
-/// changing that one too.
+/// This is the single definition of the cap: the GPU executor's
+/// `MAX_KERNEL_RADIUS_PX` is an alias for it, so the two cannot drift apart and
+/// make preview and export choose different scales for the same radius.
 ///
 /// # Why 64
 ///
@@ -439,7 +439,7 @@ fn apply_pointwise_segment(buf: &mut [u8], img_w: u32, img_h: u32, segment: &[&M
 /// tap count over every source row (9.4G tap-evaluations) where a separate
 /// 25-tap Lanczos downscale costs 1.1G and shrinks every later pass. The GPU
 /// wins with that structure only because bilinear sampling is free in hardware.
-const MAX_DIRECT_RADIUS: f32 = 64.0;
+pub(crate) const MAX_DIRECT_RADIUS: f32 = 64.0;
 
 /// Gaussian blur, evaluated at a resolution suited to its radius.
 ///
@@ -1258,16 +1258,15 @@ mod scaled_blur_tests {
 
     /// The scale factor must match the GPU's, or preview and export disagree.
     ///
-    /// The cap is asserted literally so that changing it fails here, forcing
-    /// `MAX_KERNEL_RADIUS_PX` in the GPU executor to be changed to match rather
-    /// than silently drifting.
+    /// The cap is asserted literally so that changing it fails here. The GPU
+    /// executor now aliases this constant, so it follows automatically; what
+    /// still needs a human is the golden and the expectations below.
     #[test]
     fn scale_factor_matches_the_gpu_rule() {
         assert_eq!(
             MAX_DIRECT_RADIUS, 64.0,
-            "cap changed: update MAX_KERNEL_RADIUS_PX in the GPU executor to \
-             match, re-bless golden_blur_banded_tall_image, and update the \
-             expectations below"
+            "cap changed: re-bless golden_blur_banded_tall_image and update \
+             the expectations below"
         );
         for (radius, want) in [
             (32.0f32, 1.0f32),

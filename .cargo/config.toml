@@ -11,5 +11,16 @@
 #
 # If Bloom ever needs to run on pre-2013 hardware, drop this to `x86-64-v2`
 # (SSE4.2, ~2009) or remove it and take the baseline.
-[build]
+# Scoped per-target rather than under `[build]`: on aarch64 (an Apple Silicon
+# Mac, say) `x86-64-v3` is not a recognized processor. rustc currently only
+# warns and ignores it, but it also warns that this is being phased out and
+# will become a hard error, so a build-wide flag would eventually break those
+# targets outright.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=x86-64-v3"]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=x86-64-v3"]
+
+[target.x86_64-apple-darwin]
 rustflags = ["-C", "target-cpu=x86-64-v3"]
