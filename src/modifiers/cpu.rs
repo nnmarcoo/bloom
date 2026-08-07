@@ -64,6 +64,23 @@ pub(crate) fn source_rows_for_band(
     Some((lo, hi))
 }
 
+/// Total vertical reach of a chain, in source rows.
+///
+/// The sum rather than the max: aprons stack, because each stage's apron is
+/// applied to a region that the next stage's apron already widened. Callers use
+/// this to size a band so the redundant work stays a bounded fraction.
+pub(crate) fn chain_apron_rows(plan: &[PlanItem]) -> u32 {
+    plan.iter()
+        .map(|item| match item {
+            PlanItem::Fused(_) => 0,
+            PlanItem::Step(_, m) => match step_class(&m.kind) {
+                StepClass::Kernel { apron_px, .. } => apron_px.ceil().max(0.0) as u32,
+                _ => 0,
+            },
+        })
+        .sum()
+}
+
 /// True when every stage in the plan can be rendered band-by-band.
 ///
 /// A chain containing a column sort, a diagonal sort, or a full-frame stage
@@ -379,38 +396,100 @@ fn apply_pointwise_segment(buf: &mut [u8], img_w: u32, img_h: u32, segment: &[&M
     });
 }
 
+/// Largest kernel radius, in pixels, evaluated directly.
+///
+/// Matches `MAX_KERNEL_RADIUS_PX` in the GPU executor, which caps its kernel
+/// the same way. Keeping the two equal is what keeps preview and export
+/// agreeing on large blurs -- `golden_blur_banded_tall_image` compares them at
+/// radius 100 and catches any drift.
+const MAX_DIRECT_RADIUS: f32 = 128.0;
+
+/// Gaussian blur, evaluated at a resolution suited to its radius.
+///
+/// A direct convolution is O(radius) per pixel per axis, so a 500px blur on a
+/// 50000x50000 image is ~5 trillion multiply-adds -- minutes of work. Blurring
+/// at reduced scale removes almost all of it.
+///
+/// This is not an approximation of the filter. A Gaussian of sigma `s`
+/// downsampled by `k` is exactly a Gaussian of sigma `s * k`, so blurring a
+/// half-size image with half the radius yields the same Gaussian, sampled more
+/// coarsely. The detail lost to the downsample is detail the blur itself was
+/// about to remove; what changes is the sampling grid, not the filter. This is
+/// the same trade the GPU path already makes, and the same one Photoshop and
+/// Affinity make to keep large blurs interactive.
 fn blur_full(buf: &mut [u8], w: usize, h: usize, radius: f32) {
+    if radius <= 0.0 || w == 0 || h == 0 {
+        return;
+    }
+
+    // Power-of-two scales only, mirroring the GPU's `ks`: they keep the
+    // resample cheap and the radius exactly representable at every level.
+    let ks = (MAX_DIRECT_RADIUS / radius).min(1.0).log2().floor().exp2();
+    if ks >= 1.0 {
+        blur_direct(buf, w, h, radius);
+        return;
+    }
+
+    let sw = ((w as f32 * ks).round() as usize).max(1);
+    let sh = ((h as f32 * ks).round() as usize).max(1);
+
+    // Down, blur at the matching radius, back up. Lanczos on the way down to
+    // avoid aliasing the detail that survives; bilinear on the way back up
+    // because the result is already smooth and Lanczos would only ring.
+    let small = resample(buf, w as u32, h as u32, sw as u32, sh as u32, ResizeFilter::Lanczos);
+    let mut small = small;
+    blur_direct(&mut small, sw, sh, radius * ks);
+    let up = resample(
+        &small,
+        sw as u32,
+        sh as u32,
+        w as u32,
+        h as u32,
+        ResizeFilter::Bilinear,
+    );
+    buf.copy_from_slice(&up);
+}
+
+fn blur_direct(buf: &mut [u8], w: usize, h: usize, radius: f32) {
     let r = radius.ceil() as i32;
     if r <= 0 || w == 0 || h == 0 {
         return;
     }
+
     let sigma = (radius / 3.0).max(0.5);
     let inv = 1.0 / (2.0 * sigma * sigma);
     let kernel: Vec<f32> = (-r..=r).map(|i| (-(i * i) as f32 * inv).exp()).collect();
     let wsum: f32 = kernel.iter().sum();
     let norm: Vec<f32> = kernel.iter().map(|k| k / wsum).collect();
 
-    let mut scratch = vec![0u8; buf.len()];
-    scratch
-        .par_chunks_mut(w * 4)
-        .zip(buf.par_chunks(w * 4))
-        .for_each(|(out_row, in_row)| {
+    // The horizontal pass is row-local, so it runs in place against a one-row
+    // copy per thread. A full-size scratch here doubles the working set for no
+    // benefit -- at a 500px apron on a 50000px-wide band that is hundreds of MB.
+    buf.par_chunks_mut(w * 4).for_each_init(
+        || vec![0u8; w * 4],
+        |row_copy, row| {
+            row_copy.copy_from_slice(row);
             for x in 0..w {
                 let mut acc = [0.0f32; 4];
                 for (ki, &k) in norm.iter().enumerate() {
                     let sx = (x as i32 - r + ki as i32).clamp(0, w as i32 - 1) as usize;
                     let o = sx * 4;
-                    acc[0] += in_row[o] as f32 * k;
-                    acc[1] += in_row[o + 1] as f32 * k;
-                    acc[2] += in_row[o + 2] as f32 * k;
-                    acc[3] += in_row[o + 3] as f32 * k;
+                    acc[0] += row_copy[o] as f32 * k;
+                    acc[1] += row_copy[o + 1] as f32 * k;
+                    acc[2] += row_copy[o + 2] as f32 * k;
+                    acc[3] += row_copy[o + 3] as f32 * k;
                 }
                 let o = x * 4;
                 for c in 0..4 {
-                    out_row[o + c] = (acc[c] + 0.5).clamp(0.0, 255.0) as u8;
+                    row[o + c] = (acc[c] + 0.5).clamp(0.0, 255.0) as u8;
                 }
             }
-        });
+        },
+    );
+
+    // The vertical pass reads across rows, so it does need a copy of the
+    // horizontally-blurred intermediate.
+    let scratch = buf.to_vec();
     buf.par_chunks_mut(w * 4)
         .enumerate()
         .for_each(|(y, out_row)| {
@@ -982,6 +1061,86 @@ mod pointwise_tests {
             [0.3, 0.7, 0.2, 1.0],
         );
         assert!((neutral[0] - 0.3).abs() < 1e-5, "amount 0 is identity");
+    }
+}
+
+#[cfg(test)]
+mod scaled_blur_tests {
+    use super::*;
+
+    fn gradient(w: usize, h: usize) -> Vec<u8> {
+        let mut v = vec![0u8; w * h * 4];
+        for y in 0..h {
+            for x in 0..w {
+                let o = (y * w + x) * 4;
+                v[o] = ((x * 255) / w.max(1)) as u8;
+                v[o + 1] = ((y * 255) / h.max(1)) as u8;
+                v[o + 2] = (((x + y) * 255) / (w + h).max(1)) as u8;
+                v[o + 3] = 255;
+            }
+        }
+        v
+    }
+
+    /// Radii at or below the cap must be byte-identical to the direct kernel:
+    /// the scale path must not perturb the blurs the goldens already pin.
+    #[test]
+    fn radii_within_the_cap_are_unchanged() {
+        let (w, h) = (64usize, 48usize);
+        for radius in [1.0f32, 16.0, 64.0, 128.0] {
+            let src = gradient(w, h);
+            let mut a = src.clone();
+            blur_full(&mut a, w, h, radius);
+            let mut b = src.clone();
+            blur_direct(&mut b, w, h, radius);
+            assert_eq!(a, b, "radius {radius} must take the direct path unchanged");
+        }
+    }
+
+    /// Above the cap the result is the same Gaussian sampled more coarsely, so
+    /// it should stay close to the direct evaluation -- not merely "some blur".
+    #[test]
+    fn scaled_blur_tracks_the_direct_gaussian() {
+        let (w, h) = (512usize, 384usize);
+        for radius in [200.0f32, 400.0] {
+            let src = gradient(w, h);
+            let mut scaled = src.clone();
+            blur_full(&mut scaled, w, h, radius);
+            let mut direct = src.clone();
+            blur_direct(&mut direct, w, h, radius);
+
+            let mean: f64 = scaled
+                .iter()
+                .zip(&direct)
+                .map(|(a, b)| a.abs_diff(*b) as f64)
+                .sum::<f64>()
+                / scaled.len() as f64;
+            assert!(
+                mean <= 2.0,
+                "radius {radius}: scaled blur drifts from the direct Gaussian \
+                 (mean {mean:.2})"
+            );
+        }
+    }
+
+    /// The scale factor must match the GPU's, or preview and export disagree.
+    #[test]
+    fn scale_factor_matches_the_gpu_rule() {
+        for (radius, want) in [(128.0f32, 1.0f32), (256.0, 0.5), (500.0, 0.25), (1000.0, 0.125)] {
+            let ks = (MAX_DIRECT_RADIUS / radius).min(1.0).log2().floor().exp2();
+            assert_eq!(ks, want, "radius {radius} should blur at scale {want}");
+        }
+    }
+
+    #[test]
+    fn large_blur_preserves_a_constant_image() {
+        let (w, h) = (256usize, 192usize);
+        let mut buf = vec![200u8; w * h * 4];
+        blur_full(&mut buf, w, h, 400.0);
+        assert!(
+            buf.iter().all(|&b| (b as i32 - 200).abs() <= 2),
+            "a constant image must survive a large blur unchanged"
+        );
     }
 }
 

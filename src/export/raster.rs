@@ -4,6 +4,23 @@ use super::Geom;
 
 const STRIP_HEIGHT: u32 = 64;
 
+/// Rows of output to render per band when streaming.
+///
+/// A fixed strip is wrong once a chain has any vertical reach: a 500px blur
+/// makes each 64-row strip fetch 1064 source rows, so 94% of the work is
+/// discarded and every row is blurred ~17 times over. Sizing the band against
+/// the chain's own apron keeps that overhead bounded -- the band is at least
+/// four times the apron, so no more than a fifth of the work is redundant.
+///
+/// The cap keeps peak memory in hand: at 50000px wide, 4096 rows is ~800 MB
+/// per buffer, and a kernel stage holds two.
+fn band_height(apron_rows: u32, out_h: u32) -> u32 {
+    const MIN: u32 = 64;
+    const MAX: u32 = 4096;
+    let want = apron_rows.saturating_mul(4).max(MIN);
+    want.clamp(MIN, MAX).min(out_h.max(1))
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct ExportCtx<'a> {
     pub geom: Geom,
@@ -67,11 +84,19 @@ pub(super) fn stream_bands(
     progress: &impl Fn(f32),
 ) -> Result<(), String> {
     let row_bytes = geom.out_w as usize * 4;
-    let mut strip = vec![0u8; row_bytes * STRIP_HEIGHT as usize];
+
+    // Size the band against the chain's vertical reach rather than a fixed
+    // strip: with a large apron a small strip re-renders the same rows many
+    // times over, which dominates the export cost.
+    let apron = crate::modifiers::cpu::chain_apron_rows(&crate::modifiers::plan::plan_modifiers(
+        &data.modifiers,
+    ));
+    let strip_rows = band_height(apron, geom.out_h);
+    let mut strip = vec![0u8; row_bytes * strip_rows as usize];
 
     let mut oy = 0u32;
     while oy < geom.out_h {
-        let strip_h = (geom.out_h - oy).min(STRIP_HEIGHT);
+        let strip_h = (geom.out_h - oy).min(strip_rows);
 
         // Output rows oy..oy+strip_h read processed rows through the crop
         // offset; under rotation 2 the mapping is reversed, so take the span
