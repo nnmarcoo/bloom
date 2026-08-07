@@ -26,6 +26,39 @@ pub(super) fn encode_png(
     )
 }
 
+/// Streams a PNG without ever materializing the processed frame.
+///
+/// Each strip is rendered from the source rows it actually needs and written
+/// straight to the encoder, so peak memory is a band rather than an image.
+/// This is the path that makes a 50000x50000 export possible on an ordinary
+/// machine; `encode_png` above remains for chains that cannot be banded.
+pub(super) fn encode_png_streaming(
+    geom: &Geom,
+    data: &ExportData,
+    text_layers: &[Option<TextRaster>],
+    drawing_layers: &[Option<LayerView<'_>>],
+    pixels: &[u8],
+    path: &Path,
+    progress: &impl Fn(f32),
+) -> Result<(), String> {
+    let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+    let mut enc = png::Encoder::new(BufWriter::new(file), geom.out_w, geom.out_h);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut writer = enc.write_header().map_err(|e| e.to_string())?;
+    let mut stream = writer.stream_writer().map_err(|e| e.to_string())?;
+
+    super::raster::stream_bands(
+        geom,
+        data,
+        text_layers,
+        drawing_layers,
+        pixels,
+        |buf| stream.write_all(buf).map_err(|e| e.to_string()),
+        progress,
+    )
+}
+
 pub(super) fn encode_rgba(
     ctx: &ExportCtx,
     path: &Path,

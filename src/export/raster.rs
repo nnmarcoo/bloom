@@ -47,6 +47,118 @@ pub(super) fn render_strips(
     Ok(())
 }
 
+/// Renders and emits the output strip by strip, rendering each strip's pixels
+/// on demand instead of reading them from a materialized frame.
+///
+/// Only valid when [`super::can_stream_bands`] holds: every stage must be
+/// bandable and the rotation must be 0 or 180, so an output row maps to a
+/// bounded span of processed rows.
+///
+/// Peak memory is one strip plus whatever apron the chain's kernels require --
+/// independent of image height, which is the whole point of the exercise.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn stream_bands(
+    geom: &Geom,
+    data: &super::ExportData,
+    text_layers: &[Option<crate::modifiers::text_raster::TextRaster>],
+    drawing_layers: &[Option<crate::modifiers::drawing_raster::LayerView<'_>>],
+    pixels: &[u8],
+    mut sink: impl FnMut(&[u8]) -> Result<(), String>,
+    progress: &impl Fn(f32),
+) -> Result<(), String> {
+    let row_bytes = geom.out_w as usize * 4;
+    let mut strip = vec![0u8; row_bytes * STRIP_HEIGHT as usize];
+
+    let mut oy = 0u32;
+    while oy < geom.out_h {
+        let strip_h = (geom.out_h - oy).min(STRIP_HEIGHT);
+
+        // Output rows oy..oy+strip_h read processed rows through the crop
+        // offset; under rotation 2 the mapping is reversed, so take the span
+        // that covers both ends rather than assuming an order.
+        let (a, b) = if geom.rotation == 2 {
+            (
+                geom.cy0 + geom.ch.saturating_sub(oy + strip_h),
+                geom.cy0 + geom.ch.saturating_sub(oy),
+            )
+        } else {
+            (geom.cy0 + oy, geom.cy0 + oy + strip_h)
+        };
+        let (py0, py1) = (a.min(geom.img_h), b.min(geom.img_h));
+
+        let band = if py1 > py0 {
+            crate::modifiers::cpu::render_band(
+                &data.modifiers,
+                text_layers,
+                drawing_layers,
+                pixels,
+                data.width,
+                data.height,
+                py0,
+                py1,
+            )
+        } else {
+            Vec::new()
+        };
+
+        let buf = &mut strip[..row_bytes * strip_h as usize];
+        let band_ctx = BandCtx {
+            geom: *geom,
+            band: &band,
+            band_y0: py0,
+            band_h: py1.saturating_sub(py0),
+        };
+        buf.par_chunks_mut(row_bytes)
+            .enumerate()
+            .for_each(|(i, row)| fill_row_from_band(row, oy + i as u32, &band_ctx));
+
+        sink(buf)?;
+        oy += strip_h;
+        progress(oy as f32 / geom.out_h as f32);
+    }
+
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct BandCtx<'a> {
+    geom: Geom,
+    band: &'a [u8],
+    band_y0: u32,
+    band_h: u32,
+}
+
+/// Same mapping as [`fill_row`], but indexing into a band that covers only
+/// processed rows `band_y0..band_y0 + band_h`.
+fn fill_row_from_band(row: &mut [u8], oy: u32, ctx: &BandCtx) {
+    let g = &ctx.geom;
+    let stride = g.img_w as usize * 4;
+    for ox in 0..g.out_w {
+        let (cx, cy) = match g.rotation {
+            0 => (ox, oy),
+            2 => (g.cw - 1 - ox, g.ch - 1 - oy),
+            // Rotations 1 and 3 are excluded by `can_stream_bands`.
+            _ => (ox, oy),
+        };
+
+        let fx = g.cx0 + cx;
+        let fy = g.cy0 + cy;
+        let out = ox as usize * 4;
+
+        if fx >= g.img_w || fy >= g.img_h || fy < ctx.band_y0 || fy >= ctx.band_y0 + ctx.band_h {
+            row[out..out + 4].copy_from_slice(&[0, 0, 0, 0]);
+            continue;
+        }
+
+        let local = (fy - ctx.band_y0) as usize;
+        let src = local * stride + fx as usize * 4;
+        match ctx.band.get(src..src + 4) {
+            Some(p) => row[out..out + 4].copy_from_slice(p),
+            None => row[out..out + 4].copy_from_slice(&[0, 0, 0, 0]),
+        }
+    }
+}
+
 pub(super) fn render_into(buf: &mut [u8], ctx: &ExportCtx) {
     let row_bytes = ctx.out_w() as usize * 4;
     buf.par_chunks_mut(row_bytes)

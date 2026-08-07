@@ -198,6 +198,23 @@ fn process_frame(
     ))
 }
 
+/// Whether this export can stream band by band instead of materializing the
+/// whole processed frame.
+///
+/// Two independent conditions:
+///
+/// * Every stage must be bandable -- no column sort, diagonal sort, or
+///   full-frame stage (chromatic aberration is the common one).
+/// * The output must not be rotated by 90 or 270 degrees. Under those
+///   rotations an output *row* reads a processed *column*, so producing one
+///   strip would require the entire frame anyway.
+///
+/// When this is false the caller renders the whole frame as before. Falling
+/// back is always correct; it just costs the memory this exists to avoid.
+fn can_stream_bands(data: &ExportData) -> bool {
+    data.rotation.is_multiple_of(2) && cpu::plan_is_bandable(&plan_modifiers(&data.modifiers))
+}
+
 pub fn render_still_rgba(data: &ExportData) -> Result<(u32, u32, Vec<u8>), String> {
     let text_layers = text_raster::build_layers(&data.modifiers, data.width, data.height);
     let drawing_rasters = drawing_raster::build_layers(&data.modifiers, data.width, data.height);
@@ -269,12 +286,29 @@ pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Resul
             let still = frames
                 .get(still_index)
                 .ok_or_else(|| "No frame available.".to_string())?;
-            let processed = process_frame(&data, &text_layers, &drawing_layers, &still.pixels)?;
-            let ctx = ctx_with(&geom, &processed);
-            match ext.as_str() {
-                "jpg" | "jpeg" => image::encode_jpeg(&ctx, path, &progress)?,
-                "png" => image::encode_png(&ctx, path, &progress)?,
-                _ => image::encode_rgba(&ctx, path, &progress)?,
+
+            // PNG can stream straight from bands, which keeps peak memory at a
+            // strip instead of a whole processed frame. Everything else still
+            // renders the frame first.
+            if ext == "png" && can_stream_bands(&data) {
+                ensure_available(&still.pixels, data.width, data.height)?;
+                image::encode_png_streaming(
+                    &geom,
+                    &data,
+                    &text_layers,
+                    &drawing_layers,
+                    &still.pixels,
+                    path,
+                    &progress,
+                )?;
+            } else {
+                let processed = process_frame(&data, &text_layers, &drawing_layers, &still.pixels)?;
+                let ctx = ctx_with(&geom, &processed);
+                match ext.as_str() {
+                    "jpg" | "jpeg" => image::encode_jpeg(&ctx, path, &progress)?,
+                    "png" => image::encode_png(&ctx, path, &progress)?,
+                    _ => image::encode_rgba(&ctx, path, &progress)?,
+                }
             }
         }
     }
@@ -411,6 +445,193 @@ mod tests {
             "geom_of must size the processed buffer from the chain"
         );
         assert_eq!((geom.out_w, geom.out_h), (w, h));
+    }
+
+    /// The streamed PNG must be byte-identical to the buffered one.
+    ///
+    /// This is the oracle for banded export: it exercises the real encoder, the
+    /// real crop/rotation mapping, and the band seams together. `render_band`
+    /// has its own byte-equality tests against `render_full`; this checks the
+    /// export layer wired on top of it.
+    fn assert_streamed_png_matches_buffered(
+        label: &str,
+        modifiers: Vec<Modifier>,
+        crop: Option<[f32; 4]>,
+        rotation: u8,
+        w: u32,
+        h: u32,
+    ) {
+        let mut px = vec![0u8; (w * h * 4) as usize];
+        let mut s = 0x1234567u32;
+        for b in px.chunks_mut(4) {
+            for c in b.iter_mut().take(3) {
+                s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+                *c = (s >> 24) as u8;
+            }
+            b[3] = 255;
+        }
+
+        let data = ExportData {
+            source: ExportSource::Frames {
+                frames: vec![ExportFrame {
+                    pixels: Arc::new(px.clone()),
+                    delay: Duration::ZERO,
+                }],
+                still_index: 0,
+            },
+            width: w,
+            height: h,
+            modifiers,
+            crop,
+            rotation,
+            trim: None,
+        };
+        assert!(
+            can_stream_bands(&data),
+            "{label}: chain is not streamable, the test would prove nothing"
+        );
+
+        let geom = geom_of(&data);
+        let dir = std::env::temp_dir().join("bloom-band-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join(format!("{label}-stream.png"));
+        let b = dir.join(format!("{label}-buffer.png"));
+
+        image::encode_png_streaming(&geom, &data, &[], &[], &px, &a, &|_| {}).unwrap();
+
+        let processed = process_frame(&data, &[], &[], &px).unwrap();
+        let ctx = ctx_with(&geom, &processed);
+        image::encode_png(&ctx, &b, &|_| {}).unwrap();
+
+        let (ba, bb) = (std::fs::read(&a).unwrap(), std::fs::read(&b).unwrap());
+        let _ = std::fs::remove_file(&a);
+        let _ = std::fs::remove_file(&b);
+        assert_eq!(
+            ba, bb,
+            "{label}: streamed PNG differs from buffered PNG ({} vs {} bytes)",
+            ba.len(),
+            bb.len()
+        );
+    }
+
+    #[test]
+    fn streamed_png_matches_buffered_pointwise() {
+        use crate::modifiers::kinds::Exposure;
+        assert_streamed_png_matches_buffered(
+            "pointwise",
+            vec![Modifier::new(ModifierKind::Exposure(Exposure {
+                exposure: 0.3,
+            }))],
+            None,
+            0,
+            70,
+            90,
+        );
+    }
+
+    #[test]
+    fn streamed_png_matches_buffered_blur() {
+        use crate::modifiers::kinds::GaussianBlur;
+        assert_streamed_png_matches_buffered(
+            "blur",
+            vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
+                radius: 4.0,
+            }))],
+            None,
+            0,
+            70,
+            90,
+        );
+    }
+
+    /// Crop shifts which processed rows a strip needs; a wrong offset shows up
+    /// as content sliding vertically.
+    #[test]
+    fn streamed_png_matches_buffered_with_crop() {
+        use crate::modifiers::kinds::GaussianBlur;
+        assert_streamed_png_matches_buffered(
+            "crop",
+            vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
+                radius: 3.0,
+            }))],
+            Some([0.2, 0.3, 0.8, 0.9]),
+            0,
+            80,
+            100,
+        );
+    }
+
+    /// Rotation 180 reverses the row mapping, so the band span has to be taken
+    /// from the other end of the image.
+    #[test]
+    fn streamed_png_matches_buffered_rotated_180() {
+        use crate::modifiers::kinds::GaussianBlur;
+        assert_streamed_png_matches_buffered(
+            "rot180",
+            vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
+                radius: 3.0,
+            }))],
+            None,
+            2,
+            64,
+            96,
+        );
+    }
+
+    #[test]
+    fn streamed_png_matches_buffered_vignette() {
+        use crate::modifiers::kinds::Vignette;
+        assert_streamed_png_matches_buffered(
+            "vignette",
+            vec![Modifier::new(ModifierKind::Vignette(Vignette::default()))],
+            None,
+            0,
+            72,
+            88,
+        );
+    }
+
+    /// Chains that cannot be banded, and rotations that cannot map a strip,
+    /// must be refused so the caller falls back to the buffered path.
+    #[test]
+    fn unstreamable_exports_are_rejected() {
+        use crate::modifiers::kinds::{ChromaticAberration, GaussianBlur, PixelSort};
+
+        let mk = |mods: Vec<Modifier>, rotation: u8| ExportData {
+            source: ExportSource::Frames {
+                frames: vec![ExportFrame {
+                    pixels: Arc::new(vec![0u8; 16 * 16 * 4]),
+                    delay: Duration::ZERO,
+                }],
+                still_index: 0,
+            },
+            width: 16,
+            height: 16,
+            modifiers: mods,
+            crop: None,
+            rotation,
+            trim: None,
+        };
+
+        let ca = vec![Modifier::new(ModifierKind::ChromaticAberration(
+            ChromaticAberration { amount: 4.0 },
+        ))];
+        assert!(!can_stream_bands(&mk(ca, 0)), "CA must not stream");
+
+        let vsort = vec![Modifier::new(ModifierKind::PixelSort(PixelSort {
+            threshold: 0.4,
+            angle: 90.0,
+        }))];
+        assert!(!can_stream_bands(&mk(vsort, 0)), "column sort must not stream");
+
+        let blur = vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
+            radius: 2.0,
+        }))];
+        assert!(
+            !can_stream_bands(&mk(blur.clone(), 1)),
+            "90 degree rotation must not stream"
+        );
+        assert!(can_stream_bands(&mk(blur, 0)), "plain blur should stream");
     }
 
     fn resize_data(w: u32, h: u32, modifiers: Vec<Modifier>, crop: Option<[f32; 4]>) -> ExportData {
@@ -733,3 +954,4 @@ mod tests {
         );
     }
 }
+

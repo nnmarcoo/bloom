@@ -3,8 +3,176 @@ use rayon::prelude::*;
 use crate::modifiers::drawing_raster::LayerView;
 use crate::modifiers::kinds::ResizeFilter;
 use crate::modifiers::plan::{ImageSpec, PlanItem, infer_specs, plan_modifiers};
+use crate::modifiers::roi::{StepClass, step_class};
 use crate::modifiers::text_raster::TextRaster;
 use crate::modifiers::{Modifier, ModifierKind, motion_blur_samples};
+
+/// The rows of a stage's input needed to produce rows `y0..y1` of its output.
+///
+/// Vertical reach only -- horizontal reach never forces extra *rows*, so a band
+/// is always full width. Returns `None` when the stage needs its entire input,
+/// which is the honest answer for anything that reads across rows arbitrarily.
+fn rows_needed(class: StepClass, y0: u32, y1: u32, in_h: u32, scale_num: u32, scale_den: u32) -> Option<(u32, u32)> {
+    // Map the output span back through any geometry change first: a resize
+    // means output row y came from input row y * in_h / out_h.
+    let map = |y: u32| -> u32 {
+        if scale_den == 0 {
+            return y;
+        }
+        ((y as u64 * scale_num as u64) / scale_den as u64) as u32
+    };
+    let (my0, my1) = (map(y0), map(y1).min(in_h));
+
+    match class {
+        StepClass::Pointwise => Some((my0, my1)),
+        StepClass::Kernel { apron_px, .. } => {
+            let a = apron_px.ceil().max(0.0) as u32;
+            Some((my0.saturating_sub(a), (my1 + a).min(in_h)))
+        }
+        // A row-major scanline reads whole rows but no *extra* rows, so it
+        // bands cleanly. Anything else (columns, diagonals, whole frame) needs
+        // everything.
+        StepClass::Scanline { dir: (_, 0) } => Some((my0, my1)),
+        StepClass::Scanline { .. } | StepClass::WholeFrame => None,
+    }
+}
+
+/// The source rows a chain needs to produce output rows `y0..y1`, or `None` if
+/// some stage forces the whole frame.
+///
+/// This is the CPU analogue of the backward ROI walk the GPU executor performs
+/// in `execute_kernel_chain`, restricted to the vertical axis. Sharing the walk
+/// exactly is the eventual goal; sharing `StepClass` is what keeps the two from
+/// disagreeing about reach in the meantime.
+pub(crate) fn source_rows_for_band(
+    plan: &[PlanItem],
+    specs: &[crate::modifiers::plan::StageSpec],
+    y0: u32,
+    y1: u32,
+) -> Option<(u32, u32)> {
+    let (mut lo, mut hi) = (y0, y1);
+    for (item, spec) in plan.iter().zip(specs).rev() {
+        let class = match item {
+            PlanItem::Fused(_) => StepClass::Pointwise,
+            PlanItem::Step(_, m) => step_class(&m.kind),
+        };
+        let (in_h, out_h) = (spec.input.h, spec.output.h);
+        let (n_lo, n_hi) = rows_needed(class, lo, hi, in_h, in_h, out_h)?;
+        lo = n_lo;
+        hi = n_hi.max(n_lo);
+    }
+    Some((lo, hi))
+}
+
+/// True when every stage in the plan can be rendered band-by-band.
+///
+/// A chain containing a column sort, a diagonal sort, or a full-frame stage
+/// cannot be banded, and the caller must fall back to `render_full`.
+pub(crate) fn plan_is_bandable(plan: &[PlanItem]) -> bool {
+    plan.iter().all(|item| match item {
+        PlanItem::Fused(_) => true,
+        PlanItem::Step(_, m) => !matches!(
+            step_class(&m.kind),
+            StepClass::WholeFrame | StepClass::Scanline { dir: (_, 1..) } | StepClass::Scanline { dir: (_, i32::MIN..=-1) }
+        ),
+    })
+}
+
+/// Renders output rows `y0..y1` of the chain, reading only the source rows
+/// those output rows depend on.
+///
+/// Returns the band's pixels, tightly packed at the chain's output width. The
+/// caller is responsible for having checked [`plan_is_bandable`]; a chain with
+/// a column sort or a full-frame stage will produce wrong pixels here because
+/// the band does not contain the input those stages read.
+///
+/// Peak memory is proportional to the band height, not the image height, which
+/// is the entire point: a 50000x50000 export runs in the same working set as a
+/// 4K one.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_band(
+    modifiers: &[Modifier],
+    text_layers: &[Option<TextRaster>],
+    drawing_layers: &[Option<LayerView<'_>>],
+    pixels: &[u8],
+    img_w: u32,
+    img_h: u32,
+    y0: u32,
+    y1: u32,
+) -> Vec<u8> {
+    let plan = plan_modifiers(modifiers);
+    let specs = infer_specs(ImageSpec::new(img_w, img_h), &plan);
+    let out_spec = specs.last().map_or(ImageSpec::new(img_w, img_h), |s| s.output);
+    let row_bytes = out_spec.w as usize * 4;
+
+    let Some((src_lo, src_hi)) = source_rows_for_band(&plan, &specs, y0, y1) else {
+        // Not bandable: the caller should not have reached here.
+        debug_assert!(false, "render_band called on a chain that cannot be banded");
+        return vec![0u8; row_bytes * (y1 - y0) as usize];
+    };
+    let src_hi = src_hi.min(img_h).max(src_lo);
+    let band_h = src_hi - src_lo;
+    if band_h == 0 {
+        return vec![0u8; row_bytes * (y1 - y0) as usize];
+    }
+
+    // Copy just the source rows this band needs.
+    let stride = img_w as usize * 4;
+    let start = src_lo as usize * stride;
+    let end = (src_hi as usize * stride).min(pixels.len());
+    let mut cur = vec![0u8; band_h as usize * stride];
+    if start < end {
+        cur[..end - start].copy_from_slice(&pixels[start..end]);
+    }
+
+    // Run the chain over the band. Stage geometry is the band's height rather
+    // than the image's; `y_off` tracks where the band sits so stages that care
+    // about absolute position (text, drawing, vignette) stay correct.
+    let mut cur_h = band_h;
+    let mut cur_w = img_w;
+    let mut y_off = src_lo;
+    for (item, spec) in plan.iter().zip(&specs) {
+        let class = match item {
+            PlanItem::Fused(_) => StepClass::Pointwise,
+            PlanItem::Step(_, m) => step_class(&m.kind),
+        };
+        cur = apply_stage_banded(
+            item,
+            spec,
+            class,
+            cur,
+            cur_w,
+            cur_h,
+            y_off,
+            spec.input.h,
+            text_layers,
+            drawing_layers,
+        );
+        // A resize changes both dimensions and rescales the band's offset.
+        if spec.input != spec.output {
+            let num = spec.output.h as u64;
+            let den = spec.input.h.max(1) as u64;
+            y_off = ((y_off as u64 * num) / den) as u32;
+            cur_h = (cur.len() / (spec.output.w as usize * 4)) as u32;
+            cur_w = spec.output.w;
+        }
+    }
+
+    // Slice the requested rows out of the rendered band.
+    let mut out = vec![0u8; row_bytes * (y1 - y0) as usize];
+    for (i, dst) in out.chunks_mut(row_bytes).enumerate() {
+        let want = y0 + i as u32;
+        if want < y_off {
+            continue;
+        }
+        let local = (want - y_off) as usize;
+        let s = local * row_bytes;
+        if s + row_bytes <= cur.len() {
+            dst.copy_from_slice(&cur[s..s + row_bytes]);
+        }
+    }
+    out
+}
 
 pub(crate) fn render_full(
     modifiers: &[Modifier],
@@ -100,6 +268,99 @@ pub(crate) fn render_full(
         );
     }
     cur
+}
+
+/// Runs one plan item over a band.
+///
+/// `y_off` is the band's first row in full-image coordinates and `full_h` the
+/// full image height, because stages that evaluate a UV -- vignette, grain,
+/// text, drawing -- must see their true position in the frame. Getting this
+/// wrong produces a band that renders correctly in isolation and wrongly in
+/// context, which is exactly the failure a naive banding would introduce.
+#[allow(clippy::too_many_arguments)]
+fn apply_stage_banded(
+    item: &PlanItem,
+    spec: &crate::modifiers::plan::StageSpec,
+    class: StepClass,
+    mut cur: Vec<u8>,
+    w: u32,
+    h: u32,
+    y_off: u32,
+    full_h: u32,
+    text_layers: &[Option<TextRaster>],
+    drawing_layers: &[Option<LayerView<'_>>],
+) -> Vec<u8> {
+    let _ = class;
+    let (wu, hu) = (w as usize, h as usize);
+    match item {
+        PlanItem::Fused(segment) => {
+            apply_pointwise_band(&mut cur, w, full_h, y_off, segment);
+        }
+        PlanItem::Step(i, m) => match &m.kind {
+            ModifierKind::GaussianBlur(gb) => blur_full(&mut cur, wu, hu, gb.radius),
+            ModifierKind::ChromaticAberration(ca) => {
+                cur = chromatic_aberration_full(&cur, w, h, ca.amount);
+            }
+            ModifierKind::MotionBlur(mb) => {
+                cur = motion_blur_full(&cur, w, h, mb.angle, mb.distance);
+            }
+            ModifierKind::Text(_) => {
+                if let Some(Some(raster)) = text_layers.get(*i) {
+                    text_band(&mut cur, w, h, y_off, raster);
+                }
+            }
+            ModifierKind::Drawing(_) => {
+                if let Some(Some(raster)) = drawing_layers.get(*i) {
+                    drawing_band(&mut cur, w, h, y_off, raster);
+                }
+            }
+            ModifierKind::PixelSort(ps) => {
+                cur = crate::modifiers::pixel_sort::pixel_sort_cpu(
+                    &cur,
+                    wu,
+                    hu,
+                    ps.threshold,
+                    ps.angle,
+                );
+            }
+            ModifierKind::Resize(r) => {
+                // Scale the band by the same ratio the full image would use, so
+                // adjacent bands tile without seams or drift.
+                let num = spec.output.h as u64;
+                let den = spec.input.h.max(1) as u64;
+                let band_out_h = (((h as u64 * num) / den) as u32).max(1);
+                cur = resample(&cur, w, h, spec.output.w, band_out_h, r.filter);
+            }
+            other => debug_assert!(
+                false,
+                "{} is planned as a standalone step but has no CPU implementation",
+                other.name()
+            ),
+        },
+    }
+    cur
+}
+
+fn apply_pointwise_band(
+    buf: &mut [u8],
+    img_w: u32,
+    full_h: u32,
+    y_off: u32,
+    segment: &[&Modifier],
+) {
+    let w = img_w as usize;
+    buf.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
+        let v = (y_off as f32 + y as f32 + 0.5) / full_h as f32;
+        for x in 0..w {
+            let o = x * 4;
+            let u = (x as f32 + 0.5) / img_w as f32;
+            let mut c = pixel_to_f32(&row[o..o + 4]);
+            for m in segment {
+                c = m.kind.apply_cpu(img_w, full_h, [u, v], c);
+            }
+            row[o..o + 4].copy_from_slice(&f32_to_pixel(c.map(|v| v.clamp(0.0, 1.0))));
+        }
+    });
 }
 
 fn apply_pointwise_segment(buf: &mut [u8], img_w: u32, img_h: u32, segment: &[&Modifier]) {
@@ -280,6 +541,36 @@ fn drawing_full(buf: &mut [u8], img_w: u32, raster: &LayerView<'_>) {
     let w = img_w as usize;
     buf.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
         let fy = y as f32 + 0.5;
+        for x in 0..w {
+            if let Some(src) = raster.sample(x as f32 + 0.5, fy) {
+                let o = x * 4;
+                let dst = pixel_to_f32(&row[o..o + 4]);
+                row[o..o + 4].copy_from_slice(&f32_to_pixel(blend_over(dst, src)));
+            }
+        }
+    });
+}
+
+/// Band variants: the raster is sampled in absolute image coordinates, so the
+/// only difference from the full-frame versions is offsetting the row index.
+fn drawing_band(buf: &mut [u8], img_w: u32, _h: u32, y_off: u32, raster: &LayerView<'_>) {
+    let w = img_w as usize;
+    buf.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
+        let fy = (y_off + y as u32) as f32 + 0.5;
+        for x in 0..w {
+            if let Some(src) = raster.sample(x as f32 + 0.5, fy) {
+                let o = x * 4;
+                let dst = pixel_to_f32(&row[o..o + 4]);
+                row[o..o + 4].copy_from_slice(&f32_to_pixel(blend_over(dst, src)));
+            }
+        }
+    });
+}
+
+fn text_band(buf: &mut [u8], img_w: u32, _h: u32, y_off: u32, raster: &TextRaster) {
+    let w = img_w as usize;
+    buf.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
+        let fy = (y_off + y as u32) as f32 + 0.5;
         for x in 0..w {
             if let Some(src) = raster.sample(x as f32 + 0.5, fy) {
                 let o = x * 4;
@@ -691,6 +982,187 @@ mod pointwise_tests {
             [0.3, 0.7, 0.2, 1.0],
         );
         assert!((neutral[0] - 0.3).abs() < 1e-5, "amount 0 is identity");
+    }
+}
+
+#[cfg(test)]
+mod band_tests {
+    use super::*;
+    use crate::modifiers::kinds::{
+        ChromaticAberration, Exposure, GaussianBlur, MotionBlur, PixelSort, Vignette,
+    };
+    use crate::modifiers::{Modifier, ModifierKind};
+
+    fn noise(w: u32, h: u32) -> Vec<u8> {
+        let mut v = Vec::with_capacity((w * h * 4) as usize);
+        let mut s = 0x2545F491u32;
+        for _ in 0..w * h {
+            for _ in 0..3 {
+                s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+                v.push((s >> 24) as u8);
+            }
+            v.push(255);
+        }
+        v
+    }
+
+    fn m(kind: ModifierKind) -> Modifier {
+        Modifier::new(kind)
+    }
+
+    /// THE oracle for layer 2: assembling bands must reproduce `render_full`
+    /// byte for byte. Any apron miscalculation shows up as a seam at a band
+    /// boundary, which this catches exactly.
+    fn assert_bands_match_full(label: &str, chain: &[Modifier], w: u32, h: u32, band: u32) {
+        let src = noise(w, h);
+        let full = render_full(chain, &[], &[], &src, w, h);
+
+        let plan = plan_modifiers(chain);
+        assert!(
+            plan_is_bandable(&plan),
+            "{label}: chain is not bandable, test would prove nothing"
+        );
+        let specs = infer_specs(ImageSpec::new(w, h), &plan);
+        let out = specs.last().map_or(ImageSpec::new(w, h), |s| s.output);
+        let row_bytes = out.w as usize * 4;
+
+        let mut assembled = Vec::with_capacity(full.len());
+        let mut y = 0u32;
+        while y < out.h {
+            let y1 = (y + band).min(out.h);
+            assembled.extend_from_slice(&render_band(chain, &[], &[], &src, w, h, y, y1));
+            y = y1;
+        }
+
+        assert_eq!(
+            assembled.len(),
+            full.len(),
+            "{label}: assembled band output has the wrong size"
+        );
+        if assembled != full {
+            let bad = assembled
+                .chunks(row_bytes)
+                .zip(full.chunks(row_bytes))
+                .position(|(a, b)| a != b)
+                .unwrap_or(0);
+            let diff = assembled
+                .iter()
+                .zip(&full)
+                .filter(|(a, b)| a != b)
+                .count();
+            panic!(
+                "{label}: banded render differs from full render; first bad row {bad} \
+                 (band height {band}), {diff} bytes differ of {}",
+                full.len()
+            );
+        }
+    }
+
+    #[test]
+    fn bands_match_full_pointwise() {
+        let chain = vec![m(ModifierKind::Exposure(Exposure { exposure: 0.4 }))];
+        assert_bands_match_full("pointwise", &chain, 61, 47, 8);
+    }
+
+    /// Vignette reads its own UV, so a band that does not know its absolute
+    /// position renders a vignette per band instead of one per image.
+    #[test]
+    fn bands_match_full_position_dependent_pointwise() {
+        let chain = vec![m(ModifierKind::Vignette(Vignette::default()))];
+        assert_bands_match_full("vignette", &chain, 48, 64, 7);
+    }
+
+    /// The apron case: a blur needs `radius` rows beyond the band on each side.
+    #[test]
+    fn bands_match_full_blur() {
+        let chain = vec![m(ModifierKind::GaussianBlur(GaussianBlur { radius: 5.0 }))];
+        assert_bands_match_full("blur", &chain, 40, 70, 9);
+    }
+
+    #[test]
+    fn bands_match_full_motion_blur() {
+        let chain = vec![m(ModifierKind::MotionBlur(MotionBlur {
+            angle: 65.0,
+            distance: 9.0,
+        }))];
+        assert_bands_match_full("motion-blur", &chain, 40, 70, 11);
+    }
+
+    /// A horizontal sort reads whole rows but no extra rows, so it bands.
+    #[test]
+    fn bands_match_full_horizontal_sort() {
+        let chain = vec![m(ModifierKind::PixelSort(PixelSort {
+            threshold: 0.35,
+            angle: 0.0,
+        }))];
+        assert_bands_match_full("h-sort", &chain, 55, 40, 6);
+    }
+
+    #[test]
+    fn bands_match_full_mixed_chain() {
+        let chain = vec![
+            m(ModifierKind::Exposure(Exposure { exposure: 0.2 })),
+            m(ModifierKind::GaussianBlur(GaussianBlur { radius: 3.0 })),
+            m(ModifierKind::Vignette(Vignette::default())),
+        ];
+        assert_bands_match_full("mixed", &chain, 50, 66, 10);
+    }
+
+    /// Two aprons stack: the first stage must fetch enough for what the second
+    /// stage's apron needs, not just its own.
+    #[test]
+    fn bands_match_full_stacked_aprons() {
+        let chain = vec![
+            m(ModifierKind::GaussianBlur(GaussianBlur { radius: 4.0 })),
+            m(ModifierKind::GaussianBlur(GaussianBlur { radius: 4.0 })),
+        ];
+        assert_bands_match_full("blur+blur", &chain, 36, 80, 8);
+    }
+
+    /// A band height that does not divide the image evenly leaves a short final
+    /// band, which is where off-by-one errors surface.
+    #[test]
+    fn bands_match_full_with_ragged_final_band() {
+        let chain = vec![m(ModifierKind::GaussianBlur(GaussianBlur { radius: 3.0 }))];
+        assert_bands_match_full("ragged", &chain, 32, 53, 10);
+    }
+
+    /// A single band covering the whole image must equal the full render; if
+    /// this fails the band path is wrong independently of any seam logic.
+    #[test]
+    fn one_band_covering_everything_matches_full() {
+        let chain = vec![
+            m(ModifierKind::GaussianBlur(GaussianBlur { radius: 6.0 })),
+            m(ModifierKind::Exposure(Exposure { exposure: -0.3 })),
+        ];
+        assert_bands_match_full("one-band", &chain, 40, 40, 40);
+    }
+
+    #[test]
+    fn column_and_diagonal_sorts_are_not_bandable() {
+        for angle in [90.0, 45.0, 30.0] {
+            let chain = vec![m(ModifierKind::PixelSort(PixelSort {
+                threshold: 0.4,
+                angle,
+            }))];
+            let plan = plan_modifiers(&chain);
+            assert!(
+                !plan_is_bandable(&plan),
+                "pixel sort at {angle} deg must be rejected for banding"
+            );
+        }
+    }
+
+    #[test]
+    fn chromatic_aberration_is_not_bandable() {
+        let chain = vec![m(ModifierKind::ChromaticAberration(ChromaticAberration {
+            amount: 5.0,
+        }))];
+        let plan = plan_modifiers(&chain);
+        assert!(
+            !plan_is_bandable(&plan),
+            "CA reads across the whole frame and must not be banded"
+        );
     }
 }
 
