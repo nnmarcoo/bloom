@@ -99,6 +99,24 @@ impl Resize {
         ImageSpec::new(w, h)
     }
 
+    /// Height-to-width ratio the locked fields move along.
+    ///
+    /// In `Percent` the two numbers are independent scale factors, so keeping
+    /// the aspect means keeping them equal -- a ratio of 1. In `Pixels` they
+    /// are absolute dimensions, so the ratio is the source image's own.
+    fn aspect_ratio(&self, img_size: Option<(u32, u32)>) -> f32 {
+        match self.mode {
+            ResizeMode::Percent => 1.0,
+            ResizeMode::Pixels => match img_size {
+                Some((iw, ih)) if iw > 0 => ih as f32 / iw as f32,
+                // Without the source size, fall back to whatever ratio the
+                // fields currently hold rather than snapping them together.
+                _ if self.width > 0.0 => self.height / self.width,
+                _ => 1.0,
+            },
+        }
+    }
+
     /// True when this resize would leave its input untouched.
     ///
     /// Only used to skip work; it is never used to *remove* a resize from the
@@ -132,8 +150,28 @@ impl ModifierImpl for Resize {
 
     fn apply_param(&mut self, param: ModifierParam, _img_size: Option<(u32, u32)>) {
         match param {
-            ModifierParam::ResizeWidth(v) => self.width = v.max(1.0),
-            ModifierParam::ResizeHeight(v) => self.height = v.max(1.0),
+            // With the ratio locked, editing either field drives the other so
+            // both stay visible and both stay truthful. Hiding the dependent
+            // field would remove the readout of what it is actually going to
+            // be, which is the number the user most wants to see.
+            ModifierParam::ResizeWidth(v) => {
+                let v = v.max(1.0);
+                if self.lock_aspect {
+                    let ratio = self.aspect_ratio(_img_size);
+                    self.height = (v * ratio).max(1.0);
+                }
+                self.width = v;
+            }
+            ModifierParam::ResizeHeight(v) => {
+                let v = v.max(1.0);
+                if self.lock_aspect {
+                    let ratio = self.aspect_ratio(_img_size);
+                    if ratio > 0.0 {
+                        self.width = (v / ratio).max(1.0);
+                    }
+                }
+                self.height = v;
+            }
             ModifierParam::ResizeFilter(f) => self.filter = f,
             ModifierParam::ResizeMode(m) if m != self.mode => {
                 // Convert the stored numbers so the resize keeps meaning the
@@ -210,20 +248,22 @@ impl ModifierImpl for Resize {
         // on it is derived from width, so showing a dead control would be
         // worse than hiding it. The toggle immediately below makes the state
         // visible and reversible, which is what was missing before.
-        if !self.lock_aspect {
-            let height_label = match self.mode {
-                ResizeMode::Pixels => "Height (px)",
-                ResizeMode::Percent => "Height (%)",
-            };
-            rows = rows.push(value_row(
-                height_label,
-                self.height,
-                1.0..=max_h,
-                1.0,
-                fmt,
-                move |v| EditMsg::Update(index, ModifierParam::ResizeHeight(v)).into(),
-            ));
-        }
+        // Height is always shown. With the ratio locked it moves in lockstep
+        // with width rather than disappearing -- the derived number is exactly
+        // the one worth reading, and a control that vanishes is more confusing
+        // than one that follows.
+        let height_label = match self.mode {
+            ResizeMode::Pixels => "Height (px)",
+            ResizeMode::Percent => "Height (%)",
+        };
+        rows = rows.push(value_row(
+            height_label,
+            self.height,
+            1.0..=max_h,
+            1.0,
+            fmt,
+            move |v| EditMsg::Update(index, ModifierParam::ResizeHeight(v)).into(),
+        ));
 
         rows = rows.push(toggle_row("Lock ratio", self.lock_aspect, move |v| {
             EditMsg::Update(index, ModifierParam::ResizeLockAspect(v)).into()
@@ -314,6 +354,53 @@ mod tests {
         r.apply_param(ModifierParam::ResizeMode(ResizeMode::Percent), Some((800, 600)));
         assert_eq!(r.width, 50.0);
         assert_eq!(r.height, 50.0);
+    }
+
+    /// With the ratio locked, editing width must move height too -- the whole
+    /// point of keeping the field visible instead of hiding it.
+    #[test]
+    fn locked_width_edit_drives_height_in_percent() {
+        let mut r = pct(100.0, 100.0, true);
+        r.apply_param(ModifierParam::ResizeWidth(50.0), Some((800, 600)));
+        assert_eq!(r.width, 50.0);
+        assert_eq!(r.height, 50.0, "percent fields are equal scale factors");
+    }
+
+    #[test]
+    fn locked_height_edit_drives_width_in_percent() {
+        let mut r = pct(100.0, 100.0, true);
+        r.apply_param(ModifierParam::ResizeHeight(25.0), Some((800, 600)));
+        assert_eq!(r.height, 25.0);
+        assert_eq!(r.width, 25.0);
+    }
+
+    /// In pixel mode the fields are absolute, so they follow the source
+    /// image's ratio rather than staying numerically equal.
+    #[test]
+    fn locked_edits_follow_the_image_ratio_in_pixels() {
+        let mut r = Resize {
+            mode: ResizeMode::Pixels,
+            width: 800.0,
+            height: 600.0,
+            filter: ResizeFilter::Lanczos,
+            lock_aspect: true,
+        };
+        r.apply_param(ModifierParam::ResizeWidth(400.0), Some((800, 600)));
+        assert_eq!(r.width, 400.0);
+        assert_eq!(r.height, 300.0, "3:4 ratio preserved");
+
+        r.apply_param(ModifierParam::ResizeHeight(150.0), Some((800, 600)));
+        assert_eq!(r.height, 150.0);
+        assert_eq!(r.width, 200.0);
+    }
+
+    /// Unlocked, the two fields are independent.
+    #[test]
+    fn unlocked_edits_do_not_couple() {
+        let mut r = pct(100.0, 100.0, false);
+        r.apply_param(ModifierParam::ResizeWidth(50.0), Some((800, 600)));
+        assert_eq!(r.width, 50.0);
+        assert_eq!(r.height, 100.0, "height must not move while unlocked");
     }
 
     #[test]

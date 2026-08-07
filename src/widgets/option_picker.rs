@@ -5,7 +5,8 @@
 //! gets a real dropdown instead of a slider pretending to be one.
 
 use iced::alignment::Vertical;
-use iced::widget::{Space, button, column, container, row, text};
+use iced::widget::svg::Handle;
+use iced::widget::{Space, button, column, container, row, svg, text};
 use iced::{Background, Border, Element, Length, Renderer, Theme};
 
 use crate::styles::radius;
@@ -16,7 +17,7 @@ const ROW_HEIGHT: f32 = 24.0;
 const ITEM_PADDING_H: f32 = 8.0;
 const TEXT_SIZE: f32 = 11.0;
 const PADDING: f32 = 4.0;
-const CARET: &str = "\u{25BE}";
+const CARET_SIZE: f32 = 12.0;
 
 pub struct OptionPicker<'a, T, Message> {
     options: &'a [(T, &'a str)],
@@ -60,7 +61,12 @@ impl<'a, T: Copy + PartialEq + 'a, Message: Clone + 'a> From<OptionPicker<'a, T,
         let trigger: Element<'a, Message> = row![
             text(picker.label_of()).size(TEXT_SIZE),
             Space::new().width(Length::Fill),
-            text(CARET).size(TEXT_SIZE - 2.0),
+            svg(Handle::from_memory(include_bytes!(
+                "../../assets/icons/down.svg"
+            )))
+            .style(crate::styles::svg_style)
+            .width(CARET_SIZE)
+            .height(CARET_SIZE),
         ]
         .align_y(Vertical::Center)
         .spacing(4)
