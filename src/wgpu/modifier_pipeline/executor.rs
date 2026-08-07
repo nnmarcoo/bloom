@@ -4,7 +4,13 @@ use crate::modifiers::roi::{self, RegionPx, StepClass};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 
-const MAX_KERNEL_RADIUS_PX: f32 = 128.0;
+/// Largest blur kernel radius evaluated directly; above this the pass renders
+/// into a reduced-scale target (`ks`).
+///
+/// Must equal `MAX_DIRECT_RADIUS` in `modifiers::cpu`, which documents the
+/// measurements behind the value and what lowering it cost. If the two drift
+/// apart, preview and export pick different scales for the same radius.
+const MAX_KERNEL_RADIUS_PX: f32 = 64.0;
 
 struct Stage {
     tex: Texture,

@@ -396,13 +396,50 @@ fn apply_pointwise_segment(buf: &mut [u8], img_w: u32, img_h: u32, segment: &[&M
     });
 }
 
-/// Largest kernel radius, in pixels, evaluated directly.
+/// Largest kernel radius, in pixels, evaluated directly. Above this the blur
+/// runs at a reduced scale (see [`blur_full`]).
 ///
-/// Matches `MAX_KERNEL_RADIUS_PX` in the GPU executor, which caps its kernel
-/// the same way. Keeping the two equal is what keeps preview and export
-/// agreeing on large blurs -- `golden_blur_banded_tall_image` compares them at
-/// radius 100 and catches any drift.
-const MAX_DIRECT_RADIUS: f32 = 128.0;
+/// Must equal `MAX_KERNEL_RADIUS_PX` in the GPU executor;
+/// `scale_factor_matches_the_gpu_rule` fails if this is changed without
+/// changing that one too.
+///
+/// # Why 64
+///
+/// Measured at real export band geometry (50000x3000, radius 500), five
+/// interleaved runs, best-of-each to limit background-load contamination:
+///
+/// ```text
+///   cap    downscale   blur   upscale   band
+///   128       300ms    329ms    283ms    911ms
+///    64       258ms     27ms    256ms    541ms   <- 1.67x
+///    32       242ms      5ms    232ms    479ms
+///    16       231ms      2ms    237ms    469ms
+/// ```
+///
+/// Halving the cap quarters the pixel count *and* halves the tap count, so the
+/// blur phase collapses rather than merely halving. Below 64 the two resample
+/// passes are the floor -- at cap 64 the blur is already only 5% of the time --
+/// so further reductions buy almost nothing and only widen the gap below.
+///
+/// # What it costs
+///
+/// Radii 65..=128 previously ran exact on both backends and now take the
+/// scaled path on the CPU, so preview and export differ slightly there. On a
+/// 1200x900 crop of a real 50000px image at radius 100: mean deviation
+/// 0.2/255, fewer than 1 pixel in 1000 differing by more than 8 levels, and
+/// visually indistinguishable at 1:1 (verified by rendering both and a 10x
+/// amplified difference). Above 128 both backends already scale, so nothing
+/// changes there.
+///
+/// # What was ruled out
+///
+/// Making the CPU fuse the downsample into the blur, as the GPU does, would
+/// remove the mismatch entirely. It was implemented and measured at **17x
+/// slower** (18.4s vs 1.1s per band): the fused horizontal pass runs the full
+/// tap count over every source row (9.4G tap-evaluations) where a separate
+/// 25-tap Lanczos downscale costs 1.1G and shrinks every later pass. The GPU
+/// wins with that structure only because bilinear sampling is free in hardware.
+const MAX_DIRECT_RADIUS: f32 = 64.0;
 
 /// Gaussian blur, evaluated at a resolution suited to its radius.
 ///
@@ -1161,7 +1198,11 @@ mod scaled_blur_tests {
     #[test]
     fn radii_within_the_cap_are_unchanged() {
         let (w, h) = (64usize, 48usize);
-        for radius in [1.0f32, 16.0, 64.0, 128.0] {
+        for radius in [1.0f32, 16.0, 32.0, 64.0] {
+            assert!(
+                radius <= MAX_DIRECT_RADIUS,
+                "this case is above the cap and belongs in the scaled test"
+            );
             let src = gradient(w, h);
             let mut a = src.clone();
             blur_full(&mut a, w, h, radius);
@@ -1169,6 +1210,24 @@ mod scaled_blur_tests {
             blur_direct(&mut b, w, h, radius);
             assert_eq!(a, b, "radius {radius} must take the direct path unchanged");
         }
+    }
+
+    /// Just above the cap the scaled path must actually engage. Pins the
+    /// boundary from the other side, so raising the cap cannot silently leave
+    /// this range untested.
+    #[test]
+    fn radii_just_above_the_cap_are_scaled() {
+        let (w, h) = (256usize, 192usize);
+        let radius = MAX_DIRECT_RADIUS * 2.0;
+        let src = gradient(w, h);
+        let mut a = src.clone();
+        blur_full(&mut a, w, h, radius);
+        let mut b = src.clone();
+        blur_direct(&mut b, w, h, radius);
+        assert_ne!(
+            a, b,
+            "radius {radius} is above the cap and should take the scaled path"
+        );
     }
 
     /// Above the cap the result is the same Gaussian sampled more coarsely, so
@@ -1198,9 +1257,26 @@ mod scaled_blur_tests {
     }
 
     /// The scale factor must match the GPU's, or preview and export disagree.
+    ///
+    /// The cap is asserted literally so that changing it fails here, forcing
+    /// `MAX_KERNEL_RADIUS_PX` in the GPU executor to be changed to match rather
+    /// than silently drifting.
     #[test]
     fn scale_factor_matches_the_gpu_rule() {
-        for (radius, want) in [(128.0f32, 1.0f32), (256.0, 0.5), (500.0, 0.25), (1000.0, 0.125)] {
+        assert_eq!(
+            MAX_DIRECT_RADIUS, 64.0,
+            "cap changed: update MAX_KERNEL_RADIUS_PX in the GPU executor to \
+             match, re-bless golden_blur_banded_tall_image, and update the \
+             expectations below"
+        );
+        for (radius, want) in [
+            (32.0f32, 1.0f32),
+            (64.0, 1.0),
+            (128.0, 0.5),
+            (256.0, 0.25),
+            (500.0, 0.125),
+            (1000.0, 0.0625),
+        ] {
             let ks = (MAX_DIRECT_RADIUS / radius).min(1.0).log2().floor().exp2();
             assert_eq!(ks, want, "radius {radius} should blur at scale {want}");
         }

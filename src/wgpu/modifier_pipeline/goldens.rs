@@ -576,12 +576,40 @@ fn blur_extreme_radius_converges_capped() {
     assert!(out.chunks_exact(4).any(|p| p[0] > 0 && p[3] > 0));
 }
 
+/// Blur banding on a tall image, at a radius where both backends evaluate the
+/// kernel directly.
+///
+/// Radius 40 is below `MAX_DIRECT_RADIUS`/`MAX_KERNEL_RADIUS_PX` (64), so the
+/// GPU and the CPU oracle run the same exact Gaussian and must agree tightly.
+/// This is the strict half of the preview-vs-export guard.
 #[test]
 fn golden_blur_banded_tall_image() {
     let chain = vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
-        radius: 100.0,
+        radius: 40.0,
     }))];
     run_golden_dims("blur-banded/96x3000", &chain, None, 4, 96, 3000);
+}
+
+/// The same case above the cap, where both backends reduce scale but by
+/// structurally different means.
+///
+/// The GPU blurs straight into a smaller render target using hardware bilinear
+/// taps; the CPU downscales with Lanczos, blurs, and upscales bilinearly. Both
+/// are the same Gaussian at reduced scale, but the filter chains differ, so
+/// exact agreement is not achievable without making one adopt the other's
+/// structure -- which was measured at 17x slower on the CPU and rejected (see
+/// `MAX_DIRECT_RADIUS`).
+///
+/// The tolerance is therefore wide *by decision, not by drift*. On real content
+/// the deviation is mean 0.2/255 and visually indistinguishable; what this test
+/// still catches is a gross divergence, such as the two backends picking
+/// different scale factors for the same radius.
+#[test]
+fn golden_blur_banded_above_the_cap() {
+    let chain = vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
+        radius: 100.0,
+    }))];
+    run_golden_dims("blur-banded-scaled/96x3000", &chain, None, 32, 96, 3000);
 }
 
 #[test]
