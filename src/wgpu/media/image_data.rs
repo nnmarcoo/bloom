@@ -670,8 +670,11 @@ impl ImageData {
             let buf = layer.raw_rgba_buffer();
             for py in 0..lh.min(height) {
                 for px in 0..lw.min(width) {
-                    let src = buf[(py * lw + px) as usize].0;
-                    let dst = (py * width + px) as usize * 4;
+                    // Widen before multiplying: these products exceed u32 once
+                    // the layer passes ~4.29 billion pixels, wrapping to a
+                    // small index and silently corrupting the composite.
+                    let src = buf[py as usize * lw as usize + px as usize].0;
+                    let dst = (py as usize * width as usize + px as usize) * 4;
                     let sa = src[3] as u32;
                     let da = canvas[dst + 3] as u32;
                     let out_a = sa + da * (255 - sa) / 255;
