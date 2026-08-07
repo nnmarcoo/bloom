@@ -465,24 +465,53 @@ fn blur_direct(buf: &mut [u8], w: usize, h: usize, radius: f32) {
     // The horizontal pass is row-local, so it runs in place against a one-row
     // copy per thread. A full-size scratch here doubles the working set for no
     // benefit -- at a 500px apron on a 50000px-wide band that is hundreds of MB.
-    buf.par_chunks_mut(w * 4).for_each_init(
-        || vec![0u8; w * 4],
-        |row_copy, row| {
+    //
+    // Shaped like the vertical pass below: accumulate the whole row once per
+    // tap so the inner loop is a contiguous scaled add over `w * 4` floats.
+    // Interior pixels (those at least `r` from either edge) need no clamping,
+    // so that span is split out and runs branch-free -- the clamp in the inner
+    // loop was what stopped this vectorizing.
+    let stride_h = w * 4;
+    buf.par_chunks_mut(stride_h).for_each_init(
+        || (vec![0u8; stride_h], vec![0.0f32; stride_h]),
+        |(row_copy, acc), row| {
             row_copy.copy_from_slice(row);
-            for x in 0..w {
-                let mut acc = [0.0f32; 4];
-                for (ki, &k) in norm.iter().enumerate() {
-                    let sx = (x as i32 - r + ki as i32).clamp(0, w as i32 - 1) as usize;
-                    let o = sx * 4;
-                    acc[0] += row_copy[o] as f32 * k;
-                    acc[1] += row_copy[o + 1] as f32 * k;
-                    acc[2] += row_copy[o + 2] as f32 * k;
-                    acc[3] += row_copy[o + 3] as f32 * k;
+            acc.iter_mut().for_each(|v| *v = 0.0);
+
+            let ru = r as usize;
+            for (ki, &k) in norm.iter().enumerate() {
+                // Offset of this tap in pixels: negative reads to the left.
+                let off = ki as isize - r as isize;
+                let (lo, hi) = (ru.min(w), w.saturating_sub(ru));
+
+                // Left edge: source index clamps to 0.
+                for x in 0..lo.min(w) {
+                    let sx = (x as isize + off).clamp(0, w as isize - 1) as usize;
+                    for c in 0..4 {
+                        acc[x * 4 + c] += row_copy[sx * 4 + c] as f32 * k;
+                    }
                 }
-                let o = x * 4;
-                for c in 0..4 {
-                    row[o + c] = (acc[c] + 0.5).clamp(0.0, 255.0) as u8;
+                // Interior: no clamping, so both slices are contiguous and the
+                // compiler can use wide loads and FMA.
+                if hi > lo {
+                    let src_start = (lo as isize + off) as usize * 4;
+                    let dst = &mut acc[lo * 4..hi * 4];
+                    let src = &row_copy[src_start..src_start + (hi - lo) * 4];
+                    for (a, &p) in dst.iter_mut().zip(src.iter()) {
+                        *a += p as f32 * k;
+                    }
                 }
+                // Right edge: source index clamps to w - 1.
+                for x in hi.max(lo)..w {
+                    let sx = (x as isize + off).clamp(0, w as isize - 1) as usize;
+                    for c in 0..4 {
+                        acc[x * 4 + c] += row_copy[sx * 4 + c] as f32 * k;
+                    }
+                }
+            }
+
+            for (o, &a) in row.iter_mut().zip(acc.iter()) {
+                *o = (a + 0.5).clamp(0.0, 255.0) as u8;
             }
         },
     );
@@ -1627,3 +1656,86 @@ mod motion_blur_tests {
     }
 }
 
+
+
+#[cfg(test)]
+mod blur_edge_tests {
+    use super::*;
+
+    /// Radii comparable to or larger than the image exercise the edge/interior
+    /// split in `blur_direct`'s horizontal pass, where a bad slice bound would
+    /// panic or read the wrong pixels.
+    #[test]
+    fn narrow_images_and_large_radii_do_not_panic() {
+        for (w, h) in [(1usize, 1usize), (1, 9), (9, 1), (3, 3), (5, 40), (40, 5)] {
+            for radius in [0.5f32, 1.0, 4.0, 16.0, 64.0, 200.0] {
+                let mut buf = vec![128u8; w * h * 4];
+                blur_direct(&mut buf, w, h, radius);
+                assert_eq!(buf.len(), w * h * 4, "{w}x{h} r{radius} changed length");
+                assert!(
+                    buf.iter().all(|&b| (b as i32 - 128).abs() <= 1),
+                    "{w}x{h} r{radius}: constant image was not preserved"
+                );
+            }
+        }
+    }
+
+    /// The interior fast path must produce exactly what the clamped path would.
+    ///
+    /// Uses a single row so the vertical pass is an identity (every tap clamps
+    /// to row 0 and the weights sum to 1), leaving the horizontal pass as the
+    /// only thing under test.
+    #[test]
+    fn edge_and_interior_spans_agree() {
+        let (w, h) = (64usize, 1usize);
+        let mut src = vec![0u8; w * h * 4];
+        let mut s = 0x1234u32;
+        for b in src.chunks_mut(4) {
+            for c in b.iter_mut().take(3) {
+                s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+                *c = (s >> 24) as u8;
+            }
+            b[3] = 255;
+        }
+        let reference = |radius: f32| -> Vec<u8> {
+            let r = radius.ceil() as i32;
+            let sigma = (radius / 3.0).max(0.5);
+            let inv = 1.0 / (2.0 * sigma * sigma);
+            let k: Vec<f32> = (-r..=r).map(|i| (-(i * i) as f32 * inv).exp()).collect();
+            let sum: f32 = k.iter().sum();
+            let norm: Vec<f32> = k.iter().map(|v| v / sum).collect();
+            let mut out = src.clone();
+            for y in 0..h {
+                for x in 0..w {
+                    let mut acc = [0.0f32; 4];
+                    for (ki, &kk) in norm.iter().enumerate() {
+                        let sx = (x as i32 - r + ki as i32).clamp(0, w as i32 - 1) as usize;
+                        for c in 0..4 {
+                            acc[c] += src[(y * w + sx) * 4 + c] as f32 * kk;
+                        }
+                    }
+                    for c in 0..4 {
+                        out[(y * w + x) * 4 + c] = (acc[c] + 0.5).clamp(0.0, 255.0) as u8;
+                    }
+                }
+            }
+            out
+        };
+        for radius in [2.0f32, 7.0, 20.0] {
+            let mut got = src.clone();
+            blur_direct(&mut got, w, h, radius);
+            let want = reference(radius);
+            let max = got
+                .iter()
+                .zip(want.iter())
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap();
+            assert!(
+                max <= 1,
+                "radius {radius}: the interior fast path disagrees with the \
+                 clamped reference (max {max})"
+            );
+        }
+    }
+}
