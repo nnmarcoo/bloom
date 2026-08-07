@@ -48,6 +48,30 @@ pub fn dilate(r: RegionPx, d: f32) -> RegionPx {
     [r[0] - d, r[1] - d, r[2] + d, r[3] + d]
 }
 
+/// Map a region from a stage's *output* space back into its *input* space.
+///
+/// This is the piece [`input_needed`] cannot express. `input_needed` answers
+/// "which input pixels feed this output region", but assumes both are measured
+/// in the same units. A stage that changes dimensions breaks that assumption:
+/// its output rect is in a different space than its input rect, and the two
+/// must be related before the apron is applied.
+///
+/// The two compose, in this order, walking a chain backward:
+///
+/// ```text
+///   out_region -> unmap_region (into input space) -> input_needed (add apron)
+/// ```
+///
+/// For every modifier that preserves size this is the identity, which is why
+/// the chain worked without it until resize arrived.
+pub fn unmap_region(from: (f32, f32), to: (f32, f32), r: RegionPx) -> RegionPx {
+    if from.0 <= 0.0 || from.1 <= 0.0 {
+        return r;
+    }
+    let (sx, sy) = (to.0 / from.0, to.1 / from.1);
+    [r[0] * sx, r[1] * sy, r[2] * sx, r[3] * sy]
+}
+
 pub fn input_needed(class: StepClass, out: RegionPx, w: f32, h: f32) -> RegionPx {
     if is_empty(out) {
         return out;
@@ -97,6 +121,66 @@ mod tests {
         assert_eq!(
             input_needed(class, [10.0, 10.0, 990.0, 790.0], W, H),
             [0.0, 0.0, W, H]
+        );
+    }
+
+    #[test]
+    fn unmap_is_identity_when_the_size_is_unchanged() {
+        let r = [100.0, 50.0, 300.0, 250.0];
+        assert_eq!(unmap_region((W, H), (W, H), r), r);
+    }
+
+    #[test]
+    fn unmap_scales_a_region_into_a_smaller_input() {
+        // A 50% resize: a rect in the half-size output covers twice as much of
+        // the input it was resampled from.
+        let r = [10.0, 20.0, 30.0, 40.0];
+        assert_eq!(
+            unmap_region((500.0, 400.0), (1000.0, 800.0), r),
+            [20.0, 40.0, 60.0, 80.0]
+        );
+    }
+
+    #[test]
+    fn unmap_scales_a_region_into_a_larger_input() {
+        let r = [20.0, 40.0, 60.0, 80.0];
+        assert_eq!(
+            unmap_region((1000.0, 800.0), (500.0, 400.0), r),
+            [10.0, 20.0, 30.0, 40.0]
+        );
+    }
+
+    #[test]
+    fn unmap_handles_axes_scaled_differently() {
+        let r = [10.0, 10.0, 20.0, 20.0];
+        assert_eq!(
+            unmap_region((100.0, 200.0), (300.0, 200.0), r),
+            [30.0, 10.0, 60.0, 20.0]
+        );
+    }
+
+    /// A degenerate source must not produce NaN rects that poison the walk.
+    #[test]
+    fn unmap_of_a_zero_sized_space_is_inert() {
+        let r = [10.0, 20.0, 30.0, 40.0];
+        assert_eq!(unmap_region((0.0, 0.0), (100.0, 100.0), r), r);
+    }
+
+    /// The composition the backward walk performs: unmap into input space, then
+    /// dilate by the apron *there*. Doing it in the other order would apply a
+    /// half-size apron in a full-size space.
+    #[test]
+    fn unmap_then_apron_dilates_in_the_input_space() {
+        let out = [100.0, 100.0, 200.0, 200.0];
+        let in_space = unmap_region((500.0, 400.0), (1000.0, 800.0), out);
+        assert_eq!(in_space, [200.0, 200.0, 400.0, 400.0]);
+        let class = StepClass::Kernel {
+            apron_px: 4.0,
+            separable: true,
+        };
+        assert_eq!(
+            input_needed(class, in_space, W, H),
+            [196.0, 196.0, 404.0, 404.0]
         );
     }
 

@@ -867,6 +867,144 @@ fn golden_trailing_resize_is_dropped_from_the_preview() {
     );
 }
 
+/// A chain containing a resize must match the CPU oracle, at the oracle's size.
+///
+/// This is the target for per-stage geometry, and it fails today by design: the
+/// executor drops resize from the plan, so the GPU renders at the source size
+/// while `render_full` returns the resized buffer. The length mismatch is the
+/// first thing it reports.
+///
+/// `mid` is the case that actually motivates the work -- a blur *after* a 50%
+/// resize must see the half-size image, so its radius covers twice the relative
+/// area it would pre-resize. No amount of scaling the final output reproduces
+/// that; the blur has to run in the post-resize space.
+fn run_resize_golden(label: &str, modifiers: &[Modifier], tile_dim: Option<u32>, tol: u8) {
+    use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let pixels = test_pixels(GOLDEN_W, GOLDEN_H);
+    let image = ImageData::new(pixels.clone(), GOLDEN_W, GOLDEN_H);
+    let source = make_source(&device, &queue, &image, tile_dim);
+
+    let out = chain_output_spec(
+        ImageSpec::new(GOLDEN_W, GOLDEN_H),
+        &plan_modifiers(modifiers),
+    );
+    assert_ne!(
+        (out.w, out.h),
+        (GOLDEN_W, GOLDEN_H),
+        "{label}: this harness is for chains that change size"
+    );
+
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, GOLDEN_W, GOLDEN_H);
+    converge(&mut mp, &device, &queue, &source, modifiers, label);
+
+    let gpu_img = assemble_output(&device, &queue, &mp, &source, out.w, out.h);
+    let cpu_img =
+        crate::modifiers::cpu::render_full(modifiers, &[], &[], &pixels, GOLDEN_W, GOLDEN_H);
+    assert_eq!(
+        gpu_img.len(),
+        cpu_img.len(),
+        "{label}: GPU produced {} bytes, oracle {} -- the preview is not at the \
+         chain's output size ({}x{})",
+        gpu_img.len(),
+        cpu_img.len(),
+        out.w,
+        out.h
+    );
+    let (max_d, pct_over) = diff_stats(&gpu_img, &cpu_img, tol);
+    assert!(
+        max_d <= tol,
+        "{label}: GPU vs CPU oracle diverges: max channel diff {max_d} > tol {tol} \
+         ({pct_over:.3}% of channels over)"
+    );
+}
+
+/// Reassemble tile outputs into a buffer of the chain's *output* size.
+///
+/// Unlike [`assemble`], which indexes by source tile position, this places each
+/// output by its own `proc_px` scaled into output space -- the mapping that only
+/// makes sense once stages carry their own geometry.
+fn assemble_output(
+    device: &Device,
+    queue: &Queue,
+    mp: &ModifierPipeline,
+    source: &TiledSource,
+    out_w: u32,
+    out_h: u32,
+) -> Vec<u8> {
+    let sx = out_w as f32 / source.full_width as f32;
+    let sy = out_h as f32 / source.full_height as f32;
+    let mut full = vec![0u8; (out_w * out_h * 4) as usize];
+    for ti in 0..source.tiles.len() {
+        let Some(o) = mp.tile_outputs[ti].as_ref() else {
+            continue;
+        };
+        let tile = &source.tiles[ti];
+        let px = o.proc_px.unwrap_or([
+            tile.x as f32,
+            tile.y as f32,
+            (tile.x + tile.width) as f32,
+            (tile.y + tile.height) as f32,
+        ]);
+        let x0 = (px[0] * sx).round() as u32;
+        let y0 = (px[1] * sy).round() as u32;
+        let data = read_texture(device, queue, &o._tex, o.width, o.height);
+        for r in 0..o.height.min(out_h.saturating_sub(y0)) {
+            let cols = o.width.min(out_w.saturating_sub(x0));
+            if cols == 0 {
+                break;
+            }
+            let d = (((y0 + r) * out_w + x0) * 4) as usize;
+            let s = (r * o.width * 4) as usize;
+            full[d..d + (cols * 4) as usize].copy_from_slice(&data[s..s + (cols * 4) as usize]);
+        }
+    }
+    full
+}
+
+fn resize_half() -> Modifier {
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+    Modifier::new(ModifierKind::Resize(Resize {
+        mode: ResizeMode::Percent,
+        width: 50.0,
+        height: 50.0,
+        filter: ResizeFilter::Lanczos,
+        lock_aspect: true,
+    }))
+}
+
+#[test]
+#[ignore = "per-stage geometry not implemented: executor drops resize from the plan"]
+fn golden_resize_trailing_matches_the_oracle() {
+    let mut chain = blur_chain();
+    chain.push(resize_half());
+    run_resize_golden("resize/trailing", &chain, None, 4);
+}
+
+#[test]
+#[ignore = "per-stage geometry not implemented: executor drops resize from the plan"]
+fn golden_resize_mid_chain_matches_the_oracle() {
+    let chain = vec![
+        resize_half(),
+        Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 4.0 })),
+    ];
+    run_resize_golden("resize/mid-chain", &chain, None, 4);
+}
+
+#[test]
+#[ignore = "per-stage geometry not implemented: executor drops resize from the plan"]
+fn golden_resize_mid_chain_multi_tile() {
+    let chain = vec![
+        resize_half(),
+        Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 4.0 })),
+    ];
+    run_resize_golden("resize/mid-chain-2x2", &chain, Some(FORCED_TILE_DIM), 4);
+}
+
 #[test]
 fn golden_ca_single_tile() {
     run_golden("ca/1-tile", &ca_chain(), None, 4);
