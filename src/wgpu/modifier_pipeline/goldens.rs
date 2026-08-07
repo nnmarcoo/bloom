@@ -782,6 +782,54 @@ fn roi_pointwise_then_blur_partial_viewport() {
 /// geometry change), so the GPU output should match a chain with the resize
 /// removed entirely -- and critically, must not panic on the passthrough
 /// debug assert or produce mis-sized tiles.
+/// A stack containing only resizes must still show the image.
+///
+/// Resize is dropped from the preview plan, so a resize-only stack leaves an
+/// empty plan. Returning at that point produced no tile outputs at all and the
+/// viewport went blank -- the image simply disappeared when the modifier was
+/// added. The pipeline now clears its outputs so the view falls back to
+/// drawing the source directly.
+#[test]
+fn resize_only_stack_leaves_no_stale_tile_outputs() {
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let pixels = test_pixels(GOLDEN_W, GOLDEN_H);
+    let image = ImageData::new(pixels, GOLDEN_W, GOLDEN_H);
+    let source = make_source(&device, &queue, &image, Some(FORCED_TILE_DIM));
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, GOLDEN_W, GOLDEN_H);
+
+    // Render a real chain first so tile outputs exist and are valid.
+    mp.prepare(&device, &queue, &source, &blur_chain(), true);
+    assert!(
+        mp.tile_outputs.iter().any(|o| o.is_some()),
+        "precondition: the blur chain should have produced tile outputs"
+    );
+
+    // Now switch to a resize-only stack.
+    let resize = vec![Modifier::new(ModifierKind::Resize(Resize {
+        mode: ResizeMode::Percent,
+        width: 50.0,
+        height: 50.0,
+        filter: ResizeFilter::Lanczos,
+        lock_aspect: true,
+    }))];
+    mp.prepare(&device, &queue, &source, &resize, true);
+
+    // Every display bind group must be gone, which is the signal the view uses
+    // to fall back to the source. A stale Some(..) here means the viewport
+    // would draw the previous blur, and a valid-but-empty output means blank.
+    for i in 0..source.tiles.len() {
+        assert!(
+            mp.tile_display_bg(i, false).is_none() && mp.tile_display_bg(i, true).is_none(),
+            "tile {i} still has a display bind group after a resize-only stack"
+        );
+    }
+}
+
 #[test]
 fn golden_trailing_resize_is_dropped_from_the_preview() {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};

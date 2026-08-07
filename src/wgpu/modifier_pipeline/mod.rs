@@ -510,6 +510,23 @@ impl ModifierPipeline {
         plan_vec.retain(|item| !matches!(item, PlanItem::Step(_, m) if is_resize(&m.kind)));
 
         if plan_vec.is_empty() {
+            // Nothing left to render. This happens when the stack is *only*
+            // resizes: they are dropped above, and returning here would leave
+            // every `tile_outputs` entry `None`, which the view renders as an
+            // empty viewport rather than as the unmodified image.
+            //
+            // Clearing the outputs makes `tile_display_bg` return `None` for
+            // every tile, which is the signal the view already uses to fall
+            // back to drawing the source directly.
+            for o in self.tile_outputs.iter_mut() {
+                *o = None;
+            }
+            for bg in self.tile_display_bgs_linear.iter_mut() {
+                *bg = None;
+            }
+            for bg in self.tile_display_bgs_nearest.iter_mut() {
+                *bg = None;
+            }
             return;
         }
 

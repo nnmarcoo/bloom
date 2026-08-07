@@ -12,7 +12,7 @@ use iced::{
 };
 
 use crate::{
-    modifiers::Modifier,
+    modifiers::{Modifier, ModifierKind},
     wgpu::{
         error::ViewError,
         gpu,
@@ -343,7 +343,15 @@ impl ViewPipeline {
         let dirty = dirty || self.pending_source_dirty;
         self.pending_source_dirty = false;
 
-        if !modifiers.iter().any(|m| m.has_visible_effect()) {
+        // Resize is excluded here because the tiled executor cannot render a
+        // mid-chain geometry change and drops it from the preview plan. A stack
+        // of nothing but resizes would therefore produce an empty plan, no tile
+        // outputs, and a blank viewport -- so treat it as "nothing to preview"
+        // and draw the source directly instead.
+        let previewable = |m: &Modifier| {
+            m.has_visible_effect() && !matches!(m.kind, ModifierKind::Resize(_))
+        };
+        if !modifiers.iter().any(previewable) {
             self.modifier_pipeline = None;
             return;
         }

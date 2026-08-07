@@ -135,17 +135,28 @@ impl ModifierImpl for Resize {
             ModifierParam::ResizeWidth(v) => self.width = v.max(1.0),
             ModifierParam::ResizeHeight(v) => self.height = v.max(1.0),
             ModifierParam::ResizeFilter(f) => self.filter = f,
-            ModifierParam::ResizeMode(m) => {
-                // Switching units keeps the visual size rather than the number,
-                // which is what "100" meaning two different things demands.
-                self.mode = m;
-                match m {
-                    ResizeMode::Percent => {
+            ModifierParam::ResizeMode(m) if m != self.mode => {
+                // Convert the stored numbers so the resize keeps meaning the
+                // same thing across a unit change. Without the image size we
+                // cannot convert, so fall back to a neutral value rather than
+                // leaving a percentage sitting in a pixel field (100 "pixels"
+                // would silently shrink a large image to a thumbnail).
+                match (m, _img_size) {
+                    (ResizeMode::Pixels, Some((iw, ih))) => {
+                        self.width = (iw as f32 * self.width / 100.0).max(1.0).round();
+                        self.height = (ih as f32 * self.height / 100.0).max(1.0).round();
+                    }
+                    (ResizeMode::Percent, Some((iw, ih))) => {
+                        self.width = (self.width / iw.max(1) as f32 * 100.0).max(0.1);
+                        self.height = (self.height / ih.max(1) as f32 * 100.0).max(0.1);
+                    }
+                    (ResizeMode::Percent, None) => {
                         self.width = 100.0;
                         self.height = 100.0;
                     }
-                    ResizeMode::Pixels => {}
+                    (ResizeMode::Pixels, None) => {}
                 }
+                self.mode = m;
             }
             ModifierParam::ResizeLockAspect(v) => self.lock_aspect = v,
             _ => {}
@@ -173,18 +184,39 @@ impl ModifierImpl for Resize {
             ResizeMode::Pixels => Fmt::num(0),
             ResizeMode::Percent => Fmt::num(1),
         };
+        let unit = match self.mode {
+            ResizeMode::Pixels => "Width (px)",
+            ResizeMode::Percent => "Width (%)",
+        };
 
-        let mut rows = column![value_row(
-            "Width",
-            self.width,
-            1.0..=max_w,
-            1.0,
-            fmt,
-            move |v| EditMsg::Update(index, ModifierParam::ResizeWidth(v)).into(),
-        )];
+        // Every control in this app is a slider -- there is no checkbox or
+        // dropdown widget yet -- so the discrete settings are exposed as
+        // stepped sliders rather than being unreachable. Height was previously
+        // hidden whenever `lock_aspect` was on, which it is by default, so the
+        // modifier shipped with exactly one usable control.
+        let mut rows = column![
+            value_row(unit, self.width, 1.0..=max_w, 1.0, fmt, move |v| {
+                EditMsg::Update(index, ModifierParam::ResizeWidth(v)).into()
+            }),
+            value_row(
+                "Lock aspect",
+                if self.lock_aspect { 1.0 } else { 0.0 },
+                0.0..=1.0,
+                1.0,
+                Fmt::num(0),
+                move |v| {
+                    EditMsg::Update(index, ModifierParam::ResizeLockAspect(v >= 0.5)).into()
+                },
+            ),
+        ];
+
         if !self.lock_aspect {
+            let height_label = match self.mode {
+                ResizeMode::Pixels => "Height (px)",
+                ResizeMode::Percent => "Height (%)",
+            };
             rows = rows.push(value_row(
-                "Height",
+                height_label,
                 self.height,
                 1.0..=max_h,
                 1.0,
@@ -192,6 +224,153 @@ impl ModifierImpl for Resize {
                 move |v| EditMsg::Update(index, ModifierParam::ResizeHeight(v)).into(),
             ));
         }
+
+        // 0 = Percent, 1 = Pixels.
+        rows = rows.push(value_row(
+            "Units: 0=%  1=px",
+            match self.mode {
+                ResizeMode::Percent => 0.0,
+                ResizeMode::Pixels => 1.0,
+            },
+            0.0..=1.0,
+            1.0,
+            Fmt::num(0),
+            move |v| {
+                let m = if v >= 0.5 {
+                    ResizeMode::Pixels
+                } else {
+                    ResizeMode::Percent
+                };
+                EditMsg::Update(index, ModifierParam::ResizeMode(m)).into()
+            },
+        ));
+
+        // 0 = Nearest, 1 = Bilinear, 2 = Lanczos.
+        rows = rows.push(value_row(
+            "Filter: 0=near 1=bilin 2=lanc",
+            match self.filter {
+                ResizeFilter::Nearest => 0.0,
+                ResizeFilter::Bilinear => 1.0,
+                ResizeFilter::Lanczos => 2.0,
+            },
+            0.0..=2.0,
+            1.0,
+            Fmt::num(0),
+            move |v| {
+                let f = match v.round() as i32 {
+                    0 => ResizeFilter::Nearest,
+                    1 => ResizeFilter::Bilinear,
+                    _ => ResizeFilter::Lanczos,
+                };
+                EditMsg::Update(index, ModifierParam::ResizeFilter(f)).into()
+            },
+        ));
+
         finish(rows)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modifiers::ModifierImpl;
+
+    fn pct(w: f32, h: f32, lock: bool) -> Resize {
+        Resize {
+            mode: ResizeMode::Percent,
+            width: w,
+            height: h,
+            filter: ResizeFilter::Lanczos,
+            lock_aspect: lock,
+        }
+    }
+
+    #[test]
+    fn percent_scales_both_axes() {
+        let r = pct(50.0, 50.0, false);
+        assert_eq!(r.output_for(ImageSpec::new(800, 600)), ImageSpec::new(400, 300));
+    }
+
+    /// With the aspect locked, height follows width regardless of what the
+    /// height field says -- which is why the UI hides it in that mode.
+    #[test]
+    fn locked_aspect_derives_height_from_width() {
+        let r = pct(50.0, 999.0, true);
+        assert_eq!(r.output_for(ImageSpec::new(800, 600)), ImageSpec::new(400, 300));
+    }
+
+    #[test]
+    fn unlocked_aspect_honours_both_fields() {
+        let r = pct(50.0, 25.0, false);
+        assert_eq!(r.output_for(ImageSpec::new(800, 600)), ImageSpec::new(400, 150));
+    }
+
+    #[test]
+    fn pixel_mode_is_absolute() {
+        let r = Resize {
+            mode: ResizeMode::Pixels,
+            width: 320.0,
+            height: 240.0,
+            filter: ResizeFilter::Bilinear,
+            lock_aspect: false,
+        };
+        assert_eq!(r.output_for(ImageSpec::new(800, 600)), ImageSpec::new(320, 240));
+    }
+
+    #[test]
+    fn output_never_collapses_to_zero() {
+        let r = pct(0.001, 0.001, false);
+        assert_eq!(r.output_for(ImageSpec::new(10, 10)), ImageSpec::new(1, 1));
+    }
+
+    /// Switching units must preserve the resulting size, not the number. A
+    /// 50% resize that becomes "50 pixels" would silently destroy the image.
+    #[test]
+    fn switching_units_preserves_the_resulting_size() {
+        let src = ImageSpec::new(800, 600);
+        let mut r = pct(50.0, 50.0, false);
+        let before = r.output_for(src);
+
+        r.apply_param(ModifierParam::ResizeMode(ResizeMode::Pixels), Some((800, 600)));
+        assert_eq!(r.mode, ResizeMode::Pixels);
+        assert_eq!(r.output_for(src), before, "percent -> pixels changed the size");
+
+        r.apply_param(ModifierParam::ResizeMode(ResizeMode::Percent), Some((800, 600)));
+        assert_eq!(r.mode, ResizeMode::Percent);
+        assert_eq!(r.output_for(src), before, "pixels -> percent changed the size");
+    }
+
+    /// Re-applying the current mode must not convert twice.
+    #[test]
+    fn setting_the_same_mode_is_inert() {
+        let mut r = pct(50.0, 50.0, false);
+        r.apply_param(ModifierParam::ResizeMode(ResizeMode::Percent), Some((800, 600)));
+        assert_eq!(r.width, 50.0);
+        assert_eq!(r.height, 50.0);
+    }
+
+    #[test]
+    fn lock_aspect_is_settable() {
+        let mut r = pct(50.0, 50.0, true);
+        r.apply_param(ModifierParam::ResizeLockAspect(false), None);
+        assert!(!r.lock_aspect);
+        r.apply_param(ModifierParam::ResizeLockAspect(true), None);
+        assert!(r.lock_aspect);
+    }
+
+    #[test]
+    fn filter_is_settable() {
+        let mut r = pct(50.0, 50.0, true);
+        for f in ResizeFilter::ALL {
+            r.apply_param(ModifierParam::ResizeFilter(f), None);
+            assert_eq!(r.filter, f);
+        }
+    }
+
+    #[test]
+    fn identity_resize_reports_itself() {
+        let src = ImageSpec::new(640, 480);
+        assert!(pct(100.0, 100.0, true).is_identity_for(src));
+        assert!(!pct(50.0, 50.0, true).is_identity_for(src));
     }
 }
