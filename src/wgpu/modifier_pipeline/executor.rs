@@ -2,9 +2,13 @@
 //!
 //! Everything here works in one coordinate space: tiles are carved from the
 //! source, proc_px is document-space throughout, and the ROI walk runs backward
-//! through a single geometry. A stage that changed dimensions mid-chain would
+//! through a single geometry. A stage that changes dimensions mid-chain would
 //! put the stages on either side of it in different spaces, which this executor
-//! cannot express, so resize is dropped from the preview plan.
+//! cannot express, so a resize in the middle is still dropped from the preview.
+//!
+//! Resizes at the tail are handled outside the chain: it runs at source
+//! geometry and `resample_outputs` scales each tile afterward, which needs no
+//! per-stage geometry because no stage follows.
 //!
 //! Work is split into bands when a chain is expensive, with exec_band_cursor
 //! carrying progress across frames so the UI stays responsive.

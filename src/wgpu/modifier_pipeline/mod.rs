@@ -143,7 +143,7 @@ impl ScratchTarget {
     }
 }
 
-use crate::modifiers::plan::{ImageSpec, PlanItem, infer_specs, plan_modifiers};
+use crate::modifiers::plan::{ImageSpec, PlanItem, chain_output_spec, infer_specs, plan_modifiers};
 
 const TILE_BUDGET: usize = 2;
 
@@ -185,6 +185,23 @@ fn quality_scale_for(physical_scale: f32) -> f32 {
 
 fn is_resize(kind: &ModifierKind) -> bool {
     matches!(kind, ModifierKind::Resize(_))
+}
+
+/// The filter of the last enabled resize, which is the one that decides how the
+/// final downsample looks.
+///
+/// With several stacked resizes the CPU applies each in turn; the preview does
+/// them as one step, so it takes the last filter rather than blending them.
+fn resize_filter(modifiers: &[Modifier]) -> crate::modifiers::kinds::ResizeFilter {
+    modifiers
+        .iter()
+        .rev()
+        .filter(|m| m.enabled)
+        .find_map(|m| match &m.kind {
+            ModifierKind::Resize(r) => Some(r.filter),
+            _ => None,
+        })
+        .unwrap_or(crate::modifiers::kinds::ResizeFilter::Lanczos)
 }
 
 const ROI_MARGIN_PX: f32 = 256.0;
@@ -235,6 +252,8 @@ pub struct ModifierPipeline {
     pixel_sort: PixelSortCompute,
     text: TextPass,
     drawing: DrawingPass,
+    resample: crate::wgpu::passes::resample::ResamplePass,
+    resample_uniforms: Vec<iced::wgpu::Buffer>,
     display_bgl: BindGroupLayout,
     trilinear_sampler: Sampler,
     linear_sampler: Sampler,
@@ -310,6 +329,8 @@ impl ModifierPipeline {
             pixel_sort: PixelSortCompute::new(device),
             text: TextPass::new(device, format),
             drawing: DrawingPass::new(device, format),
+            resample: crate::wgpu::passes::resample::ResamplePass::new(device, format),
+            resample_uniforms: Vec::new(),
             display_bgl,
             trilinear_sampler,
             linear_sampler,
@@ -469,6 +490,21 @@ impl ModifierPipeline {
 
         let mut plan_vec = plan_modifiers(modifiers);
 
+        // Resizes at the tail of the chain are separated out rather than
+        // dropped. Everything before them runs at source geometry, which is
+        // what this executor can express, and their combined effect is a change
+        // to the document's size. The viewport already fits that size, so the
+        // display draws the chain's output across the resized quad.
+        //
+        // A resize in the *middle* is still dropped: stages after it would have
+        // to run in the post-resize space, and one coordinate space is all the
+        // ROI walk and tiling can carry today.
+        let trailing_resizes = plan_vec
+            .iter()
+            .rev()
+            .take_while(|item| matches!(item, PlanItem::Step(_, m) if is_resize(&m.kind)))
+            .count();
+        plan_vec.truncate(plan_vec.len() - trailing_resizes);
         plan_vec.retain(|item| !matches!(item, PlanItem::Step(_, m) if is_resize(&m.kind)));
 
         if plan_vec.is_empty() {
@@ -521,6 +557,102 @@ impl ModifierPipeline {
         } else {
             self.execute_kernel_chain(device, queue, source, &plan_vec, ps, ds);
         }
+
+        if trailing_resizes > 0 {
+            let out = chain_output_spec(source_spec, &plan_modifiers(modifiers));
+            self.resample_outputs(device, queue, source, out, resize_filter(modifiers));
+        }
+    }
+
+    /// Shrink or grow each tile's output to the chain's final geometry.
+    ///
+    /// The chain ran at source geometry, so a tile covering source pixels
+    /// `proc_px` must end up covering the same fraction of the resized
+    /// document. Scaling each tile by the document's ratio preserves that
+    /// fraction, which is what keeps the tiles adjacent afterward.
+    fn resample_outputs(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        source: &TiledSource,
+        out: ImageSpec,
+        filter: crate::modifiers::kinds::ResizeFilter,
+    ) {
+        let sx = out.w as f32 / source.full_width.max(1) as f32;
+        let sy = out.h as f32 / source.full_height.max(1) as f32;
+        if (sx - 1.0).abs() < 1e-6 && (sy - 1.0).abs() < 1e-6 {
+            return;
+        }
+
+        let mut encoder = device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
+            label: Some("resize-outputs"),
+        });
+        let usage = TextureUsages::RENDER_ATTACHMENT
+            | TextureUsages::TEXTURE_BINDING
+            | TextureUsages::COPY_SRC
+            | TextureUsages::COPY_DST;
+
+        for ti in 0..source.tiles.len() {
+            let Some(o) = self.tile_outputs[ti].as_ref() else {
+                continue;
+            };
+            if !o.valid {
+                continue;
+            }
+            let (src_w, src_h) = (o.width, o.height);
+            let dst_w = ((src_w as f32 * sx).round() as u32).max(1);
+            let dst_h = ((src_h as f32 * sy).round() as u32).max(1);
+            if (dst_w, dst_h) == (src_w, src_h) {
+                continue;
+            }
+
+            while self.resample_uniforms.len() < (ti + 1) * 2 {
+                self.resample_uniforms
+                    .push(self.resample.uniform_buffer(device));
+            }
+
+            // Horizontal into an intermediate, then vertical into the final.
+            // Both axes in one texture would apply a 2D gather, which is a
+            // different filter than the CPU's separable pair.
+            let mid = gpu::texture_2d(device, dst_w, src_h, self.format, usage, Some("resize-mid"));
+            let mid_view = mid.create_view(&Default::default());
+            let dst = gpu::texture_2d(device, dst_w, dst_h, self.format, usage, Some("resize-out"));
+            let dst_view = dst.create_view(&Default::default());
+
+            self.resample.record(
+                device,
+                queue,
+                &mut encoder,
+                &self.resample_uniforms[ti * 2],
+                &o.view,
+                &mid_view,
+                dst_w,
+                src_w,
+                false,
+                filter,
+            );
+            self.resample.record(
+                device,
+                queue,
+                &mut encoder,
+                &self.resample_uniforms[ti * 2 + 1],
+                &mid_view,
+                &dst_view,
+                dst_h,
+                src_h,
+                true,
+                filter,
+            );
+
+            let slot = self.tile_outputs[ti].as_mut().unwrap();
+            slot._tex = dst;
+            slot.view = dst_view;
+            slot.width = dst_w;
+            slot.height = dst_h;
+            self.tile_display_bgs_linear[ti] = None;
+            self.tile_display_bgs_nearest[ti] = None;
+        }
+        queue.submit([encoder.finish()]);
     }
 
     pub fn refresh_display_transforms(

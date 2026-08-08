@@ -840,8 +840,14 @@ fn resize_only_stack_leaves_no_stale_tile_outputs() {
     }
 }
 
+/// A trailing resize must shrink the tiles the preview renders into.
+///
+/// This replaces a test that asserted the opposite. It compared a chain with a
+/// trailing resize against the same chain without one and required the output
+/// to be byte-identical, which encoded the bug as the specification: the
+/// executor dropped the resize, so of course nothing changed.
 #[test]
-fn golden_trailing_resize_is_dropped_from_the_preview() {
+fn golden_trailing_resize_shrinks_the_preview_tiles() {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
 
     let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -862,19 +868,31 @@ fn golden_trailing_resize_is_dropped_from_the_preview() {
     let mut with_resize = blur_chain();
     with_resize.push(resize);
 
-    let mut outs: Vec<Vec<u8>> = Vec::new();
+    let mut dims: Vec<Vec<(u32, u32)>> = Vec::new();
     for chain in [with_resize, blur_chain()] {
         let source = make_source(&device, &queue, &image, Some(FORCED_TILE_DIM));
         let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, GOLDEN_W, GOLDEN_H);
         converge(&mut mp, &device, &queue, &source, &chain, "trailing-resize");
-        outs.push(assemble(&device, &queue, &mp, &source));
+        dims.push(
+            mp.tile_outputs
+                .iter()
+                .filter_map(|o| o.as_ref().map(|o| (o.width, o.height)))
+                .collect(),
+        );
     }
 
-    let (max_d, pct) = diff_stats(&outs[0], &outs[1], 0);
     assert_eq!(
-        max_d, 0,
-        "a trailing resize changed the preview: max diff {max_d} ({pct:.3}% over)"
+        dims[0].len(),
+        dims[1].len(),
+        "the resize changed how many tiles produced output"
     );
+    for (i, (resized, plain)) in dims[0].iter().zip(&dims[1]).enumerate() {
+        assert!(
+            resized.0 < plain.0 && resized.1 < plain.1,
+            "tile {i} is {resized:?} with a 50% resize and {plain:?} without; \
+             the resize did not reach the preview"
+        );
+    }
 }
 
 fn run_resize_golden(label: &str, modifiers: &[Modifier], tile_dim: Option<u32>, tol: u8) {
@@ -972,7 +990,6 @@ fn resize_half() -> Modifier {
 }
 
 #[test]
-#[ignore = "per-stage geometry not implemented: executor drops resize from the plan"]
 fn golden_resize_trailing_matches_the_oracle() {
     let mut chain = blur_chain();
     chain.push(resize_half());

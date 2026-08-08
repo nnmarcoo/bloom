@@ -8,12 +8,6 @@
 //! shader and must land on exact texel centers; a linear sampler would blend
 //! each tap with its neighbor before weighting, which is a second filter
 //! applied underneath the first.
-//!
-//! Only the parity tests construct this so far; the executor consumes it in the
-//! next commit. Landing the pass on its own keeps its CPU-agreement evidence in
-//! its own change.
-
-#![allow(dead_code, reason = "wired into the executor in the following commit")]
 
 use bytemuck::{Pod, Zeroable};
 use iced::wgpu::{
