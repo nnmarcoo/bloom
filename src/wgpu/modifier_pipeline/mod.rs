@@ -564,12 +564,18 @@ impl ModifierPipeline {
         }
     }
 
-    /// Shrink or grow each tile's output to the chain's final geometry.
+    /// Resize each tile's output to the extent it occupies in the resized
+    /// document.
     ///
-    /// The chain ran at source geometry, so a tile covering source pixels
-    /// `proc_px` must end up covering the same fraction of the resized
-    /// document. Scaling each tile by the document's ratio preserves that
-    /// fraction, which is what keeps the tiles adjacent afterward.
+    /// The target is an absolute size derived from the tile's `proc_px`, not a
+    /// ratio applied to the current texture. Those differ whenever the chain
+    /// rendered at reduced quality: the texture is already smaller than the
+    /// region it represents, so scaling it by the document ratio would shrink
+    /// it twice and leave the tiles mismatched against their neighbors.
+    ///
+    /// Rounding the region's edges rather than its extent keeps adjacent tiles
+    /// sharing a boundary. Rounding widths independently lets two tiles that
+    /// met exactly end up a pixel apart.
     fn resample_outputs(
         &mut self,
         device: &Device,
@@ -599,9 +605,18 @@ impl ModifierPipeline {
             if !o.valid {
                 continue;
             }
+            let tile = &source.tiles[ti];
+            let px = o.proc_px.unwrap_or([
+                tile.x as f32,
+                tile.y as f32,
+                (tile.x + tile.width) as f32,
+                (tile.y + tile.height) as f32,
+            ]);
             let (src_w, src_h) = (o.width, o.height);
-            let dst_w = ((src_w as f32 * sx).round() as u32).max(1);
-            let dst_h = ((src_h as f32 * sy).round() as u32).max(1);
+            let x0 = (px[0] * sx).round();
+            let y0 = (px[1] * sy).round();
+            let dst_w = (((px[2] * sx).round() - x0) as u32).max(1);
+            let dst_h = (((px[3] * sy).round() - y0) as u32).max(1);
             if (dst_w, dst_h) == (src_w, src_h) {
                 continue;
             }

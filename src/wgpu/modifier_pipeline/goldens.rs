@@ -996,6 +996,58 @@ fn golden_resize_trailing_matches_the_oracle() {
     run_resize_golden("resize/trailing", &chain, None, 4);
 }
 
+/// A trailing resize must land on the document's geometry at any render
+/// quality.
+///
+/// The content goldens run at `physical_scale` 1.0, where the tile texture and
+/// the region it represents happen to be the same size. Below that they
+/// diverge, and scaling a tile by the document ratio rather than to an absolute
+/// target shrinks it twice: the tiles come out too small and stop meeting their
+/// neighbors. Nothing that compares pixels at the output size notices, because
+/// each tile's own content is still correct.
+#[test]
+fn resize_targets_document_geometry_at_reduced_quality() {
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let pixels = test_pixels(GOLDEN_W, GOLDEN_H);
+    let image = ImageData::new(pixels, GOLDEN_W, GOLDEN_H);
+
+    let mut chain = blur_chain();
+    chain.push(resize_half());
+
+    for phys in [1.0f32, 0.5, 0.25] {
+        let mut source = make_source(&device, &queue, &image, Some(FORCED_TILE_DIM));
+        source.physical_scale = phys;
+        let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, GOLDEN_W, GOLDEN_H);
+        converge(&mut mp, &device, &queue, &source, &chain, "resize-quality");
+
+        // Half the source, so each tile must cover half the pixels it did.
+        for (ti, tile) in source.tiles.iter().enumerate() {
+            let Some(o) = mp.tile_outputs[ti].as_ref() else {
+                continue;
+            };
+            let px = o.proc_px.unwrap_or([
+                tile.x as f32,
+                tile.y as f32,
+                (tile.x + tile.width) as f32,
+                (tile.y + tile.height) as f32,
+            ]);
+            let want_w = ((px[2] * 0.5).round() - (px[0] * 0.5).round()) as u32;
+            let want_h = ((px[3] * 0.5).round() - (px[1] * 0.5).round()) as u32;
+            assert_eq!(
+                (o.width, o.height),
+                (want_w.max(1), want_h.max(1)),
+                "at physical_scale {phys}, tile {ti} is {}x{} but covers a \
+                 {want_w}x{want_h} region of the resized document",
+                o.width,
+                o.height
+            );
+        }
+    }
+}
+
 #[test]
 #[ignore = "per-stage geometry not implemented: executor drops resize from the plan"]
 fn golden_resize_mid_chain_matches_the_oracle() {

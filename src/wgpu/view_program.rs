@@ -324,11 +324,7 @@ impl ViewProgram {
             return None;
         }
         let eff = self.effective_display_size();
-        let origin = if let Some([min_u, min_v, ..]) = self.displayed_crop() {
-            vec2(min_u * self.image_size.x, min_v * self.image_size.y)
-        } else {
-            Vec2::ZERO
-        };
+        let origin = self.crop_origin();
         let to_pixels =
             Mat4::from_translation(vec3(0.5 * eff.x + origin.x, 0.5 * eff.y + origin.y, 0.0))
                 * Mat4::from_scale(vec3(0.5 * eff.x, -0.5 * eff.y, 1.0));
@@ -534,6 +530,23 @@ impl ViewProgram {
         }
     }
 
+    /// Where the crop's top-left sits, in the same space as
+    /// [`Self::effective_display_size`].
+    ///
+    /// The crop's fractions must be multiplied by the *resized* document, not
+    /// the source. Mixing the two put the pixel grid's transform in one space
+    /// and its bounds in another, so the lines drifted away from the pixels
+    /// under a resize.
+    fn crop_origin(&self) -> Vec2 {
+        match self.displayed_crop() {
+            Some([min_u, min_v, ..]) => {
+                let doc = self.chain_output_size();
+                vec2(min_u * doc.x, min_v * doc.y)
+            }
+            None => Vec2::ZERO,
+        }
+    }
+
     /// `image_size` after any dimension-changing modifier in the stack.
     ///
     /// Falls back to the source size when the stack changes nothing, which is
@@ -621,12 +634,7 @@ impl ViewProgram {
         .truncate();
         let eff = self.effective_display_size();
         let local_px = (img_ndc + 1.0) * 0.5 * vec2(eff.x, -eff.y) + vec2(0.0, eff.y);
-        let origin = if let Some([min_u, min_v, ..]) = self.displayed_crop() {
-            vec2(min_u * self.image_size.x, min_v * self.image_size.y)
-        } else {
-            Vec2::ZERO
-        };
-        Some(local_px + origin)
+        Some(local_px + self.crop_origin())
     }
 
     fn with_rasters<R>(
@@ -1517,6 +1525,35 @@ mod document_size_tests {
         // wrote, so a half-image crop of an 800x600 source is 0..0.5 in u/v.
         // Applied to the 400x300 resized document that is 200x150.
         assert_eq!(p.effective_display_size(), vec2(200.0, 150.0));
+    }
+
+    /// The grid's transform and its bounds must be in one space.
+    ///
+    /// `grid_uniforms` built the transform from the resized document but the
+    /// origin from the source image, so under a resize the lines drifted away
+    /// from the pixels they were meant to outline.
+    #[test]
+    fn crop_origin_is_in_the_resized_space() {
+        let p = program(
+            vec![resize_pct(50.0), crop_of(400.0, 300.0, 400.0, 300.0)],
+            800,
+            600,
+        );
+        // The crop starts halfway across an 800x600 source, so u/v are 0.5.
+        // In the 400x300 resized document that is (200, 150), not (400, 300).
+        assert_eq!(
+            p.crop_origin(),
+            vec2(200.0, 150.0),
+            "the crop origin is in source pixels while the extent is in              resized pixels, so the grid and the image disagree"
+        );
+    }
+
+    /// Without a resize the two spaces coincide, which is why this went
+    /// unnoticed until one was added.
+    #[test]
+    fn crop_origin_without_a_resize_is_the_source_offset() {
+        let p = program(vec![crop_of(400.0, 300.0, 400.0, 300.0)], 800, 600);
+        assert_eq!(p.crop_origin(), vec2(400.0, 300.0));
     }
 
     #[test]
