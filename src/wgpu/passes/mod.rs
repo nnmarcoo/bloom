@@ -6,4 +6,5 @@ pub mod gaussian_blur;
 pub mod motion_blur;
 pub mod pixel_grid;
 pub mod pixel_sort;
+pub mod resample;
 pub mod text;
