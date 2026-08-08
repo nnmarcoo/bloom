@@ -12,7 +12,14 @@ use crate::modifiers::{Modifier, ModifierKind, motion_blur_samples};
 /// Vertical reach only -- horizontal reach never forces extra *rows*, so a band
 /// is always full width. Returns `None` when the stage needs its entire input,
 /// which is the honest answer for anything that reads across rows arbitrarily.
-fn rows_needed(class: StepClass, y0: u32, y1: u32, in_h: u32, scale_num: u32, scale_den: u32) -> Option<(u32, u32)> {
+fn rows_needed(
+    class: StepClass,
+    y0: u32,
+    y1: u32,
+    in_h: u32,
+    scale_num: u32,
+    scale_den: u32,
+) -> Option<(u32, u32)> {
     // Map the output span back through any geometry change first: a resize
     // means output row y came from input row y * in_h / out_h.
     let map = |y: u32| -> u32 {
@@ -90,7 +97,11 @@ pub(crate) fn plan_is_bandable(plan: &[PlanItem]) -> bool {
         PlanItem::Fused(_) => true,
         PlanItem::Step(_, m) => !matches!(
             step_class(&m.kind),
-            StepClass::WholeFrame | StepClass::Scanline { dir: (_, 1..) } | StepClass::Scanline { dir: (_, i32::MIN..=-1) }
+            StepClass::WholeFrame
+                | StepClass::Scanline { dir: (_, 1..) }
+                | StepClass::Scanline {
+                    dir: (_, i32::MIN..=-1)
+                }
         ),
     })
 }
@@ -119,7 +130,9 @@ pub(crate) fn render_band(
 ) -> Vec<u8> {
     let plan = plan_modifiers(modifiers);
     let specs = infer_specs(ImageSpec::new(img_w, img_h), &plan);
-    let out_spec = specs.last().map_or(ImageSpec::new(img_w, img_h), |s| s.output);
+    let out_spec = specs
+        .last()
+        .map_or(ImageSpec::new(img_w, img_h), |s| s.output);
     let row_bytes = out_spec.w as usize * 4;
 
     let Some((src_lo, src_hi)) = source_rows_for_band(&plan, &specs, y0, y1) else {
@@ -473,7 +486,14 @@ fn blur_full(buf: &mut [u8], w: usize, h: usize, radius: f32) {
     // Down, blur at the matching radius, back up. Lanczos on the way down to
     // avoid aliasing the detail that survives; bilinear on the way back up
     // because the result is already smooth and Lanczos would only ring.
-    let small = resample(buf, w as u32, h as u32, sw as u32, sh as u32, ResizeFilter::Lanczos);
+    let small = resample(
+        buf,
+        w as u32,
+        h as u32,
+        sw as u32,
+        sh as u32,
+        ResizeFilter::Lanczos,
+    );
     let mut small = small;
     blur_direct(&mut small, sw, sh, radius * ks);
     let up = resample(
@@ -563,24 +583,22 @@ fn blur_direct(buf: &mut [u8], w: usize, h: usize, radius: f32) {
     // vectorizer and the cache.
     let scratch = buf.to_vec();
     let stride = w * 4;
-    buf.par_chunks_mut(stride)
-        .enumerate()
-        .for_each_init(
-            || vec![0.0f32; stride],
-            |acc_row, (y, out_row)| {
-                acc_row.iter_mut().for_each(|v| *v = 0.0);
-                for (ki, &k) in norm.iter().enumerate() {
-                    let sy = (y as i32 - r + ki as i32).clamp(0, h as i32 - 1) as usize;
-                    let src_row = &scratch[sy * stride..sy * stride + stride];
-                    for (a, &p) in acc_row.iter_mut().zip(src_row.iter()) {
-                        *a += p as f32 * k;
-                    }
+    buf.par_chunks_mut(stride).enumerate().for_each_init(
+        || vec![0.0f32; stride],
+        |acc_row, (y, out_row)| {
+            acc_row.iter_mut().for_each(|v| *v = 0.0);
+            for (ki, &k) in norm.iter().enumerate() {
+                let sy = (y as i32 - r + ki as i32).clamp(0, h as i32 - 1) as usize;
+                let src_row = &scratch[sy * stride..sy * stride + stride];
+                for (a, &p) in acc_row.iter_mut().zip(src_row.iter()) {
+                    *a += p as f32 * k;
                 }
-                for (o, &a) in out_row.iter_mut().zip(acc_row.iter()) {
-                    *o = (a + 0.5).clamp(0.0, 255.0) as u8;
-                }
-            },
-        );
+            }
+            for (o, &a) in out_row.iter_mut().zip(acc_row.iter()) {
+                *o = (a + 0.5).clamp(0.0, 255.0) as u8;
+            }
+        },
+    );
 }
 
 fn chromatic_aberration_full(src: &[u8], img_w: u32, img_h: u32, amount: f32) -> Vec<u8> {
@@ -880,65 +898,66 @@ pub(crate) fn resample(
             .collect()
     };
 
-    let one_axis = |input: &[u8], in_w: u32, in_h: u32, out_len: u32, horizontal: bool| -> Vec<u8> {
-        let (out_w, out_h) = if horizontal {
-            (out_len, in_h)
-        } else {
-            (in_w, out_len)
-        };
-        let src_len = if horizontal { in_w } else { in_h };
-        let taps = build_taps(out_len, src_len);
-        let in_stride = in_w as usize * 4;
+    let one_axis =
+        |input: &[u8], in_w: u32, in_h: u32, out_len: u32, horizontal: bool| -> Vec<u8> {
+            let (out_w, out_h) = if horizontal {
+                (out_len, in_h)
+            } else {
+                (in_w, out_len)
+            };
+            let src_len = if horizontal { in_w } else { in_h };
+            let taps = build_taps(out_len, src_len);
+            let in_stride = in_w as usize * 4;
 
-        let mut out = vec![0u8; out_w as usize * out_h as usize * 4];
-        if horizontal {
-            // Each output row reads only its own input row, so both are
-            // contiguous and the tap table is shared across rows.
-            out.par_chunks_mut(out_w as usize * 4)
-                .enumerate()
-                .for_each(|(row, out_row)| {
-                    let in_row = &input[row * in_stride..(row + 1) * in_stride];
-                    for (col, tap) in taps.iter().enumerate() {
-                        let mut acc = [0.0f32; 4];
-                        for (i, &wt) in tap.weights.iter().enumerate() {
-                            let base = (tap.start as usize + i).min(src_len as usize - 1) * 4;
+            let mut out = vec![0u8; out_w as usize * out_h as usize * 4];
+            if horizontal {
+                // Each output row reads only its own input row, so both are
+                // contiguous and the tap table is shared across rows.
+                out.par_chunks_mut(out_w as usize * 4)
+                    .enumerate()
+                    .for_each(|(row, out_row)| {
+                        let in_row = &input[row * in_stride..(row + 1) * in_stride];
+                        for (col, tap) in taps.iter().enumerate() {
+                            let mut acc = [0.0f32; 4];
+                            for (i, &wt) in tap.weights.iter().enumerate() {
+                                let base = (tap.start as usize + i).min(src_len as usize - 1) * 4;
+                                for c in 0..4 {
+                                    acc[c] += in_row[base + c] as f32 * wt;
+                                }
+                            }
                             for c in 0..4 {
-                                acc[c] += in_row[base + c] as f32 * wt;
+                                out_row[col * 4 + c] =
+                                    (acc[c] / tap.norm).round().clamp(0.0, 255.0) as u8;
                             }
                         }
-                        for c in 0..4 {
-                            out_row[col * 4 + c] =
-                                (acc[c] / tap.norm).round().clamp(0.0, 255.0) as u8;
-                        }
-                    }
-                });
-        } else {
-            // Each output row combines a fixed set of input rows with fixed
-            // weights, so accumulate row-at-a-time: the inner loop then walks
-            // two contiguous rows, which vectorizes far better than striding
-            // down a column per output pixel.
-            let row_floats = out_w as usize * 4;
-            out.par_chunks_mut(row_floats)
-                .zip(taps.par_iter())
-                .for_each_init(
-                    || vec![0.0f32; row_floats],
-                    |acc_row, (out_row, tap)| {
-                        acc_row.iter_mut().for_each(|v| *v = 0.0);
-                        for (i, &wt) in tap.weights.iter().enumerate() {
-                            let sy = (tap.start as usize + i).min(src_len as usize - 1);
-                            let in_row = &input[sy * in_stride..sy * in_stride + row_floats];
-                            for (a, &p) in acc_row.iter_mut().zip(in_row.iter()) {
-                                *a += p as f32 * wt;
+                    });
+            } else {
+                // Each output row combines a fixed set of input rows with fixed
+                // weights, so accumulate row-at-a-time: the inner loop then walks
+                // two contiguous rows, which vectorizes far better than striding
+                // down a column per output pixel.
+                let row_floats = out_w as usize * 4;
+                out.par_chunks_mut(row_floats)
+                    .zip(taps.par_iter())
+                    .for_each_init(
+                        || vec![0.0f32; row_floats],
+                        |acc_row, (out_row, tap)| {
+                            acc_row.iter_mut().for_each(|v| *v = 0.0);
+                            for (i, &wt) in tap.weights.iter().enumerate() {
+                                let sy = (tap.start as usize + i).min(src_len as usize - 1);
+                                let in_row = &input[sy * in_stride..sy * in_stride + row_floats];
+                                for (a, &p) in acc_row.iter_mut().zip(in_row.iter()) {
+                                    *a += p as f32 * wt;
+                                }
                             }
-                        }
-                        for (o, &a) in out_row.iter_mut().zip(acc_row.iter()) {
-                            *o = (a / tap.norm).round().clamp(0.0, 255.0) as u8;
-                        }
-                    },
-                );
-        }
-        out
-    };
+                            for (o, &a) in out_row.iter_mut().zip(acc_row.iter()) {
+                                *o = (a / tap.norm).round().clamp(0.0, 255.0) as u8;
+                            }
+                        },
+                    );
+            }
+            out
+        };
 
     let mid = one_axis(src, src_w, src_h, dst_w, true);
     one_axis(&mid, dst_w, src_h, dst_h, false)
@@ -1353,11 +1372,7 @@ mod band_tests {
                 .zip(full.chunks(row_bytes))
                 .position(|(a, b)| a != b)
                 .unwrap_or(0);
-            let diff = assembled
-                .iter()
-                .zip(&full)
-                .filter(|(a, b)| a != b)
-                .count();
+            let diff = assembled.iter().zip(&full).filter(|(a, b)| a != b).count();
             panic!(
                 "{label}: banded render differs from full render; first bad row {bad} \
                  (band height {band}), {diff} bytes differ of {}",
@@ -1502,7 +1517,12 @@ mod resample_tests {
     fn resample_produces_the_requested_dimensions() {
         for f in ResizeFilter::ALL {
             let out = resample(&split(64, 32), 64, 32, 21, 47, f);
-            assert_eq!(out.len(), 21 * 47 * 4, "{} produced a wrong-sized buffer", f.label());
+            assert_eq!(
+                out.len(),
+                21 * 47 * 4,
+                "{} produced a wrong-sized buffer",
+                f.label()
+            );
         }
     }
 
@@ -1730,8 +1750,6 @@ mod motion_blur_tests {
         );
     }
 }
-
-
 
 #[cfg(test)]
 mod blur_edge_tests {

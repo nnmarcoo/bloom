@@ -1386,8 +1386,15 @@ mod eyedropper_resize_tests {
                 "cursor info vanished at ({px}, {py}) with a 50% resize"
             );
             let (rx, ry, _, rgba) = info.unwrap();
-            assert_eq!((rx, ry), (px, py), "reported position must stay in source space");
-            assert_eq!(rgba[3], 255, "sampled a pixel outside the buffer at ({px}, {py})");
+            assert_eq!(
+                (rx, ry),
+                (px, py),
+                "reported position must stay in source space"
+            );
+            assert_eq!(
+                rgba[3], 255,
+                "sampled a pixel outside the buffer at ({px}, {py})"
+            );
         }
     }
 

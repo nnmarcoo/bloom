@@ -553,7 +553,14 @@ impl ModifierPipeline {
             }
         }
         // VRAM can force quality below what the zoom level asked for.
-        let fit = fit_process_scale(tw, th, n_proc, 1, process_vram_budget(device), quality_scale);
+        let fit = fit_process_scale(
+            tw,
+            th,
+            n_proc,
+            1,
+            process_vram_budget(device),
+            quality_scale,
+        );
         let (ps, ds) = if fit < quality_scale {
             (fit, true)
         } else {

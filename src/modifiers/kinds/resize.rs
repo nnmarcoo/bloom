@@ -295,7 +295,10 @@ mod tests {
     #[test]
     fn percent_scales_both_axes() {
         let r = pct(50.0, 50.0, false);
-        assert_eq!(r.output_for(ImageSpec::new(800, 600)), ImageSpec::new(400, 300));
+        assert_eq!(
+            r.output_for(ImageSpec::new(800, 600)),
+            ImageSpec::new(400, 300)
+        );
     }
 
     /// With the aspect locked, height follows width regardless of what the
@@ -303,13 +306,19 @@ mod tests {
     #[test]
     fn locked_aspect_derives_height_from_width() {
         let r = pct(50.0, 999.0, true);
-        assert_eq!(r.output_for(ImageSpec::new(800, 600)), ImageSpec::new(400, 300));
+        assert_eq!(
+            r.output_for(ImageSpec::new(800, 600)),
+            ImageSpec::new(400, 300)
+        );
     }
 
     #[test]
     fn unlocked_aspect_honours_both_fields() {
         let r = pct(50.0, 25.0, false);
-        assert_eq!(r.output_for(ImageSpec::new(800, 600)), ImageSpec::new(400, 150));
+        assert_eq!(
+            r.output_for(ImageSpec::new(800, 600)),
+            ImageSpec::new(400, 150)
+        );
     }
 
     #[test]
@@ -321,7 +330,10 @@ mod tests {
             filter: ResizeFilter::Bilinear,
             lock_aspect: false,
         };
-        assert_eq!(r.output_for(ImageSpec::new(800, 600)), ImageSpec::new(320, 240));
+        assert_eq!(
+            r.output_for(ImageSpec::new(800, 600)),
+            ImageSpec::new(320, 240)
+        );
     }
 
     #[test]
@@ -338,20 +350,37 @@ mod tests {
         let mut r = pct(50.0, 50.0, false);
         let before = r.output_for(src);
 
-        r.apply_param(ModifierParam::ResizeMode(ResizeMode::Pixels), Some((800, 600)));
+        r.apply_param(
+            ModifierParam::ResizeMode(ResizeMode::Pixels),
+            Some((800, 600)),
+        );
         assert_eq!(r.mode, ResizeMode::Pixels);
-        assert_eq!(r.output_for(src), before, "percent -> pixels changed the size");
+        assert_eq!(
+            r.output_for(src),
+            before,
+            "percent -> pixels changed the size"
+        );
 
-        r.apply_param(ModifierParam::ResizeMode(ResizeMode::Percent), Some((800, 600)));
+        r.apply_param(
+            ModifierParam::ResizeMode(ResizeMode::Percent),
+            Some((800, 600)),
+        );
         assert_eq!(r.mode, ResizeMode::Percent);
-        assert_eq!(r.output_for(src), before, "pixels -> percent changed the size");
+        assert_eq!(
+            r.output_for(src),
+            before,
+            "pixels -> percent changed the size"
+        );
     }
 
     /// Re-applying the current mode must not convert twice.
     #[test]
     fn setting_the_same_mode_is_inert() {
         let mut r = pct(50.0, 50.0, false);
-        r.apply_param(ModifierParam::ResizeMode(ResizeMode::Percent), Some((800, 600)));
+        r.apply_param(
+            ModifierParam::ResizeMode(ResizeMode::Percent),
+            Some((800, 600)),
+        );
         assert_eq!(r.width, 50.0);
         assert_eq!(r.height, 50.0);
     }

@@ -229,7 +229,10 @@ mod tests {
         assert_eq!(specs[1].input, SRC);
         assert_eq!(specs[1].output, ImageSpec::new(SRC.w / 2, SRC.h / 2));
         assert_eq!(specs[2].input, ImageSpec::new(SRC.w / 2, SRC.h / 2));
-        assert_eq!(chain_output_spec(SRC, &plan), ImageSpec::new(SRC.w / 2, SRC.h / 2));
+        assert_eq!(
+            chain_output_spec(SRC, &plan),
+            ImageSpec::new(SRC.w / 2, SRC.h / 2)
+        );
     }
 
     /// A percent resize resolves against its actual input, so an upstream

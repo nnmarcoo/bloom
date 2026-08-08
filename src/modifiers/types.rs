@@ -63,10 +63,15 @@ pub enum InputRequest {
     SamplePoint,
     /// Bounded local reach. `separable` records whether the pass can run as two
     /// 1-D passes, which the GPU backend uses to pick a pipeline.
-    Neighborhood { radius_px: f32, separable: bool },
+    Neighborhood {
+        radius_px: f32,
+        separable: bool,
+    },
     /// Reads whole lines along `step`. Cardinal directions are `(1, 0)` /
     /// `(0, 1)`; diagonal sorts use their reduced rational slope.
-    ScanLines { step: (i32, i32) },
+    ScanLines {
+        step: (i32, i32),
+    },
     FullFrame,
 }
 

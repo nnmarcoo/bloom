@@ -240,7 +240,11 @@ fn diff_within_roi(
             }
         }
     }
-    (max_d, over as f64 * 100.0 / compared.max(1) as f64, compared)
+    (
+        max_d,
+        over as f64 * 100.0 / compared.max(1) as f64,
+        compared,
+    )
 }
 
 /// GPU-vs-oracle agreement with a partial ROI, at a size where a stage's
@@ -764,7 +768,15 @@ fn roi_chromatic_aberration_partial_viewport() {
 
 #[test]
 fn roi_motion_blur_partial_viewport() {
-    run_roi_golden("roi/motion-blur", &motion_blur_chain(), 1024, 0.42, 4, 2048, 2048);
+    run_roi_golden(
+        "roi/motion-blur",
+        &motion_blur_chain(),
+        1024,
+        0.42,
+        4,
+        2048,
+        2048,
+    );
 }
 
 #[test]

@@ -348,9 +348,8 @@ impl ViewPipeline {
         // of nothing but resizes would therefore produce an empty plan, no tile
         // outputs, and a blank viewport -- so treat it as "nothing to preview"
         // and draw the source directly instead.
-        let previewable = |m: &Modifier| {
-            m.has_visible_effect() && !matches!(m.kind, ModifierKind::Resize(_))
-        };
+        let previewable =
+            |m: &Modifier| m.has_visible_effect() && !matches!(m.kind, ModifierKind::Resize(_));
         if !modifiers.iter().any(previewable) {
             self.modifier_pipeline = None;
             return;
