@@ -518,15 +518,35 @@ impl ViewProgram {
         (!trim.is_full()).then(|| trim.resolve(duration))
     }
 
+    /// The document's size after the modifier stack, which is what the viewport
+    /// fits, zooms against, and reports coordinates in.
+    ///
+    /// Resize is applied before crop, matching `export::geom_of`. The two must
+    /// agree or the preview shows a different document than the file. Crop's
+    /// fractions are relative to the resized image, which is why the resize is
+    /// resolved first and the crop scales whatever comes out.
     fn effective_display_size(&self) -> Vec2 {
+        let resized = self.chain_output_size();
         if let Some([min_u, min_v, max_u, max_v]) = self.displayed_crop() {
-            vec2(
-                (max_u - min_u) * self.image_size.x,
-                (max_v - min_v) * self.image_size.y,
-            )
+            vec2((max_u - min_u) * resized.x, (max_v - min_v) * resized.y)
         } else {
-            self.image_size
+            resized
         }
+    }
+
+    /// `image_size` after any dimension-changing modifier in the stack.
+    ///
+    /// Falls back to the source size when the stack changes nothing, which is
+    /// every stack that contains no resize.
+    fn chain_output_size(&self) -> Vec2 {
+        if self.image_size == Vec2::ZERO {
+            return self.image_size;
+        }
+        let out = chain_output_spec(
+            ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32),
+            &plan_modifiers(&self.modifiers),
+        );
+        vec2(out.w as f32, out.h as f32)
     }
 
     pub fn animation_info(&self) -> Option<(usize, usize)> {
@@ -1428,5 +1448,116 @@ mod eyedropper_resize_tests {
             px.chunks_exact(4).any(|p| p[3] == 255),
             "the grid near the far corner came back entirely empty"
         );
+    }
+}
+
+#[cfg(test)]
+mod document_size_tests {
+    use super::*;
+    use crate::modifiers::ModifierKind;
+    use crate::modifiers::kinds::{Crop, Resize, ResizeFilter, ResizeMode};
+
+    fn program(modifiers: Vec<Modifier>, w: u32, h: u32) -> ViewProgram {
+        let mut p = ViewProgram::default();
+        p.set_image(ImageData::new(vec![255u8; (w * h * 4) as usize], w, h));
+        for m in modifiers {
+            p.modifiers_mut().push(m);
+        }
+        p
+    }
+
+    fn resize_pct(pct: f32) -> Modifier {
+        Modifier::new(ModifierKind::Resize(Resize {
+            mode: ResizeMode::Percent,
+            width: pct,
+            height: pct,
+            filter: ResizeFilter::Bilinear,
+            lock_aspect: true,
+        }))
+    }
+
+    fn crop_of(x: f32, y: f32, w: f32, h: f32) -> Modifier {
+        Modifier::new(ModifierKind::Crop(Crop {
+            x,
+            y,
+            width: w,
+            height: h,
+        }))
+    }
+
+    #[test]
+    fn no_modifiers_leaves_the_source_size() {
+        let p = program(Vec::new(), 800, 600);
+        assert_eq!(p.effective_display_size(), vec2(800.0, 600.0));
+    }
+
+    #[test]
+    fn a_resize_changes_the_document_size() {
+        let p = program(vec![resize_pct(50.0)], 800, 600);
+        assert_eq!(
+            p.effective_display_size(),
+            vec2(400.0, 300.0),
+            "the viewport still reports the source size, so it would fit and \
+             zoom against a document the export does not produce"
+        );
+    }
+
+    /// Resize is applied before crop, matching `export::geom_of`.
+    ///
+    /// Reversing the order gives a different answer whenever both are present,
+    /// and the preview would disagree with the file.
+    #[test]
+    fn crop_applies_to_the_resized_document() {
+        let p = program(
+            vec![resize_pct(50.0), crop_of(0.0, 0.0, 400.0, 300.0)],
+            800,
+            600,
+        );
+        // Crop's fractions come from the source-sized values the crop tool
+        // wrote, so a half-image crop of an 800x600 source is 0..0.5 in u/v.
+        // Applied to the 400x300 resized document that is 200x150.
+        assert_eq!(p.effective_display_size(), vec2(200.0, 150.0));
+    }
+
+    #[test]
+    fn a_disabled_resize_does_not_change_the_document() {
+        let mut m = resize_pct(50.0);
+        m.enabled = false;
+        let p = program(vec![m], 800, 600);
+        assert_eq!(p.effective_display_size(), vec2(800.0, 600.0));
+    }
+
+    /// The viewport must fit the document the export will produce.
+    #[test]
+    fn fit_scale_uses_the_resized_document() {
+        let mut p = program(vec![resize_pct(50.0)], 800, 600);
+        p.set_bounds(Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: 400.0,
+            height: 300.0,
+        });
+        // A 400x300 document in 400x300 bounds fits at exactly 1.0. Without the
+        // resize being honored this would be 0.5.
+        assert!(
+            (p.fit_scale() - 1.0).abs() < 1e-4,
+            "fit scale was {}, expected 1.0 for a 400x300 document in 400x300 \
+             bounds",
+            p.fit_scale()
+        );
+    }
+
+    /// Preview and export must agree, since disagreeing is the whole bug.
+    #[test]
+    fn preview_size_matches_the_export_geometry() {
+        for pct in [25.0f32, 50.0, 150.0] {
+            let p = program(vec![resize_pct(pct)], 800, 600);
+            let out = chain_output_spec(ImageSpec::new(800, 600), &plan_modifiers(&p.modifiers));
+            assert_eq!(
+                p.effective_display_size(),
+                vec2(out.w as f32, out.h as f32),
+                "at {pct}% the viewport and the export planner disagree"
+            );
+        }
     }
 }
