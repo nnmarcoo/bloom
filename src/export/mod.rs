@@ -507,7 +507,8 @@ mod tests {
         let _ = std::fs::remove_file(&a);
         let _ = std::fs::remove_file(&b);
         assert_eq!(
-            ba, bb,
+            ba,
+            bb,
             "{label}: streamed PNG differs from buffered PNG ({} vs {} bytes)",
             ba.len(),
             bb.len()
@@ -622,7 +623,10 @@ mod tests {
             threshold: 0.4,
             angle: 90.0,
         }))];
-        assert!(!can_stream_bands(&mk(vsort, 0)), "column sort must not stream");
+        assert!(
+            !can_stream_bands(&mk(vsort, 0)),
+            "column sort must not stream"
+        );
 
         let blur = vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
             radius: 2.0,
@@ -954,9 +958,3 @@ mod tests {
         );
     }
 }
-
-
-
-
-
-
