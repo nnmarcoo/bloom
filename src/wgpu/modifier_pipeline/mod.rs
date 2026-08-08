@@ -38,6 +38,8 @@ mod geom;
 mod goldens;
 #[cfg(test)]
 mod gpu_bench;
+#[cfg(test)]
+mod parity;
 
 use geom::*;
 

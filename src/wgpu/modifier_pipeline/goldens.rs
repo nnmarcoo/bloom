@@ -472,6 +472,76 @@ fn run_golden_dims(
     );
 }
 
+/// Result of a parity probe, so a missing GPU is a skip rather than a pass.
+pub(super) enum ParityOutcome {
+    NoDevice,
+    Checked { max_diff: u8, pct_over: f64 },
+}
+
+/// A gradient sweeping hue horizontally and luma vertically, with a full alpha
+/// ramp along the top.
+///
+/// The random `test_pixels` source is fine for chain goldens but poor for
+/// per-modifier parity: it clusters around mid-gray, so a formula that only
+/// diverges near black, white, or full saturation can pass. This sweeps those
+/// regions deliberately.
+fn gradient_pixels(w: u32, h: u32) -> Vec<u8> {
+    let mut v = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        let ty = y as f32 / (h - 1).max(1) as f32;
+        for x in 0..w {
+            let tx = x as f32 / (w - 1).max(1) as f32;
+            // Hue sweep through the six sectors, scaled by vertical luma so the
+            // top row reaches white and the bottom reaches black.
+            let hue = tx * 6.0;
+            let sector = hue as u32 % 6;
+            let f = hue - hue.floor();
+            let (r, g, b) = match sector {
+                0 => (1.0, f, 0.0),
+                1 => (1.0 - f, 1.0, 0.0),
+                2 => (0.0, 1.0, f),
+                3 => (0.0, 1.0 - f, 1.0),
+                4 => (f, 0.0, 1.0),
+                _ => (1.0, 0.0, 1.0 - f),
+            };
+            let l = 1.0 - ty;
+            v.push((r * l * 255.0).round() as u8);
+            v.push((g * l * 255.0).round() as u8);
+            v.push((b * l * 255.0).round() as u8);
+            v.push(if y == 0 {
+                (tx * 255.0).round() as u8
+            } else {
+                255
+            });
+        }
+    }
+    v
+}
+
+/// Render one chain on both backends over a gradient and report the difference.
+///
+/// Single-tile and full-ROI on purpose: this isolates the modifier's own math
+/// from tiling, banding, and region logic, which the chain goldens already
+/// cover.
+pub(super) fn parity_probe(modifiers: &[Modifier], tol: u8) -> ParityOutcome {
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return ParityOutcome::NoDevice;
+    };
+    let (w, h) = (GOLDEN_W, GOLDEN_H);
+    let pixels = gradient_pixels(w, h);
+    let image = ImageData::new(pixels.clone(), w, h);
+    let source = make_source(&device, &queue, &image, None);
+
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
+    converge(&mut mp, &device, &queue, &source, modifiers, "parity");
+
+    let gpu = assemble(&device, &queue, &mp, &source);
+    let cpu = crate::modifiers::cpu::render_full(modifiers, &[], &[], &pixels, w, h);
+    let (max_diff, pct_over) = diff_stats(&gpu, &cpu, tol);
+    ParityOutcome::Checked { max_diff, pct_over }
+}
+
 fn pointwise_chain() -> Vec<Modifier> {
     vec![
         Modifier::new(ModifierKind::Exposure(Exposure { exposure: 0.5 })),
