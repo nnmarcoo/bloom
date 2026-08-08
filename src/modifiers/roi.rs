@@ -55,6 +55,10 @@ pub fn dilate(r: RegionPx, d: f32) -> RegionPx {
     [r[0] - d, r[1] - d, r[2] + d, r[3] + d]
 }
 
+#[allow(
+    dead_code,
+    reason = "used by tests; the executor consumes it once it carries per-stage geometry"
+)]
 pub fn unmap_region(from: (f32, f32), to: (f32, f32), r: RegionPx) -> RegionPx {
     if from.0 <= 0.0 || from.1 <= 0.0 {
         return r;
