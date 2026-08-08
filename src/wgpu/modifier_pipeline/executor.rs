@@ -152,6 +152,7 @@ impl ModifierPipeline {
 
             let visible_roi = tile.proc_rect_px;
             let reuse = match (self.tile_outputs[ti].as_ref(), visible_roi) {
+                (Some(o), _) if o.resampled => false,
                 (Some(o), Some(roi)) => {
                     o.proc_px.is_some_and(|p| rect_contains(p, roi))
                         && (o.quality_scale - cur_scale).abs() < 1e-4
@@ -190,6 +191,7 @@ impl ModifierPipeline {
                     height: pr.h,
                     proc_px: Some(pr.px),
                     quality_scale: cur_scale,
+                    resampled: false,
                 });
                 self.tile_display_bgs_linear[ti] = None;
                 self.tile_display_bgs_nearest[ti] = None;
@@ -376,7 +378,8 @@ impl ModifierPipeline {
                 continue;
             }
             let reuse = self.tile_outputs[ti].as_ref().is_some_and(|o| {
-                o.proc_px.is_some_and(|p| rect_contains(p, roi))
+                !o.resampled
+                    && o.proc_px.is_some_and(|p| rect_contains(p, roi))
                     && (o.quality_scale - scale).abs() < 1e-4
             });
             let pr = if reuse {
@@ -406,6 +409,7 @@ impl ModifierPipeline {
                     height: pr.h,
                     proc_px: Some(pr.px),
                     quality_scale: scale,
+                    resampled: false,
                 });
                 self.tile_display_bgs_linear[ti] = None;
                 self.tile_display_bgs_nearest[ti] = None;

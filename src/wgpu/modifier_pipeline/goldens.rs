@@ -1097,3 +1097,67 @@ fn golden_ca_single_tile() {
 fn golden_ca_multi_tile() {
     run_golden("ca/2x2", &ca_chain(), Some(FORCED_TILE_DIM), 4);
 }
+
+/// A resampled tile output must not be reused as a render target.
+///
+/// `resample_outputs` replaces each tile's texture with a smaller one but
+/// leaves `proc_px` and `quality_scale` describing the geometry the chain
+/// rendered at. The executor sizes its band copies from those, so reusing a
+/// resampled output writes a full-size band into a shrunken texture and wgpu
+/// aborts the process:
+///
+/// ```text
+/// Copy of Y 1024..1024 would end up overrunning the bounds of the
+/// Destination texture of Y size 3
+/// ```
+///
+/// Found by dragging the resize slider, which runs `prepare` repeatedly against
+/// outputs the previous frame had already resampled.
+#[test]
+fn a_resampled_output_is_not_reused_as_a_render_target() {
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    // Large enough, with a wide enough blur, that the chain bands across
+    // frames. The band copy is where the mismatch aborts, so a chain that
+    // finishes in one band never reaches it.
+    let (w, h) = (1024u32, 1024u32);
+    let pixels = test_pixels(w, h);
+    let image = ImageData::new(pixels, w, h);
+    let source = make_source(&device, &queue, &image, None);
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
+
+    // Dragging the slider: several sizes in a row, each prepared against the
+    // previous frame's outputs.
+    for pct in [50.0f32, 40.0, 30.0, 25.0, 60.0] {
+        let chain = vec![
+            Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 48.0 })),
+            Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: pct,
+                height: pct,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            })),
+        ];
+        converge(&mut mp, &device, &queue, &source, &chain, "reuse");
+
+        for (ti, tile) in source.tiles.iter().enumerate() {
+            let Some(o) = mp.tile_outputs[ti].as_ref() else {
+                continue;
+            };
+            assert!(
+                o.width <= tile.width && o.height <= tile.height,
+                "at {pct}%, tile {ti} output grew to {}x{} for a {}x{} tile, so \
+                 a stale resampled texture was reused",
+                o.width,
+                o.height,
+                tile.width,
+                tile.height
+            );
+        }
+    }
+}

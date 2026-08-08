@@ -111,6 +111,12 @@ struct TileOutput {
     height: u32,
     proc_px: Option<[f32; 4]>,
     quality_scale: f32,
+    /// Set once `resample_outputs` has replaced the texture with a smaller one.
+    ///
+    /// `proc_px` and `quality_scale` still describe the geometry the chain
+    /// rendered at, so they no longer predict this texture's size. The executor
+    /// must not reuse it as a render target.
+    resampled: bool,
 }
 
 struct ScratchTarget {
@@ -672,6 +678,14 @@ impl ModifierPipeline {
             slot.view = dst_view;
             slot.width = dst_w;
             slot.height = dst_h;
+            // The chain writes bands into this texture sized from `proc_px` at
+            // `quality_scale`, and those still describe the pre-resample
+            // geometry. Reusing a resampled output would copy a full-size band
+            // into a shrunken texture, which wgpu rejects outright: "Copy of Y
+            // 1024..1024 would end up overrunning the bounds of the Destination
+            // texture of Y size 3". Marking it resampled forces a fresh
+            // allocation next frame.
+            slot.resampled = true;
             self.tile_display_bgs_linear[ti] = None;
             self.tile_display_bgs_nearest[ti] = None;
         }

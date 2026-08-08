@@ -22,7 +22,7 @@ use iced::{
 };
 
 use crate::{
-    modifiers::{Modifier, ModifierKind},
+    modifiers::Modifier,
     wgpu::{
         error::ViewError,
         gpu,
@@ -353,9 +353,13 @@ impl ViewPipeline {
         let dirty = dirty || self.pending_source_dirty;
         self.pending_source_dirty = false;
 
-        let previewable =
-            |m: &Modifier| m.has_visible_effect() && !matches!(m.kind, ModifierKind::Resize(_));
-        if !modifiers.iter().any(previewable) {
+        // A resize counts as previewable. It used to be excluded here, from when
+        // the executor dropped it: with a resize-only stack nothing was
+        // previewable, so the pipeline was destroyed and the view fell back to
+        // drawing the source tiles at full resolution inside a smaller quad.
+        // The image kept every pixel while claiming to be smaller, which at 1x1
+        // showed the whole picture inside a single pixel.
+        if !modifiers.iter().any(|m| m.has_visible_effect()) {
             self.modifier_pipeline = None;
             return;
         }
@@ -592,5 +596,62 @@ impl Pipeline for ViewPipeline {
             view_changed_at: std::time::Instant::now() - VIEW_SETTLE * 2,
             format,
         }
+    }
+}
+
+#[cfg(test)]
+mod preview_gate_tests {
+    use crate::modifiers::kinds::{Exposure, Resize, ResizeFilter, ResizeMode};
+    use crate::modifiers::{Modifier, ModifierKind};
+
+    /// The gate `prepare_modifiers` uses to decide whether a modifier pipeline
+    /// is needed at all.
+    ///
+    /// This is the layer the resize bug lived at. Two earlier fixes were made
+    /// inside `ModifierPipeline`, which was never reached: a resize-only stack
+    /// failed this check, the pipeline was destroyed, and the view drew the
+    /// source tiles at full resolution inside the resized quad.
+    fn needs_pipeline(modifiers: &[Modifier]) -> bool {
+        modifiers.iter().any(|m| m.has_visible_effect())
+    }
+
+    fn resize(pct: f32) -> Modifier {
+        Modifier::new(ModifierKind::Resize(Resize {
+            mode: ResizeMode::Percent,
+            width: pct,
+            height: pct,
+            filter: ResizeFilter::Lanczos,
+            lock_aspect: true,
+        }))
+    }
+
+    #[test]
+    fn a_resize_alone_needs_the_pipeline() {
+        assert!(
+            needs_pipeline(&[resize(25.0)]),
+            "a resize-only stack skipped the modifier pipeline, so the viewport \
+             drew the unresized source inside a smaller frame"
+        );
+    }
+
+    #[test]
+    fn a_disabled_resize_alone_does_not() {
+        let mut m = resize(25.0);
+        m.enabled = false;
+        assert!(!needs_pipeline(&[m]));
+    }
+
+    #[test]
+    fn an_empty_stack_does_not() {
+        assert!(!needs_pipeline(&[]));
+    }
+
+    #[test]
+    fn a_resize_alongside_another_modifier_still_needs_it() {
+        let chain = vec![
+            Modifier::new(ModifierKind::Exposure(Exposure { exposure: 0.4 })),
+            resize(50.0),
+        ];
+        assert!(needs_pipeline(&chain));
     }
 }
