@@ -507,7 +507,15 @@ impl ModifierPipeline {
         plan_vec.truncate(plan_vec.len() - trailing_resizes);
         plan_vec.retain(|item| !matches!(item, PlanItem::Step(_, m) if is_resize(&m.kind)));
 
-        if plan_vec.is_empty() {
+        // Nothing to render *and* nothing to resize: clear the outputs so the
+        // view falls back to drawing the source directly.
+        //
+        // A resize-only stack must not take this path. Its plan is empty once
+        // the trailing resizes are split off, but falling back to the source
+        // draws full-resolution tiles inside the shrunken quad, so the image
+        // keeps all its detail while claiming to be smaller. At an extreme
+        // resize that reads as the whole picture crammed into a few pixels.
+        if plan_vec.is_empty() && trailing_resizes == 0 {
             for o in self.tile_outputs.iter_mut() {
                 *o = None;
             }

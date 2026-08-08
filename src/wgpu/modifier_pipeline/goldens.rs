@@ -804,8 +804,19 @@ fn roi_pointwise_then_blur_partial_viewport() {
     run_roi_golden("roi/pointwise+blur", &chain, 1024, 0.42, 4, 2048, 2048);
 }
 
+/// A resize-only stack must actually shrink the image.
+///
+/// This replaces a test that asserted the opposite: it required every display
+/// bind group to be cleared, so the view fell back to drawing the source. That
+/// draws full-resolution tiles inside the shrunken quad, so the image keeps all
+/// its detail while claiming to be smaller. Found by setting a resize to 1x1
+/// and seeing the whole picture inside that one pixel.
+///
+/// The cause was the empty-plan early return: splitting the trailing resizes off
+/// leaves nothing in the plan, and that path cleared the outputs and returned
+/// before anything resampled.
 #[test]
-fn resize_only_stack_leaves_no_stale_tile_outputs() {
+fn resize_only_stack_still_shrinks_the_image() {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
 
     let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -817,27 +828,36 @@ fn resize_only_stack_leaves_no_stale_tile_outputs() {
     let source = make_source(&device, &queue, &image, Some(FORCED_TILE_DIM));
     let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, GOLDEN_W, GOLDEN_H);
 
-    mp.prepare(&device, &queue, &source, &blur_chain(), true);
-    assert!(
-        mp.tile_outputs.iter().any(|o| o.is_some()),
-        "precondition: the blur chain should have produced tile outputs"
-    );
-
     let resize = vec![Modifier::new(ModifierKind::Resize(Resize {
         mode: ResizeMode::Percent,
-        width: 50.0,
-        height: 50.0,
+        width: 25.0,
+        height: 25.0,
         filter: ResizeFilter::Lanczos,
         lock_aspect: true,
     }))];
-    mp.prepare(&device, &queue, &source, &resize, true);
+    converge(&mut mp, &device, &queue, &source, &resize, "resize-only");
 
-    for i in 0..source.tiles.len() {
+    let mut checked = 0usize;
+    for (ti, tile) in source.tiles.iter().enumerate() {
+        let Some(o) = mp.tile_outputs[ti].as_ref() else {
+            continue;
+        };
+        checked += 1;
         assert!(
-            mp.tile_display_bg(i, false).is_none() && mp.tile_display_bg(i, true).is_none(),
-            "tile {i} still has a display bind group after a resize-only stack"
+            o.width < tile.width && o.height < tile.height,
+            "tile {ti} output is {}x{} for a {}x{} tile at 25%; the viewport \
+             would show a full-detail image inside a smaller frame",
+            o.width,
+            o.height,
+            tile.width,
+            tile.height
         );
     }
+    assert!(
+        checked > 0,
+        "a resize-only stack produced no tile outputs, so the view falls back \
+         to drawing the unresized source at full detail"
+    );
 }
 
 /// A trailing resize must shrink the tiles the preview renders into.
