@@ -15,6 +15,13 @@
 //! change must be justified: if the move is intended, re-run with
 //! `BLOOM_BLESS_ORACLE=1` to print the new values, then update them in the same
 //! commit that explains why.
+//!
+//! Text is the one modifier with no fixed hash. It shapes glyphs through
+//! whatever fonts the host has installed, so its output legitimately differs
+//! between machines and a pinned hash would fail on any host but the one that
+//! blessed it. Its tests assert the properties that do hold everywhere: the
+//! render is deterministic, it changes the image, and the changed pixels carry
+//! the requested color.
 
 #[cfg(test)]
 mod tests {
@@ -230,22 +237,63 @@ mod tests {
         );
     }
 
+    fn text_modifier() -> Modifier {
+        m(ModifierKind::Text(Text {
+            content: "Bloom".to_string(),
+            size: 42.0,
+            x: 0.5,
+            y: 0.5,
+            r: 1.0,
+            g: 0.9,
+            b: 0.2,
+            opacity: 1.0,
+            ..Text::default()
+        }))
+    }
+
     #[test]
-    fn oracle_text() {
-        assert_oracle(
-            "text",
-            vec![m(ModifierKind::Text(Text {
-                content: "Bloom".to_string(),
-                size: 42.0,
-                x: 0.5,
-                y: 0.5,
-                r: 1.0,
-                g: 0.9,
-                b: 0.2,
-                opacity: 1.0,
-                ..Text::default()
-            }))],
-            0x3f30582ca55d2034,
+    fn text_renders_and_is_deterministic() {
+        let a = render(vec![text_modifier()]);
+        let b = render(vec![text_modifier()]);
+        assert_eq!(
+            fnv1a(&a.2),
+            fnv1a(&b.2),
+            "text: two renders of the same chain disagree"
+        );
+
+        let plain = render(vec![]);
+        assert_ne!(
+            fnv1a(&a.2),
+            fnv1a(&plain.2),
+            "text: the chain produced the untouched source, so nothing was drawn"
+        );
+    }
+
+    #[test]
+    fn text_is_drawn_in_its_own_color() {
+        let (_, _, rgba) = render(vec![text_modifier()]);
+        let (_, _, plain) = render(vec![]);
+
+        let mut changed = 0usize;
+        let mut yellowish = 0usize;
+        for (a, b) in rgba.chunks_exact(4).zip(plain.chunks_exact(4)) {
+            if a == b {
+                continue;
+            }
+            changed += 1;
+            if a[0] > a[2] && a[1] > a[2] {
+                yellowish += 1;
+            }
+        }
+
+        assert!(
+            changed > 200,
+            "text: only {changed} pixels changed, which is too few to be glyphs"
+        );
+        assert!(
+            yellowish * 10 >= changed * 8,
+            "text: {yellowish} of {changed} changed pixels carry the requested \
+             color, expected most of them"
         );
     }
 
