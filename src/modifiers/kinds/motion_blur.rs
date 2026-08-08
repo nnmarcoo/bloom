@@ -38,12 +38,6 @@ impl ModifierImpl for MotionBlur {
         self.distance > 0.0
     }
 
-    /// A bounded local reach, not a full frame.
-    ///
-    /// The sweep runs `t` over `[-0.5, 0.5]` scaled by `distance`, so the
-    /// furthest sample sits `distance / 2` away along the blur direction.
-    /// Declaring the reach as `distance` would be safe but fetches twice the
-    /// apron it needs.
     fn input_request(&self) -> InputRequest {
         InputRequest::Neighborhood {
             radius_px: self.distance.abs() * 0.5,

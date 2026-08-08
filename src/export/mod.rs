@@ -1,3 +1,11 @@
+//! Export: turning the current document plus its modifier stack into a file.
+//!
+//! Large images go through the streaming path in raster.rs, which requires a
+//! bandable plan and no rotation that would reorder rows. Everything else falls
+//! back to rendering the full frame.
+//!
+//! Video frames and the JPEG and raw RGBA encoders still buffer whole frames.
+
 #[cfg(test)]
 mod bench;
 mod image;
@@ -126,11 +134,6 @@ struct Geom {
 }
 
 fn geom_of(data: &ExportData) -> Geom {
-    // `img_w`/`img_h` describe the buffer `render_full` produces, which is what
-    // the crop window and `fill_row` index into — not necessarily the source
-    // size. A Resize in the chain makes the two differ, which is why these come
-    // from the plan rather than from `data.width`/`data.height`. Crop is stored
-    // in normalised UV, so it lands on the resized buffer without conversion.
     let plan = plan_modifiers(&data.modifiers);
     let processed = chain_output_spec(ImageSpec::new(data.width, data.height), &plan);
     let img_w = processed.w;
@@ -198,19 +201,6 @@ fn process_frame(
     ))
 }
 
-/// Whether this export can stream band by band instead of materializing the
-/// whole processed frame.
-///
-/// Two independent conditions:
-///
-/// * Every stage must be bandable -- no column sort, diagonal sort, or
-///   full-frame stage (chromatic aberration is the common one).
-/// * The output must not be rotated by 90 or 270 degrees. Under those
-///   rotations an output *row* reads a processed *column*, so producing one
-///   strip would require the entire frame anyway.
-///
-/// When this is false the caller renders the whole frame as before. Falling
-/// back is always correct; it just costs the memory this exists to avoid.
 fn can_stream_bands(data: &ExportData) -> bool {
     data.rotation.is_multiple_of(2) && cpu::plan_is_bandable(&plan_modifiers(&data.modifiers))
 }
@@ -287,9 +277,6 @@ pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Resul
                 .get(still_index)
                 .ok_or_else(|| "No frame available.".to_string())?;
 
-            // PNG can stream straight from bands, which keeps peak memory at a
-            // strip instead of a whole processed frame. Everything else still
-            // renders the frame first.
             if ext == "png" && can_stream_bands(&data) {
                 ensure_available(&still.pixels, data.width, data.height)?;
                 image::encode_png_streaming(
@@ -409,10 +396,6 @@ mod tests {
     use crate::modifiers::ModifierKind;
     use crate::modifiers::kinds::Text;
 
-    /// Export geometry is derived from what the chain produces, not from the
-    /// source size. The two agree while every stage is passthrough; this pins
-    /// the derivation so a resizing stage changes the exported dimensions
-    /// instead of being silently ignored by `geom_of`.
     #[test]
     fn export_geometry_follows_the_chain_output() {
         use crate::modifiers::kinds::GaussianBlur;
@@ -447,12 +430,6 @@ mod tests {
         assert_eq!((geom.out_w, geom.out_h), (w, h));
     }
 
-    /// The streamed PNG must be byte-identical to the buffered one.
-    ///
-    /// This is the oracle for banded export: it exercises the real encoder, the
-    /// real crop/rotation mapping, and the band seams together. `render_band`
-    /// has its own byte-equality tests against `render_full`; this checks the
-    /// export layer wired on top of it.
     fn assert_streamed_png_matches_buffered(
         label: &str,
         modifiers: Vec<Modifier>,
@@ -545,8 +522,6 @@ mod tests {
         );
     }
 
-    /// Crop shifts which processed rows a strip needs; a wrong offset shows up
-    /// as content sliding vertically.
     #[test]
     fn streamed_png_matches_buffered_with_crop() {
         use crate::modifiers::kinds::GaussianBlur;
@@ -562,8 +537,6 @@ mod tests {
         );
     }
 
-    /// Rotation 180 reverses the row mapping, so the band span has to be taken
-    /// from the other end of the image.
     #[test]
     fn streamed_png_matches_buffered_rotated_180() {
         use crate::modifiers::kinds::GaussianBlur;
@@ -592,8 +565,6 @@ mod tests {
         );
     }
 
-    /// Chains that cannot be banded, and rotations that cannot map a strip,
-    /// must be refused so the caller falls back to the buffered path.
     #[test]
     fn unstreamable_exports_are_rejected() {
         use crate::modifiers::kinds::{ChromaticAberration, GaussianBlur, PixelSort};
@@ -656,7 +627,6 @@ mod tests {
         }
     }
 
-    /// The exported dimensions must follow a resize, not the source.
     #[test]
     fn export_dimensions_follow_a_resize() {
         use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
@@ -678,8 +648,6 @@ mod tests {
         assert_eq!((geom.out_w, geom.out_h), (64, 48));
     }
 
-    /// Crop is stored in normalised UV, so it must land on the *resized*
-    /// buffer. Half of a half-sized image is a quarter of the original.
     #[test]
     fn crop_applies_to_the_resized_buffer() {
         use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};

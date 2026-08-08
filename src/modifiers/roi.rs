@@ -1,3 +1,16 @@
+//! Region-of-interest math: how much input a stage must read to produce a
+//! given piece of its output.
+//!
+//! StepClass is derived from each modifier's own InputRequest so the taxonomy
+//! cannot drift from what the modifier actually reads. Deriving it by hand let
+//! the two disagree once, with chromatic aberration declaring a full-frame
+//! reach while being given a bounded apron.
+//!
+//! input_needed and unmap_region compose, in that order, when walking a chain
+//! backward: unmap first to cross a stage that changes dimensions, then dilate
+//! by the apron in the input's own space. Reversing them would apply a
+//! half-size apron in a full-size space.
+
 use crate::modifiers::{InputRequest, ModifierKind};
 
 pub type RegionPx = [f32; 4];
@@ -10,12 +23,6 @@ pub enum StepClass {
     WholeFrame,
 }
 
-/// Derived from the modifier's own [`InputRequest`] so the ROI taxonomy cannot
-/// drift from what the modifier actually reads. Previously this matched on
-/// `ModifierKind` and re-derived each apron by hand, which let the two
-/// disagree — chromatic aberration declared `FullFrame` here but was given a
-/// bounded apron, under-fetching its input by orders of magnitude at the image
-/// corners.
 pub fn step_class(kind: &ModifierKind) -> StepClass {
     match kind.input_request() {
         InputRequest::SamplePoint => StepClass::Pointwise,
@@ -48,22 +55,6 @@ pub fn dilate(r: RegionPx, d: f32) -> RegionPx {
     [r[0] - d, r[1] - d, r[2] + d, r[3] + d]
 }
 
-/// Map a region from a stage's *output* space back into its *input* space.
-///
-/// This is the piece [`input_needed`] cannot express. `input_needed` answers
-/// "which input pixels feed this output region", but assumes both are measured
-/// in the same units. A stage that changes dimensions breaks that assumption:
-/// its output rect is in a different space than its input rect, and the two
-/// must be related before the apron is applied.
-///
-/// The two compose, in this order, walking a chain backward:
-///
-/// ```text
-///   out_region -> unmap_region (into input space) -> input_needed (add apron)
-/// ```
-///
-/// For every modifier that preserves size this is the identity, which is why
-/// the chain worked without it until resize arrived.
 pub fn unmap_region(from: (f32, f32), to: (f32, f32), r: RegionPx) -> RegionPx {
     if from.0 <= 0.0 || from.1 <= 0.0 {
         return r;
@@ -132,8 +123,6 @@ mod tests {
 
     #[test]
     fn unmap_scales_a_region_into_a_smaller_input() {
-        // A 50% resize: a rect in the half-size output covers twice as much of
-        // the input it was resampled from.
         let r = [10.0, 20.0, 30.0, 40.0];
         assert_eq!(
             unmap_region((500.0, 400.0), (1000.0, 800.0), r),
@@ -159,16 +148,12 @@ mod tests {
         );
     }
 
-    /// A degenerate source must not produce NaN rects that poison the walk.
     #[test]
     fn unmap_of_a_zero_sized_space_is_inert() {
         let r = [10.0, 20.0, 30.0, 40.0];
         assert_eq!(unmap_region((0.0, 0.0), (100.0, 100.0), r), r);
     }
 
-    /// The composition the backward walk performs: unmap into input space, then
-    /// dilate by the apron *there*. Doing it in the other order would apply a
-    /// half-size apron in a full-size space.
     #[test]
     fn unmap_then_apron_dilates_in_the_input_space() {
         let out = [100.0, 100.0, 200.0, 200.0];
@@ -233,7 +218,6 @@ mod tests {
                 separable: true
             }
         );
-        // Half the distance: the sweep is centred on the output pixel.
         assert_eq!(
             step_class(&ModifierKind::MotionBlur(MotionBlur {
                 angle: 30.0,
@@ -244,7 +228,6 @@ mod tests {
                 separable: false
             }
         );
-        // Not a kernel at any radius — see `ChromaticAberration::input_request`.
         assert_eq!(
             step_class(&ModifierKind::ChromaticAberration(ChromaticAberration {
                 amount: 5.0
@@ -267,12 +250,6 @@ mod tests {
         );
     }
 
-    /// The defect this phase fixed, pinned so it cannot return.
-    ///
-    /// Chromatic aberration's displacement grows with distance from the image
-    /// centre, so on a large image a centre-ish tile still needs input from far
-    /// away. The old taxonomy dilated by `amount` (5px here) and produced a
-    /// region that missed almost all of it.
     #[test]
     fn chromatic_aberration_fetches_beyond_a_bounded_apron() {
         const BIG: f32 = 4000.0;
@@ -282,7 +259,6 @@ mod tests {
         let needed = input_needed(step_class(&ca), tile, BIG, BIG);
         assert_eq!(needed, [0.0, 0.0, BIG, BIG]);
 
-        // What the previous hand-written mapping would have fetched.
         let old = input_needed(
             StepClass::Kernel {
                 apron_px: 5.0,
@@ -295,29 +271,18 @@ mod tests {
         assert_eq!(old, [2995.0, 2995.0, 3205.0, 3205.0]);
     }
 
-    /// Mirrors the backward walk `execute_kernel_chain` performs to decide how
-    /// much source it must gather (`executor.rs`, "for k in (0..n).rev()").
-    ///
-    /// This is where CA's classification is actually observable. The GPU
-    /// goldens cannot see it: `chromatic_aberration.wgsl` clamps its sample
-    /// coordinates into the fetched rect, so an under-fetch reads as an edge
-    /// colour rather than as a visible error. Asserting on the region itself
-    /// sidesteps that.
     #[test]
     fn chain_gather_region_follows_the_widest_stage() {
         const W: f32 = 2048.0;
         const H: f32 = 2048.0;
         let out = [900.0, 900.0, 1100.0, 1100.0];
 
-        // Blur alone: a bounded apron, so the gather stays local.
         let blur = step_class(&ModifierKind::GaussianBlur(GaussianBlur { radius: 6.0 }));
         assert_eq!(
             input_needed(blur, out, W, H),
             [894.0, 894.0, 1106.0, 1106.0]
         );
 
-        // Any FullFrame stage in the chain forces a full gather, regardless of
-        // where it sits or how tight the stages around it are.
         let ca = step_class(&ModifierKind::ChromaticAberration(ChromaticAberration {
             amount: 8.0,
         }));
@@ -333,10 +298,6 @@ mod tests {
         );
     }
 
-    /// `StepClass` and `EffectClass` are two views of one declaration. Walking
-    /// every modifier type catches a new kind that classifies inconsistently,
-    /// which is what previously let chromatic aberration claim a bounded apron
-    /// in the ROI taxonomy while declaring `FullFrame` to everyone else.
     #[test]
     fn step_class_agrees_with_effect_class_for_every_kind() {
         use crate::modifiers::ModifierType;

@@ -6,10 +6,10 @@
 //!
 //! Two probes:
 //!
-//! * [`tests::probe_memory_model`] — a pure accounting of every full-image
+//! * [`tests::probe_memory_model`] -- a pure accounting of every full-image
 //!   allocation the current load path makes, from source dimensions alone. No
 //!   allocation, so it can report on sizes far past what this machine can hold.
-//! * [`tests::probe_actual_ceiling`] — allocates progressively larger sources
+//! * [`tests::probe_actual_ceiling`] -- allocates progressively larger sources
 //!   for real and reports the largest one that succeeds, so the model can be
 //!   checked against reality.
 //!
@@ -26,7 +26,6 @@
 
 #[cfg(test)]
 mod tests {
-    /// One full-image allocation the load path makes.
     struct Allocation {
         what: &'static str,
         where_: &'static str,
@@ -39,10 +38,6 @@ mod tests {
             where_: "ImageData::load — reader.no_limits() removes the guard",
             transient: true,
         },
-        // `into_rgba8()` and `into_raw()` both consume, so an already-RGBA8
-        // source moves rather than copies. Any other input format (RGB8, 16-bit,
-        // float) converts into a second full-size buffer that briefly coexists
-        // with the decoder's.
         Allocation {
             what: "into_rgba8() conversion copy",
             where_: "ImageData::load — only for non-RGBA8 sources",
@@ -117,7 +112,6 @@ mod tests {
                 gb(one),
                 gb(one * peak_host as f64),
                 gb(one),
-                // A full mip chain converges to 4/3 of the base level.
                 gb(one * 4.0 / 3.0),
             );
         }
@@ -140,12 +134,6 @@ mod tests {
         );
     }
 
-    /// The largest image whose source tiles fit in this GPU's memory.
-    ///
-    /// wgpu does not expose total VRAM, so this walks real texture allocations
-    /// until one fails, which also exercises the failure mode: `create_texture`
-    /// returns a `Texture` rather than a `Result`, so running out aborts rather
-    /// than returning an error the caller could handle.
     #[test]
     #[ignore = "diagnostic; allocates GPU memory; run with --release --ignored --nocapture"]
     fn probe_vram_ceiling() {
@@ -162,7 +150,6 @@ mod tests {
         println!("\nGPU source-tile residency probe");
         println!("  max_texture_dimension_2d = {limit}");
 
-        // Allocate full-size tiles one at a time, mimicking TiledSource.
         let tile = limit;
         let per_tile = full_size_bytes(tile as u64, tile as u64);
         let mut held = Vec::new();
@@ -196,20 +183,6 @@ mod tests {
         );
     }
 
-    /// Confirms whether over-subscribing VRAM makes sampling slower.
-    ///
-    /// [`tests::probe_vram_ceiling`] shows the driver accepting far more texture
-    /// memory than the card holds, which suggests it is spilling to host memory
-    /// over PCIe rather than reporting OOM. That is an inference from the
-    /// *absence* of a failure, so this measures the consequence directly.
-    ///
-    /// Method: hold a growing set of resident tiles, and after each step sample
-    /// a fixed working set of them. The work per measurement is constant, so
-    /// only residency varies. If tiles stay in VRAM the time is flat; once the
-    /// driver starts paging them across the bus it should rise sharply.
-    ///
-    /// Each measurement samples tiles that were allocated *earliest*, since an
-    /// LRU-ish driver policy evicts those first.
     #[test]
     #[ignore = "diagnostic; allocates GPU memory; run with --release --ignored --nocapture"]
     fn probe_vram_spill() {
@@ -239,8 +212,6 @@ mod tests {
         let tile = device.limits().max_texture_dimension_2d.min(4096);
         let per_tile = full_size_bytes(tile as u64, tile as u64);
 
-        // Small target: we are measuring the cost of *reading* the source tiles,
-        // so keep the write side negligible.
         let target = gpu::texture_2d(
             &device,
             256,
@@ -251,11 +222,8 @@ mod tests {
         );
         let target_view = target.create_view(&Default::default());
 
-        // How many tiles each measurement samples. Constant, so the measured
-        // work does not grow as residency does.
         const WORKING_SET: usize = 8;
 
-        // One tile's worth of real pixel data, reused for every upload.
         let tile_bytes = vec![0x7Au8; (tile as usize) * (tile as usize) * 4];
 
         let mut tiles: Vec<(iced::wgpu::Texture, iced::wgpu::BindGroup)> = Vec::new();
@@ -271,8 +239,6 @@ mod tests {
 
         let mut baseline: Option<f64> = None;
         let mut first_done = false;
-        // Must run well past the card's capacity for the probe to mean anything;
-        // 4096x4096 tiles are only 0.07GB each, so this needs many steps.
         for step in 0..260 {
             let t = gpu::texture_2d(
                 &device,
@@ -282,9 +248,6 @@ mod tests {
                 TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
                 Some("spill-probe-tile"),
             );
-            // Write the tile for real. An allocated-but-never-written texture
-            // has no contents the driver must preserve, so it can be discarded
-            // rather than paged — which would make the probe measure nothing.
             queue.write_texture(
                 t.as_image_copy(),
                 &tile_bytes,
@@ -319,8 +282,6 @@ mod tests {
             if tiles.len() < WORKING_SET {
                 continue;
             }
-            // Sparser sampling as the count grows, to keep the table readable
-            // while still running far past the card's capacity.
             let stride = if tiles.len() < 32 { 4 } else { 16 };
             if step % stride != 0 {
                 continue;
@@ -346,7 +307,6 @@ mod tests {
                     occlusion_query_set: None,
                 });
                 pass.set_pipeline(&pipeline);
-                // Oldest tiles first: the ones a driver would page out soonest.
                 for (_, bg) in tiles.iter().take(WORKING_SET) {
                     pass.set_bind_group(0, bg, &[]);
                     pass.draw(0..3, 0..1);
@@ -354,7 +314,6 @@ mod tests {
             }
             let start = Instant::now();
             queue.submit([enc.finish()]);
-            // Block until the GPU has finished, otherwise this times encoding.
             let _ = device.poll(iced::wgpu::PollType::Wait {
                 submission_index: None,
                 timeout: None,
@@ -372,8 +331,6 @@ mod tests {
                 gb(resident),
                 ms
             );
-            // Skip the first measurement when setting the baseline: it carries
-            // pipeline and shader warm-up that has nothing to do with residency.
             if first_done {
                 baseline.get_or_insert(ms);
             }
@@ -401,11 +358,6 @@ mod tests {
         );
     }
 
-    /// Finds the largest source this machine can actually allocate on the host.
-    ///
-    /// Only allocates the retained `ImageData`-sized buffer, not the transient
-    /// decode copies, so the true ceiling for loading a file is lower than what
-    /// this reports.
     #[test]
     #[ignore = "diagnostic; allocates aggressively; run with --release --ignored --nocapture"]
     fn probe_actual_ceiling() {
@@ -413,13 +365,9 @@ mod tests {
         let mut last_ok: Option<(u64, f64)> = None;
         for dim in [4096u64, 8192, 16384, 24000, 32000, 40000, 50000] {
             let bytes = full_size_bytes(dim, dim);
-            // try_reserve reports failure instead of aborting, unlike vec![].
             let mut v: Vec<u8> = Vec::new();
             match v.try_reserve_exact(bytes as usize) {
                 Ok(()) => {
-                    // Commit the reservation: extend to full length, then touch
-                    // pages across the range so they are really backed rather
-                    // than a lazy virtual mapping.
                     v.extend(std::iter::repeat_n(0u8, bytes as usize));
                     let step = (bytes as usize / 64).max(1);
                     let mut i = 0;

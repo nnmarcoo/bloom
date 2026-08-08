@@ -1,16 +1,20 @@
+//! Tiled GPU execution of a modifier chain.
+//!
+//! Everything here works in one coordinate space: tiles are carved from the
+//! source, proc_px is document-space throughout, and the ROI walk runs backward
+//! through a single geometry. A stage that changed dimensions mid-chain would
+//! put the stages on either side of it in different spaces, which this executor
+//! cannot express, so resize is dropped from the preview plan.
+//!
+//! Work is split into bands when a chain is expensive, with exec_band_cursor
+//! carrying progress across frames so the UI stays responsive.
+
 use super::*;
 use crate::modifiers::pixel_sort::SortMode as ExecSortMode;
 use crate::modifiers::roi::{self, RegionPx, StepClass};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 
-/// Largest blur kernel radius evaluated directly; above this the pass renders
-/// into a reduced-scale target (`ks`).
-///
-/// Aliased to `modifiers::cpu::MAX_DIRECT_RADIUS` rather than restated, because
-/// if the two drift apart preview and export pick different scales for the same
-/// radius. That file documents the measurements behind the value and what
-/// lowering it cost.
 const MAX_KERNEL_RADIUS_PX: f32 = crate::modifiers::cpu::MAX_DIRECT_RADIUS;
 
 struct Stage {

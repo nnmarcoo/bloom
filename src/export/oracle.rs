@@ -6,7 +6,7 @@
 //! same way keeps the goldens green while the rendered image silently changes.
 //!
 //! These tests pin the oracle to fixed hashes, one per [`StepClass`] in the ROI
-//! taxonomy plus mixed chains. They prove nothing about correctness — a wrong
+//! taxonomy plus mixed chains. They prove nothing about correctness -- a wrong
 //! render hashes just as stably as a right one. Their job is to make any change
 //! in rendered output *visible* during the render-architecture refactor, so a
 //! phase that claims to be pure plumbing can be shown to be exactly that.
@@ -40,12 +40,6 @@ mod tests {
         h
     }
 
-    /// Deterministic, structured source pixels.
-    ///
-    /// A gradient alone is too smooth to reveal kernel or scanline errors, so
-    /// this mixes a gradient with a hard-edged block and a pseudorandom speckle:
-    /// smooth areas catch gain errors, edges catch sampling and apron errors,
-    /// and noise catches ordering errors in the sort.
     fn source_pixels(w: u32, h: u32) -> Arc<Vec<u8>> {
         let mut px = vec![0u8; (w * h * 4) as usize];
         let mut s = 0x9E3779B9u32;
@@ -87,11 +81,6 @@ mod tests {
         render_still_rgba(&data).expect("oracle render should succeed")
     }
 
-    /// Asserts the oracle output for `label` still hashes to `expected`.
-    ///
-    /// With `BLOOM_BLESS_ORACLE=1` the mismatch is reported as a printable new
-    /// value rather than silently accepted — blessing is always an explicit,
-    /// reviewable edit, never an automatic one.
     fn assert_oracle(label: &str, modifiers: Vec<Modifier>, expected: u64) {
         let (w, h, rgba) = render(modifiers);
         assert_eq!((w, h), (W, H), "{label}: unexpected output dimensions");
@@ -123,8 +112,6 @@ mod tests {
         Modifier::new(kind)
     }
 
-    // ---- StepClass::Pointwise -------------------------------------------
-
     #[test]
     fn oracle_identity_no_modifiers() {
         assert_oracle("identity", vec![], 0xecc2b74a2202806b);
@@ -152,9 +139,6 @@ mod tests {
         );
     }
 
-    /// Pointwise fusion is capped at 32 entries on the GPU; the CPU path has no
-    /// such cap. Pinning a chain longer than the cap keeps the two honest about
-    /// where that boundary sits.
     #[test]
     fn oracle_pointwise_beyond_fusion_cap() {
         let mut chain = Vec::new();
@@ -165,8 +149,6 @@ mod tests {
         }
         assert_oracle("pointwise-40", chain, 0x3a3bab73381050fb);
     }
-
-    // ---- StepClass::Kernel ----------------------------------------------
 
     #[test]
     fn oracle_gaussian_blur() {
@@ -212,8 +194,6 @@ mod tests {
         );
     }
 
-    // ---- StepClass::Scanline --------------------------------------------
-
     #[test]
     fn oracle_pixel_sort_cardinal() {
         assert_oracle(
@@ -249,8 +229,6 @@ mod tests {
             0xdf7d6e7871c69feb,
         );
     }
-
-    // ---- StepClass::WholeFrame / raster stages --------------------------
 
     #[test]
     fn oracle_text() {
@@ -314,9 +292,6 @@ mod tests {
         );
     }
 
-    /// Grain is seeded, so it is deterministic but resolution dependent. It is
-    /// pinned here because it is one of the effects that cannot be proxied
-    /// without changing the image, which later phases must not silently do.
     #[test]
     fn oracle_grain() {
         assert_oracle(
@@ -332,10 +307,6 @@ mod tests {
         );
     }
 
-    // ---- Mixed chains ----------------------------------------------------
-
-    /// Exercises a boundary the planner cares about: pointwise work on both
-    /// sides of a kernel stage, which must stay in two separate fused segments.
     #[test]
     fn oracle_pointwise_kernel_pointwise() {
         assert_oracle(
@@ -349,8 +320,6 @@ mod tests {
         );
     }
 
-    /// Every step class in one chain, in an order that forces the maximum number
-    /// of segment boundaries.
     #[test]
     fn oracle_all_classes_mixed() {
         assert_oracle(
@@ -375,9 +344,6 @@ mod tests {
         );
     }
 
-    /// A disabled modifier must contribute nothing. This guards the
-    /// `has_visible_effect` filter that both the planner and the CPU walk apply
-    /// independently.
     #[test]
     fn oracle_disabled_modifier_is_inert() {
         let enabled = render(vec![m(ModifierKind::Exposure(Exposure { exposure: 0.4 }))]);
@@ -394,9 +360,6 @@ mod tests {
         );
     }
 
-    /// Rendering twice must produce identical bytes. Guards against any
-    /// dependence on allocation addresses, iteration order, or rayon's work
-    /// splitting leaking into output — a prerequisite for every hash above.
     #[test]
     fn oracle_render_is_deterministic() {
         let chain = || {

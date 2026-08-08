@@ -1,3 +1,11 @@
+//! The viewport widget: pan, zoom, cursor readout, and the staged buffer the
+//! eyedropper samples.
+//!
+//! The staged buffer comes from cpu::render_full, which returns the chain's
+//! output size, not the source size. Anything indexing it must use the output
+//! dimensions while reporting coordinates in source pixels, since that is what
+//! the user is pointing at.
+
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -127,8 +135,6 @@ struct RasterCache {
 
 struct StagedCache {
     key: u64,
-    /// Dimensions of `pixels`, which is the *chain output* size and differs
-    /// from the source once a Resize is in the stack.
     w: u32,
     h: u32,
     pixels: Vec<u8>,
@@ -694,10 +700,6 @@ impl ViewProgram {
             }
             let staged =
                 cpu::render_full(&self.modifiers, text_layers, drawing_layers, &pixels, w, h);
-            // `render_full` returns the chain's *output* size, which a Resize
-            // makes different from the source. Recording the source dimensions
-            // here indexed a half-width buffer with full-width strides, so the
-            // eyedropper read the wrong pixel and then fell off the end.
             let out = chain_output_spec(ImageSpec::new(w, h), &plan_modifiers(&self.modifiers));
             *guard = Some(StagedCache {
                 key,
@@ -720,9 +722,6 @@ impl ViewProgram {
     ) -> Option<[u8; 4]> {
         let (src_w, src_h) = (image.width.max(1), image.height.max(1));
         self.with_staged(text_layers, drawing_layers, image, |staged, w, h| {
-            // The cursor position is in source pixels; the staged buffer may be
-            // a different size. Map through, so hovering the same feature reads
-            // the same pixel whatever the chain does to the geometry.
             let sx = if w == src_w {
                 px
             } else {
@@ -935,8 +934,6 @@ impl ViewProgram {
                         if x < 0 || y < 0 || x >= w || y >= h {
                             continue;
                         }
-                        // `coord` works in source pixels; the staged buffer is
-                        // at the chain's output size, which a Resize changes.
                         let sx = if sw as i64 == w { x } else { x * sw as i64 / w };
                         let sy = if sh as i64 == h { y } else { y * sh as i64 / h };
                         if sx < 0 || sy < 0 || sx >= sw as i64 || sy >= sh as i64 {
@@ -1334,7 +1331,6 @@ mod eyedropper_resize_tests {
     use crate::modifiers::ModifierKind;
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
 
-    /// Distinct colour per row so a mis-strided read is obvious.
     fn banded(w: u32, h: u32) -> Vec<u8> {
         let mut px = vec![0u8; (w * h * 4) as usize];
         for y in 0..h {
@@ -1368,16 +1364,11 @@ mod eyedropper_resize_tests {
         }))
     }
 
-    /// The staged buffer is at the chain's output size. Indexing it with the
-    /// source width read the wrong pixel, then ran off the end entirely --
-    /// the cursor readout went wrong and then vanished.
     #[test]
     fn cursor_info_survives_a_resize() {
         let (w, h) = (64u32, 48u32);
         let mut program = program_with(vec![resize_pct(50.0)], w, h);
 
-        // Sample across the whole image, including the far corner that used to
-        // index past the end of the half-size buffer.
         for (px, py) in [(0u32, 0u32), (10, 10), (32, 24), (63, 47)] {
             program.cursor_image_pos = Some(vec2(px as f32 + 0.5, py as f32 + 0.5));
             let info = program.cursor_info();
@@ -1398,8 +1389,6 @@ mod eyedropper_resize_tests {
         }
     }
 
-    /// The sampled colour must track the feature under the cursor, not drift.
-    /// Row colour ramps with y, so a mis-strided read shows up as the wrong band.
     #[test]
     fn resized_sample_tracks_the_right_row() {
         let (w, h) = (64u32, 48u32);
@@ -1408,9 +1397,6 @@ mod eyedropper_resize_tests {
         for py in [0u32, 12, 24, 40] {
             program.cursor_image_pos = Some(vec2(32.5, py as f32 + 0.5));
             let (_, _, _, rgba) = program.cursor_info().expect("cursor info");
-            // Source row `py` maps to output row py/2, whose red channel came
-            // from source row py (the resample averages neighbours, so allow
-            // a small window rather than demanding an exact value).
             let expected = (py * 4) as i32;
             assert!(
                 (rgba[0] as i32 - expected).abs() <= 8,
@@ -1420,7 +1406,6 @@ mod eyedropper_resize_tests {
         }
     }
 
-    /// Without a resize nothing about this path should change.
     #[test]
     fn cursor_info_unchanged_without_resize() {
         let (w, h) = (64u32, 48u32);
@@ -1432,7 +1417,6 @@ mod eyedropper_resize_tests {
         assert_eq!(rgba[1], (20 * 2) as u8);
     }
 
-    /// The pixel-preview grid reads the same buffer and had the same defect.
     #[test]
     fn cursor_pixels_grid_survives_a_resize() {
         let (w, h) = (64u32, 48u32);

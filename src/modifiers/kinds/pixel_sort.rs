@@ -36,8 +36,6 @@ impl ModifierImpl for PixelSort {
     }
 
     fn input_request(&self) -> InputRequest {
-        // `SortMode`, not `SortAxis`: rounding to a cardinal axis here would
-        // understate a diagonal sort's reach, which ROI relies on.
         let step = match SortMode::from_angle(self.angle) {
             SortMode::Cardinal(SortAxis::Horizontal { .. }) => (1, 0),
             SortMode::Cardinal(SortAxis::Vertical { .. }) => (0, 1),

@@ -1,3 +1,10 @@
+//! Pixel sorting: gather runs of pixels along a direction, sort them by a key,
+//! and write them back.
+//!
+//! Index arithmetic here must be done in usize. Computing y * width + x in i32
+//! wraps negative once an image passes 2.1 billion pixels, which panicked on a
+//! 50000x50000 export.
+
 use rayon::prelude::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -87,10 +94,6 @@ fn for_each_diagonal_line(
             line.clear();
             let (mut x, mut y) = (x0, y0);
             while in_bounds(x, y) {
-                // Widen before multiplying: `y * w` exceeds i32::MAX once the
-                // image has more than ~2.1 billion pixels (a 50000x50000 image
-                // overflows at y = 42949), which wraps negative and then to a
-                // huge usize on cast, indexing far out of bounds.
                 line.push(y as usize * width + x as usize);
                 x += dx;
                 y += dy;
@@ -310,12 +313,6 @@ mod tests {
         );
     }
 
-    /// Indices must stay in range when the pixel count exceeds `i32::MAX`.
-    ///
-    /// `y * w` was computed in i32, so a 50000x50000 image wrapped negative at
-    /// y = 42949 and produced a ~1.8e19 index -- an out-of-bounds panic on
-    /// export, not a subtly wrong render. Walking only the last few rows keeps
-    /// this cheap: it needs no pixel buffer, just the index arithmetic.
     #[test]
     fn diagonal_indices_survive_more_than_i32_max_pixels() {
         const W: usize = 50_000;
@@ -323,7 +320,6 @@ mod tests {
         let total = W * H;
         assert!(total > i32::MAX as usize, "test must exceed the i32 range");
 
-        // The first line starting on the bottom row crosses the overflow point.
         let mut checked = 0usize;
         let mut worst = 0usize;
         for_each_diagonal_line(W, H, 1, 1, |line| {

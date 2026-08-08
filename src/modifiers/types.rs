@@ -1,3 +1,12 @@
+//! Modifier definitions and the registry macro.
+//!
+//! define_modifiers! is the single place a modifier is declared; the kind enum,
+//! dispatch, and parameter plumbing are all generated from it.
+//!
+//! Each modifier declares an InputRequest describing how far it reads from its
+//! input. The ROI taxonomy is derived from that declaration rather than
+//! restated, so the two cannot disagree.
+
 use std::collections::hash_map::DefaultHasher;
 
 use iced::Element;
@@ -41,37 +50,11 @@ pub struct ViewCtx {
     pub timing: Option<MediaTiming>,
 }
 
-/// What a modifier needs to read in order to produce one output pixel.
-///
-/// This is the single source of truth for a modifier's input reach. Both
-/// [`EffectClass`] (which backend pass runs it) and
-/// [`crate::modifiers::roi::StepClass`] (how much input a region needs) are
-/// derived from it, so a modifier declares its reach exactly once.
-///
-/// `radius_px` is in **document space** — image pixels, the same units the
-/// user types into the modifier's controls — never device space. A 20px blur
-/// declares a 20px reach whether the viewport is at 10% or 400% zoom; the
-/// backend applies the runtime quality factor at the point of use. A
-/// `Neighborhood` reaches at most `radius_px` document pixels from the pixel
-/// being written, in any direction.
-///
-/// A modifier whose reach is *not* a bounded local offset — for example one
-/// that scales sample coordinates about the image centre — is `FullFrame`,
-/// not a `Neighborhood` with a large radius.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InputRequest {
     SamplePoint,
-    /// Bounded local reach. `separable` records whether the pass can run as two
-    /// 1-D passes, which the GPU backend uses to pick a pipeline.
-    Neighborhood {
-        radius_px: f32,
-        separable: bool,
-    },
-    /// Reads whole lines along `step`. Cardinal directions are `(1, 0)` /
-    /// `(0, 1)`; diagonal sorts use their reduced rational slope.
-    ScanLines {
-        step: (i32, i32),
-    },
+    Neighborhood { radius_px: f32, separable: bool },
+    ScanLines { step: (i32, i32) },
     FullFrame,
 }
 
@@ -97,9 +80,6 @@ impl EffectClass {
             InputRequest::Neighborhood { radius_px, .. } => EffectClass::Separable {
                 apron_px: radius_px,
             },
-            // The backend pass only distinguishes row-major from column-major
-            // work; a diagonal step is driven by its dominant axis and the
-            // exact slope is recovered from `StepClass` where it matters.
             InputRequest::ScanLines { step: (dx, dy) } => EffectClass::ComputeScanline {
                 axis: if dy.abs() > dx.abs() {
                     Axis::Vertical
@@ -351,18 +331,6 @@ impl ModifierKind {
     }
 }
 
-/// Parameter edits applied to a modifier.
-///
-/// Any variant carrying a pixel distance — blur radius, motion blur distance,
-/// stroke size, text position — is in **document space**: image pixels,
-/// independent of zoom and of the runtime quality factor. A 20px blur means
-/// 20 image pixels at every zoom level, and the same value must produce the
-/// same exported result regardless of what the viewport was showing.
-///
-/// Conversion to device space happens at the point of use in the backend,
-/// normally by normalising against the full image dimensions (see
-/// `wgpu::modifier_pipeline::quality_scale_for`). Storing a device-scaled
-/// value back into one of these would make the edit depend on the viewport.
 #[derive(Debug, Clone)]
 pub enum ModifierParam {
     LevelsShadows(f32),
@@ -490,9 +458,6 @@ mod effect_class_tests {
     fn class_matches_input_request_partition() {
         assert!(class(ModifierKind::Exposure(Exposure::default())).is_pointwise());
 
-        // Chromatic aberration displaces samples proportionally to their
-        // distance from the image centre, so its reach is unbounded by
-        // `amount` and it is the one effect here that is truly full-frame.
         assert!(
             class(ModifierKind::ChromaticAberration(
                 ChromaticAberration::default()
@@ -500,14 +465,11 @@ mod effect_class_tests {
             .is_fragment()
         );
 
-        // Text composites a pre-rasterized layer: co-located reads only.
         assert_eq!(
             class(ModifierKind::Text(Text::default())).separable_apron(),
             Some(0.0)
         );
 
-        // Motion blur sweeps `t` over [-0.5, 0.5] * distance, so its reach is
-        // half the distance, not the whole of it.
         assert_eq!(
             class(ModifierKind::MotionBlur(MotionBlur {
                 angle: 0.0,

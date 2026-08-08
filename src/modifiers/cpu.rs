@@ -1,3 +1,21 @@
+//! CPU rendering: the full-frame path, banded execution, and the resample
+//! and blur kernels.
+//!
+//! Banding is what makes very large exports possible. Each stage declares the
+//! input rows it needs for a span of output rows, so a chain runs one
+//! horizontal strip at a time instead of materializing whole frames.
+//!
+//! Blurs wider than MAX_DIRECT_RADIUS (64) run at a reduced scale. This is
+//! exact, not an approximation: a Gaussian of sigma downsampled by k is a
+//! Gaussian of sigma*k. The cap is 64 because below it the two resample passes
+//! dominate and further reductions buy almost nothing. Two alternatives were
+//! implemented and rejected: a box blur (diverged from the GPU by 19 levels)
+//! and fusing the downsample into the blur (17x slower, since the fused pass
+//! runs the full tap count over every source row).
+//!
+//! MAX_DIRECT_RADIUS is the single definition of that cap; the GPU executor
+//! aliases it so preview and export cannot pick different scales.
+
 use rayon::prelude::*;
 
 use crate::modifiers::drawing_raster::LayerView;
@@ -7,11 +25,6 @@ use crate::modifiers::roi::{StepClass, step_class};
 use crate::modifiers::text_raster::TextRaster;
 use crate::modifiers::{Modifier, ModifierKind, motion_blur_samples};
 
-/// The rows of a stage's input needed to produce rows `y0..y1` of its output.
-///
-/// Vertical reach only -- horizontal reach never forces extra *rows*, so a band
-/// is always full width. Returns `None` when the stage needs its entire input,
-/// which is the honest answer for anything that reads across rows arbitrarily.
 fn rows_needed(
     class: StepClass,
     y0: u32,
@@ -20,8 +33,6 @@ fn rows_needed(
     scale_num: u32,
     scale_den: u32,
 ) -> Option<(u32, u32)> {
-    // Map the output span back through any geometry change first: a resize
-    // means output row y came from input row y * in_h / out_h.
     let map = |y: u32| -> u32 {
         if scale_den == 0 {
             return y;
@@ -36,21 +47,11 @@ fn rows_needed(
             let a = apron_px.ceil().max(0.0) as u32;
             Some((my0.saturating_sub(a), (my1 + a).min(in_h)))
         }
-        // A row-major scanline reads whole rows but no *extra* rows, so it
-        // bands cleanly. Anything else (columns, diagonals, whole frame) needs
-        // everything.
         StepClass::Scanline { dir: (_, 0) } => Some((my0, my1)),
         StepClass::Scanline { .. } | StepClass::WholeFrame => None,
     }
 }
 
-/// The source rows a chain needs to produce output rows `y0..y1`, or `None` if
-/// some stage forces the whole frame.
-///
-/// This is the CPU analogue of the backward ROI walk the GPU executor performs
-/// in `execute_kernel_chain`, restricted to the vertical axis. Sharing the walk
-/// exactly is the eventual goal; sharing `StepClass` is what keeps the two from
-/// disagreeing about reach in the meantime.
 pub(crate) fn source_rows_for_band(
     plan: &[PlanItem],
     specs: &[crate::modifiers::plan::StageSpec],
@@ -71,11 +72,6 @@ pub(crate) fn source_rows_for_band(
     Some((lo, hi))
 }
 
-/// Total vertical reach of a chain, in source rows.
-///
-/// The sum rather than the max: aprons stack, because each stage's apron is
-/// applied to a region that the next stage's apron already widened. Callers use
-/// this to size a band so the redundant work stays a bounded fraction.
 pub(crate) fn chain_apron_rows(plan: &[PlanItem]) -> u32 {
     plan.iter()
         .map(|item| match item {
@@ -88,10 +84,6 @@ pub(crate) fn chain_apron_rows(plan: &[PlanItem]) -> u32 {
         .sum()
 }
 
-/// True when every stage in the plan can be rendered band-by-band.
-///
-/// A chain containing a column sort, a diagonal sort, or a full-frame stage
-/// cannot be banded, and the caller must fall back to `render_full`.
 pub(crate) fn plan_is_bandable(plan: &[PlanItem]) -> bool {
     plan.iter().all(|item| match item {
         PlanItem::Fused(_) => true,
@@ -106,17 +98,6 @@ pub(crate) fn plan_is_bandable(plan: &[PlanItem]) -> bool {
     })
 }
 
-/// Renders output rows `y0..y1` of the chain, reading only the source rows
-/// those output rows depend on.
-///
-/// Returns the band's pixels, tightly packed at the chain's output width. The
-/// caller is responsible for having checked [`plan_is_bandable`]; a chain with
-/// a column sort or a full-frame stage will produce wrong pixels here because
-/// the band does not contain the input those stages read.
-///
-/// Peak memory is proportional to the band height, not the image height, which
-/// is the entire point: a 50000x50000 export runs in the same working set as a
-/// 4K one.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_band(
     modifiers: &[Modifier],
@@ -136,7 +117,6 @@ pub(crate) fn render_band(
     let row_bytes = out_spec.w as usize * 4;
 
     let Some((src_lo, src_hi)) = source_rows_for_band(&plan, &specs, y0, y1) else {
-        // Not bandable: the caller should not have reached here.
         debug_assert!(false, "render_band called on a chain that cannot be banded");
         return vec![0u8; row_bytes * (y1 - y0) as usize];
     };
@@ -146,7 +126,6 @@ pub(crate) fn render_band(
         return vec![0u8; row_bytes * (y1 - y0) as usize];
     }
 
-    // Copy just the source rows this band needs.
     let stride = img_w as usize * 4;
     let start = src_lo as usize * stride;
     let end = (src_hi as usize * stride).min(pixels.len());
@@ -155,9 +134,6 @@ pub(crate) fn render_band(
         cur[..end - start].copy_from_slice(&pixels[start..end]);
     }
 
-    // Run the chain over the band. Stage geometry is the band's height rather
-    // than the image's; `y_off` tracks where the band sits so stages that care
-    // about absolute position (text, drawing, vignette) stay correct.
     let mut cur_h = band_h;
     let mut cur_w = img_w;
     let mut y_off = src_lo;
@@ -178,7 +154,6 @@ pub(crate) fn render_band(
             text_layers,
             drawing_layers,
         );
-        // A resize changes both dimensions and rescales the band's offset.
         if spec.input != spec.output {
             let num = spec.output.h as u64;
             let den = spec.input.h.max(1) as u64;
@@ -188,7 +163,6 @@ pub(crate) fn render_band(
         }
     }
 
-    // Slice the requested rows out of the rendered band.
     let mut out = vec![0u8; row_bytes * (y1 - y0) as usize];
     for (i, dst) in out.chunks_mut(row_bytes).enumerate() {
         let want = y0 + i as u32;
@@ -217,15 +191,9 @@ pub(crate) fn render_full(
     let copy = n.min(pixels.len());
     cur[..copy].copy_from_slice(&pixels[..copy]);
 
-    // Walk the shared plan rather than re-deriving the segmentation here: the
-    // GPU pipeline consumes the same plan, so the two backends cannot drift
-    // apart in how they group modifiers.
     let plan = plan_modifiers(modifiers);
     let specs = infer_specs(ImageSpec::new(img_w, img_h), &plan);
 
-    // Geometry is a running value rather than a loop constant, so a stage that
-    // changes dimensions only has to declare it in `infer_specs`. Every stage is
-    // passthrough today; the debug assert below pins that.
     for (item, spec) in plan.iter().zip(&specs) {
         let ImageSpec { w: img_w, h: img_h } = spec.input;
         let w = img_w as usize;
@@ -240,8 +208,6 @@ pub(crate) fn render_full(
             PlanItem::Fused(segment) => {
                 apply_pointwise_segment(&mut cur, img_w, img_h, segment);
             }
-            // `i` indexes the original stack, which is what the positionally
-            // stored text and drawing rasters are keyed by.
             PlanItem::Step(i, m) => match &m.kind {
                 ModifierKind::GaussianBlur(gb) => blur_full(&mut cur, w, h, gb.radius),
                 ModifierKind::ChromaticAberration(ca) => {
@@ -269,20 +235,10 @@ pub(crate) fn render_full(
                         ps.angle,
                     );
                 }
-                // The only stage whose output geometry differs from its input.
-                // `spec.output` is authoritative -- it is what every later
-                // stage was sized against by `infer_specs`.
                 ModifierKind::Resize(r) => {
                     let out = spec.output;
                     cur = resample(&cur, img_w, img_h, out.w, out.h, r.filter);
                 }
-                // `plan_modifiers` only emits a `Step` for modifiers the
-                // planner classifies as non-pointwise, and
-                // `planner_classification_covers_every_modifier_type` pins that
-                // set to exactly the arms above. A kind arriving here means a
-                // new non-pointwise modifier was added without a CPU
-                // implementation, which would otherwise render as a silent
-                // no-op.
                 other => debug_assert!(
                     false,
                     "{} is planned as a standalone step but has no CPU implementation",
@@ -300,13 +256,6 @@ pub(crate) fn render_full(
     cur
 }
 
-/// Runs one plan item over a band.
-///
-/// `y_off` is the band's first row in full-image coordinates and `full_h` the
-/// full image height, because stages that evaluate a UV -- vignette, grain,
-/// text, drawing -- must see their true position in the frame. Getting this
-/// wrong produces a band that renders correctly in isolation and wrongly in
-/// context, which is exactly the failure a naive banding would introduce.
 #[allow(clippy::too_many_arguments)]
 fn apply_stage_banded(
     item: &PlanItem,
@@ -354,8 +303,6 @@ fn apply_stage_banded(
                 );
             }
             ModifierKind::Resize(r) => {
-                // Scale the band by the same ratio the full image would use, so
-                // adjacent bands tile without seams or drift.
                 let num = spec.output.h as u64;
                 let den = spec.input.h.max(1) as u64;
                 let band_out_h = (((h as u64 * num) / den) as u32).max(1);
@@ -409,71 +356,13 @@ fn apply_pointwise_segment(buf: &mut [u8], img_w: u32, img_h: u32, segment: &[&M
     });
 }
 
-/// Largest kernel radius, in pixels, evaluated directly. Above this the blur
-/// runs at a reduced scale (see [`blur_full`]).
-///
-/// This is the single definition of the cap: the GPU executor's
-/// `MAX_KERNEL_RADIUS_PX` is an alias for it, so the two cannot drift apart and
-/// make preview and export choose different scales for the same radius.
-///
-/// # Why 64
-///
-/// Measured at real export band geometry (50000x3000, radius 500), five
-/// interleaved runs, best-of-each to limit background-load contamination:
-///
-/// ```text
-///   cap    downscale   blur   upscale   band
-///   128       300ms    329ms    283ms    911ms
-///    64       258ms     27ms    256ms    541ms   <- 1.67x
-///    32       242ms      5ms    232ms    479ms
-///    16       231ms      2ms    237ms    469ms
-/// ```
-///
-/// Halving the cap quarters the pixel count *and* halves the tap count, so the
-/// blur phase collapses rather than merely halving. Below 64 the two resample
-/// passes are the floor -- at cap 64 the blur is already only 5% of the time --
-/// so further reductions buy almost nothing and only widen the gap below.
-///
-/// # What it costs
-///
-/// Radii 65..=128 previously ran exact on both backends and now take the
-/// scaled path on the CPU, so preview and export differ slightly there. On a
-/// 1200x900 crop of a real 50000px image at radius 100: mean deviation
-/// 0.2/255, fewer than 1 pixel in 1000 differing by more than 8 levels, and
-/// visually indistinguishable at 1:1 (verified by rendering both and a 10x
-/// amplified difference). Above 128 both backends already scale, so nothing
-/// changes there.
-///
-/// # What was ruled out
-///
-/// Making the CPU fuse the downsample into the blur, as the GPU does, would
-/// remove the mismatch entirely. It was implemented and measured at **17x
-/// slower** (18.4s vs 1.1s per band): the fused horizontal pass runs the full
-/// tap count over every source row (9.4G tap-evaluations) where a separate
-/// 25-tap Lanczos downscale costs 1.1G and shrinks every later pass. The GPU
-/// wins with that structure only because bilinear sampling is free in hardware.
 pub(crate) const MAX_DIRECT_RADIUS: f32 = 64.0;
 
-/// Gaussian blur, evaluated at a resolution suited to its radius.
-///
-/// A direct convolution is O(radius) per pixel per axis, so a 500px blur on a
-/// 50000x50000 image is ~5 trillion multiply-adds -- minutes of work. Blurring
-/// at reduced scale removes almost all of it.
-///
-/// This is not an approximation of the filter. A Gaussian of sigma `s`
-/// downsampled by `k` is exactly a Gaussian of sigma `s * k`, so blurring a
-/// half-size image with half the radius yields the same Gaussian, sampled more
-/// coarsely. The detail lost to the downsample is detail the blur itself was
-/// about to remove; what changes is the sampling grid, not the filter. This is
-/// the same trade the GPU path already makes, and the same one Photoshop and
-/// Affinity make to keep large blurs interactive.
 fn blur_full(buf: &mut [u8], w: usize, h: usize, radius: f32) {
     if radius <= 0.0 || w == 0 || h == 0 {
         return;
     }
 
-    // Power-of-two scales only, mirroring the GPU's `ks`: they keep the
-    // resample cheap and the radius exactly representable at every level.
     let ks = (MAX_DIRECT_RADIUS / radius).min(1.0).log2().floor().exp2();
     if ks >= 1.0 {
         blur_direct(buf, w, h, radius);
@@ -483,9 +372,6 @@ fn blur_full(buf: &mut [u8], w: usize, h: usize, radius: f32) {
     let sw = ((w as f32 * ks).round() as usize).max(1);
     let sh = ((h as f32 * ks).round() as usize).max(1);
 
-    // Down, blur at the matching radius, back up. Lanczos on the way down to
-    // avoid aliasing the detail that survives; bilinear on the way back up
-    // because the result is already smooth and Lanczos would only ring.
     let small = resample(
         buf,
         w as u32,
@@ -519,15 +405,6 @@ fn blur_direct(buf: &mut [u8], w: usize, h: usize, radius: f32) {
     let wsum: f32 = kernel.iter().sum();
     let norm: Vec<f32> = kernel.iter().map(|k| k / wsum).collect();
 
-    // The horizontal pass is row-local, so it runs in place against a one-row
-    // copy per thread. A full-size scratch here doubles the working set for no
-    // benefit -- at a 500px apron on a 50000px-wide band that is hundreds of MB.
-    //
-    // Shaped like the vertical pass below: accumulate the whole row once per
-    // tap so the inner loop is a contiguous scaled add over `w * 4` floats.
-    // Interior pixels (those at least `r` from either edge) need no clamping,
-    // so that span is split out and runs branch-free -- the clamp in the inner
-    // loop was what stopped this vectorizing.
     let stride_h = w * 4;
     buf.par_chunks_mut(stride_h).for_each_init(
         || (vec![0u8; stride_h], vec![0.0f32; stride_h]),
@@ -537,19 +414,15 @@ fn blur_direct(buf: &mut [u8], w: usize, h: usize, radius: f32) {
 
             let ru = r as usize;
             for (ki, &k) in norm.iter().enumerate() {
-                // Offset of this tap in pixels: negative reads to the left.
                 let off = ki as isize - r as isize;
                 let (lo, hi) = (ru.min(w), w.saturating_sub(ru));
 
-                // Left edge: source index clamps to 0.
                 for x in 0..lo.min(w) {
                     let sx = (x as isize + off).clamp(0, w as isize - 1) as usize;
                     for c in 0..4 {
                         acc[x * 4 + c] += row_copy[sx * 4 + c] as f32 * k;
                     }
                 }
-                // Interior: no clamping, so both slices are contiguous and the
-                // compiler can use wide loads and FMA.
                 if hi > lo {
                     let src_start = (lo as isize + off) as usize * 4;
                     let dst = &mut acc[lo * 4..hi * 4];
@@ -558,7 +431,6 @@ fn blur_direct(buf: &mut [u8], w: usize, h: usize, radius: f32) {
                         *a += p as f32 * k;
                     }
                 }
-                // Right edge: source index clamps to w - 1.
                 for x in hi.max(lo)..w {
                     let sx = (x as isize + off).clamp(0, w as isize - 1) as usize;
                     for c in 0..4 {
@@ -573,14 +445,6 @@ fn blur_direct(buf: &mut [u8], w: usize, h: usize, radius: f32) {
         },
     );
 
-    // The vertical pass reads across rows, so it does need a copy of the
-    // horizontally-blurred intermediate.
-    //
-    // Accumulate whole rows rather than walking a column per output pixel: for
-    // each tap, the source row and the accumulator are both contiguous, so the
-    // inner loop is a simple scaled add that the compiler vectorizes. The
-    // previous form strided by `w * 4` bytes per tap, which defeated both the
-    // vectorizer and the cache.
     let scratch = buf.to_vec();
     let stride = w * 4;
     buf.par_chunks_mut(stride).enumerate().for_each_init(
@@ -720,8 +584,6 @@ fn drawing_full(buf: &mut [u8], img_w: u32, raster: &LayerView<'_>) {
     });
 }
 
-/// Band variants: the raster is sampled in absolute image coordinates, so the
-/// only difference from the full-frame versions is offsetting the row index.
 fn drawing_band(buf: &mut [u8], img_w: u32, _h: u32, y_off: u32, raster: &LayerView<'_>) {
     let w = img_w as usize;
     buf.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
@@ -811,16 +673,6 @@ fn lanczos3(x: f32) -> f32 {
     (px.sin() / px) * ((px / A).sin() / (px / A))
 }
 
-/// Resamples `src` to `dst_w` x `dst_h`.
-///
-/// Separable: one horizontal pass into a scratch buffer, then one vertical
-/// pass. The filter radius is scaled by the *reciprocal* of the scale factor
-/// when minifying, which is what makes a downscale average its input rather
-/// than point-sample it -- a fixed-radius kernel would alias badly at large
-/// reductions.
-///
-/// `Nearest` deliberately ignores that: its blockiness is the reason to pick
-/// it, so it stays a true point sample in both directions.
 pub(crate) fn resample(
     src: &[u8],
     src_w: u32,
@@ -833,11 +685,8 @@ pub(crate) fn resample(
         return src.to_vec();
     }
 
-    // Per-axis kernel: `support` is the half-width in *source* pixels, and
-    // `weight` is evaluated in kernel space.
     let axis = |dst: u32, src: u32| -> (f32, f32) {
         let scale = dst as f32 / src as f32;
-        // Minifying (scale < 1) widens the footprint in source space.
         let inv = if scale < 1.0 { 1.0 / scale } else { 1.0 };
         (scale, inv)
     };
@@ -856,11 +705,6 @@ pub(crate) fn resample(
         }
     };
 
-    // One entry per output position: which source samples it reads, and with
-    // what weights. Building this once per axis rather than per output pixel is
-    // the difference between calling `weight` O(out_w * out_h * taps) times and
-    // O(out_len * taps) -- for a Lanczos downscale that removes billions of
-    // sin() calls, which dominated the resample.
     struct Tap {
         start: u32,
         weights: Vec<f32>,
@@ -886,8 +730,6 @@ pub(crate) fn resample(
                 let weights: Vec<f32> = (lo..hi)
                     .map(|s| weight(filter, (s as f32 + 0.5 - center) / inv))
                     .collect();
-                // A Lanczos kernel has negative lobes, so normalise by the
-                // actual weight sum rather than assuming it is 1.0.
                 let sum: f32 = weights.iter().sum();
                 Tap {
                     start: lo,
@@ -911,8 +753,6 @@ pub(crate) fn resample(
 
             let mut out = vec![0u8; out_w as usize * out_h as usize * 4];
             if horizontal {
-                // Each output row reads only its own input row, so both are
-                // contiguous and the tap table is shared across rows.
                 out.par_chunks_mut(out_w as usize * 4)
                     .enumerate()
                     .for_each(|(row, out_row)| {
@@ -932,10 +772,6 @@ pub(crate) fn resample(
                         }
                     });
             } else {
-                // Each output row combines a fixed set of input rows with fixed
-                // weights, so accumulate row-at-a-time: the inner loop then walks
-                // two contiguous rows, which vectorizes far better than striding
-                // down a column per output pixel.
                 let row_floats = out_w as usize * 4;
                 out.par_chunks_mut(row_floats)
                     .zip(taps.par_iter())
@@ -1212,8 +1048,6 @@ mod scaled_blur_tests {
         v
     }
 
-    /// Radii at or below the cap must be byte-identical to the direct kernel:
-    /// the scale path must not perturb the blurs the goldens already pin.
     #[test]
     fn radii_within_the_cap_are_unchanged() {
         let (w, h) = (64usize, 48usize);
@@ -1231,9 +1065,6 @@ mod scaled_blur_tests {
         }
     }
 
-    /// Just above the cap the scaled path must actually engage. Pins the
-    /// boundary from the other side, so raising the cap cannot silently leave
-    /// this range untested.
     #[test]
     fn radii_just_above_the_cap_are_scaled() {
         let (w, h) = (256usize, 192usize);
@@ -1249,8 +1080,6 @@ mod scaled_blur_tests {
         );
     }
 
-    /// Above the cap the result is the same Gaussian sampled more coarsely, so
-    /// it should stay close to the direct evaluation -- not merely "some blur".
     #[test]
     fn scaled_blur_tracks_the_direct_gaussian() {
         let (w, h) = (512usize, 384usize);
@@ -1275,11 +1104,6 @@ mod scaled_blur_tests {
         }
     }
 
-    /// The scale factor must match the GPU's, or preview and export disagree.
-    ///
-    /// The cap is asserted literally so that changing it fails here. The GPU
-    /// executor now aliases this constant, so it follows automatically; what
-    /// still needs a human is the golden and the expectations below.
     #[test]
     fn scale_factor_matches_the_gpu_rule() {
         assert_eq!(
@@ -1337,9 +1161,6 @@ mod band_tests {
         Modifier::new(kind)
     }
 
-    /// THE oracle for layer 2: assembling bands must reproduce `render_full`
-    /// byte for byte. Any apron miscalculation shows up as a seam at a band
-    /// boundary, which this catches exactly.
     fn assert_bands_match_full(label: &str, chain: &[Modifier], w: u32, h: u32, band: u32) {
         let src = noise(w, h);
         let full = render_full(chain, &[], &[], &src, w, h);
@@ -1387,15 +1208,12 @@ mod band_tests {
         assert_bands_match_full("pointwise", &chain, 61, 47, 8);
     }
 
-    /// Vignette reads its own UV, so a band that does not know its absolute
-    /// position renders a vignette per band instead of one per image.
     #[test]
     fn bands_match_full_position_dependent_pointwise() {
         let chain = vec![m(ModifierKind::Vignette(Vignette::default()))];
         assert_bands_match_full("vignette", &chain, 48, 64, 7);
     }
 
-    /// The apron case: a blur needs `radius` rows beyond the band on each side.
     #[test]
     fn bands_match_full_blur() {
         let chain = vec![m(ModifierKind::GaussianBlur(GaussianBlur { radius: 5.0 }))];
@@ -1411,7 +1229,6 @@ mod band_tests {
         assert_bands_match_full("motion-blur", &chain, 40, 70, 11);
     }
 
-    /// A horizontal sort reads whole rows but no extra rows, so it bands.
     #[test]
     fn bands_match_full_horizontal_sort() {
         let chain = vec![m(ModifierKind::PixelSort(PixelSort {
@@ -1431,8 +1248,6 @@ mod band_tests {
         assert_bands_match_full("mixed", &chain, 50, 66, 10);
     }
 
-    /// Two aprons stack: the first stage must fetch enough for what the second
-    /// stage's apron needs, not just its own.
     #[test]
     fn bands_match_full_stacked_aprons() {
         let chain = vec![
@@ -1442,16 +1257,12 @@ mod band_tests {
         assert_bands_match_full("blur+blur", &chain, 36, 80, 8);
     }
 
-    /// A band height that does not divide the image evenly leaves a short final
-    /// band, which is where off-by-one errors surface.
     #[test]
     fn bands_match_full_with_ragged_final_band() {
         let chain = vec![m(ModifierKind::GaussianBlur(GaussianBlur { radius: 3.0 }))];
         assert_bands_match_full("ragged", &chain, 32, 53, 10);
     }
 
-    /// A single band covering the whole image must equal the full render; if
-    /// this fails the band path is wrong independently of any seam logic.
     #[test]
     fn one_band_covering_everything_matches_full() {
         let chain = vec![
@@ -1495,8 +1306,6 @@ mod resample_tests {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
     use crate::modifiers::{Modifier, ModifierKind};
 
-    /// Left half black, right half white -- a single vertical edge, which is
-    /// what makes filter differences legible.
     fn split(w: u32, h: u32) -> Vec<u8> {
         let mut v = Vec::with_capacity((w * h * 4) as usize);
         for _ in 0..h {
@@ -1534,8 +1343,6 @@ mod resample_tests {
         }
     }
 
-    /// Nearest must not invent intermediate values -- that blockiness is the
-    /// only reason to choose it.
     #[test]
     fn nearest_preserves_the_source_palette() {
         let out = resample(&split(64, 8), 64, 8, 27, 8, ResizeFilter::Nearest);
@@ -1548,8 +1355,6 @@ mod resample_tests {
         }
     }
 
-    /// Bilinear and Lanczos must blend across the edge; if they did not, they
-    /// would be point sampling under another name.
     #[test]
     fn smooth_filters_blend_across_an_edge() {
         for f in [ResizeFilter::Bilinear, ResizeFilter::Lanczos] {
@@ -1562,13 +1367,8 @@ mod resample_tests {
         }
     }
 
-    /// A large downscale must average its input rather than point-sample it.
-    /// With a fixed-radius kernel this aliases: the result depends on which
-    /// source column each output pixel happens to land on. Averaging makes the
-    /// two halves come out near the extremes with a smooth transition.
     #[test]
     fn large_downscale_averages_rather_than_aliases() {
-        // 512 -> 8 is a 64x reduction; each output pixel covers 64 source px.
         let out = resample(&split(512, 8), 512, 8, 8, 8, ResizeFilter::Lanczos);
         let left = px(&out, 8, 0, 4)[0];
         let right = px(&out, 8, 7, 4)[0];
@@ -1589,8 +1389,6 @@ mod resample_tests {
         }
     }
 
-    /// End-to-end through the plan: `render_full` must return a buffer at the
-    /// chain's output size, not the source size.
     #[test]
     fn render_full_returns_the_resized_buffer() {
         let chain = vec![Modifier::new(ModifierKind::Resize(Resize {
@@ -1604,9 +1402,6 @@ mod resample_tests {
         assert_eq!(out.len(), 20 * 10 * 4);
     }
 
-    /// A resize mid-chain must leave later stages operating at the new size.
-    /// Before `infer_specs` was wired up this would panic on a buffer/geometry
-    /// mismatch in the debug assert.
     #[test]
     fn a_stage_after_a_resize_runs_at_the_new_size() {
         use crate::modifiers::kinds::GaussianBlur;
@@ -1755,9 +1550,6 @@ mod motion_blur_tests {
 mod blur_edge_tests {
     use super::*;
 
-    /// Radii comparable to or larger than the image exercise the edge/interior
-    /// split in `blur_direct`'s horizontal pass, where a bad slice bound would
-    /// panic or read the wrong pixels.
     #[test]
     fn narrow_images_and_large_radii_do_not_panic() {
         for (w, h) in [(1usize, 1usize), (1, 9), (9, 1), (3, 3), (5, 40), (40, 5)] {
@@ -1773,11 +1565,6 @@ mod blur_edge_tests {
         }
     }
 
-    /// The interior fast path must produce exactly what the clamped path would.
-    ///
-    /// Uses a single row so the vertical pass is an identity (every tap clamps
-    /// to row 0 and the weights sum to 1), leaving the horizontal pass as the
-    /// only thing under test.
     #[test]
     fn edge_and_interior_spans_agree() {
         let (w, h) = (64usize, 1usize);

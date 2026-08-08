@@ -26,12 +26,6 @@ pub(super) fn encode_png(
     )
 }
 
-/// Streams a PNG without ever materializing the processed frame.
-///
-/// Each strip is rendered from the source rows it actually needs and written
-/// straight to the encoder, so peak memory is a band rather than an image.
-/// This is the path that makes a 50000x50000 export possible on an ordinary
-/// machine; `encode_png` above remains for chains that cannot be banded.
 pub(super) fn encode_png_streaming(
     geom: &Geom,
     data: &ExportData,

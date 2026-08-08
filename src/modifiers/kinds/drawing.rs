@@ -91,8 +91,6 @@ impl ModifierImpl for Drawing {
             .any(|s| !s.points.is_empty() && s.opacity > 0.0)
     }
 
-    /// Composites a pre-rasterized stroke layer; see [`super::text::Text`] for
-    /// why this is a zero-radius neighbourhood rather than a full frame.
     fn input_request(&self) -> InputRequest {
         InputRequest::Neighborhood {
             radius_px: 0.0,

@@ -28,8 +28,6 @@ mod tests {
     };
     use crate::modifiers::{Modifier, ModifierKind};
 
-    /// Large enough that per-pixel cost dominates fixed overhead, small enough
-    /// that the whole suite stays quick.
     const W: u32 = 1920;
     const H: u32 = 1080;
 
@@ -71,15 +69,12 @@ mod tests {
             let _ = render_still_rgba(&build()).expect("bench render");
         }
 
-        // Report the median rather than the mean: a single scheduler preemption
-        // skews a mean badly at these sample counts.
         let mut samples: Vec<Duration> = (0..RUNS)
             .map(|_| {
                 let data = build();
                 let t = Instant::now();
                 let out = render_still_rgba(&data).expect("bench render");
                 let elapsed = t.elapsed();
-                // Keep the result observable so the optimizer cannot elide the work.
                 std::hint::black_box(&out);
                 elapsed
             })

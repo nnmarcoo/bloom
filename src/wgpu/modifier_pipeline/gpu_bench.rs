@@ -1,6 +1,6 @@
 //! GPU-side timing baselines for the modifier pipeline.
 //!
-//! The CPU bench in `export::bench` says nothing about shader quality — the
+//! The CPU bench in `export::bench` says nothing about shader quality -- the
 //! preview path is entirely separate code. This measures the GPU pipeline
 //! directly so decisions about shaders and cost bounds rest on data.
 //!
@@ -16,7 +16,7 @@
 //!
 //! The zoomed-in case is the one that matters most. `quality_scale` is capped at
 //! 1.0 and only drops below it when zoomed *out*, so at 100% zoom the pipeline
-//! has no proxy relief and pays full cost — which is where large-radius blurs
+//! has no proxy relief and pays full cost -- which is where large-radius blurs
 //! were historically slow enough to lag.
 
 #[cfg(test)]
@@ -32,8 +32,6 @@ mod tests {
     use iced::wgpu::TextureFormat;
     use std::time::{Duration, Instant};
 
-    /// Large enough to be representative of a real photo and to make tiling
-    /// engage.
     const W: u32 = 4096;
     const H: u32 = 2731;
 
@@ -73,9 +71,6 @@ mod tests {
         .expect("tiled source")
     }
 
-    /// Points every tile's ROI at a `frac`-sized window in the middle of the
-    /// image, mimicking a viewport zoomed in on the center. At `frac == 1.0`
-    /// the whole image is visible.
     fn set_viewport(source: &mut TiledSource, frac: f32, physical_scale: f32) {
         source.physical_scale = physical_scale;
         let (fw, fh) = (source.full_width as f32, source.full_height as f32);
@@ -106,12 +101,6 @@ mod tests {
         }
     }
 
-    /// Drives `prepare` to completion and returns the wall time of the last
-    /// converging pass.
-    ///
-    /// The pipeline defers work across frames (tile budget, blur banding), so a
-    /// single `prepare` is not a whole render. This loops until nothing is
-    /// pending and sums the time, which is what the user waits for.
     fn time_chain(
         device: &Device,
         queue: &Queue,
@@ -141,8 +130,6 @@ mod tests {
             if !converged {
                 return None;
             }
-            // Force the GPU to finish before stopping the clock; submission is
-            // asynchronous, so without this we would time encoding only.
             let ti = (0..source.tiles.len()).find(|&i| {
                 mp.tile_outputs
                     .get(i)
@@ -165,18 +152,6 @@ mod tests {
         vec![m(ModifierKind::GaussianBlur(GaussianBlur { radius }))]
     }
 
-    /// How cost scales with source size at a fixed zoom.
-    ///
-    /// The headline case for this viewer is very large images — tens of
-    /// thousands of pixels per side, far past `max_texture_dimension_2d`, so the
-    /// source is necessarily tiled. Zoomed in, the visible region is a tiny
-    /// fraction of the image, so an ROI-driven pipeline should cost roughly the
-    /// same regardless of how big the source is. Anything that grows with total
-    /// image size is work being done for pixels nobody can see.
-    ///
-    /// `set_viewport` keeps the visible region a constant number of pixels here,
-    /// so a flat column is the correct result and a rising one localizes the
-    /// leak.
     #[test]
     #[ignore = "GPU timing baseline; run with --release --ignored --nocapture"]
     fn gpu_bench_large_images() {
@@ -202,7 +177,6 @@ mod tests {
             let n_tiles = source.tiles.len();
             let vram = (dim as f64 * dim as f64 * 4.0) / 1e9;
 
-            // Hold the visible area constant so only the source size varies.
             let frac = (1024.0 / dim as f32).min(1.0);
             set_viewport(&mut source, frac, 1.0);
 
@@ -270,9 +244,6 @@ mod tests {
             ),
         ];
 
-        // frac is the fraction of the image inside the viewport; physical_scale
-        // is how many screen px per image px. Zoomed in => small frac, and
-        // physical_scale >= 1.0 pins quality_scale to 1.0.
         let views: [(&str, f32, f32); 3] = [
             ("fit (zoomed out)", 1.0, 0.25),
             ("100% zoom", 0.25, 1.0),

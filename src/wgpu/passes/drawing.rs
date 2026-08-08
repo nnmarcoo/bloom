@@ -64,8 +64,6 @@ impl DrawingLayer {
             return None;
         }
         let w = self.cache.w;
-        // Widen before multiplying: on a very large canvas these products
-        // overflow u32 and produce a wrapped slice range.
         let offset = (y0 as usize * w as usize + x0 as usize) * 4;
         let len = ((y1 - 1 - y0) as usize * w as usize + (x1 - x0) as usize) * 4;
         queue.write_texture(

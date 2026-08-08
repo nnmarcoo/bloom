@@ -19,23 +19,12 @@
 
 use crate::modifiers::{Modifier, ModifierKind};
 
-/// One unit of execution.
 #[derive(Debug)]
 pub enum PlanItem<'a> {
-    /// Adjacent pointwise modifiers, evaluated together in one pass.
     Fused(Vec<&'a Modifier>),
-    /// A modifier that needs a pass of its own, with its index in the original
-    /// stack so backends can find per-modifier side data (text and drawing
-    /// rasters are stored positionally).
     Step(usize, &'a Modifier),
 }
 
-/// The pixel dimensions a stage operates on.
-///
-/// This is **document geometry**: the size the modifier stack says an image is,
-/// independent of any runtime quality scaling a backend applies to go faster.
-/// Keeping the two apart is what lets a downscaled preview and a full-resolution
-/// export run the same plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageSpec {
     pub w: u32,
@@ -44,8 +33,6 @@ pub struct ImageSpec {
 
 impl ImageSpec {
     pub fn new(w: u32, h: u32) -> Self {
-        // A zero-sized stage would make every downstream division by width or
-        // height a divide-by-zero, so clamp at construction.
         Self {
             w: w.max(1),
             h: h.max(1),
@@ -53,7 +40,6 @@ impl ImageSpec {
     }
 }
 
-/// The input and output geometry of one plan item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StageSpec {
     pub input: ImageSpec,
@@ -61,18 +47,11 @@ pub struct StageSpec {
 }
 
 impl StageSpec {
-    /// True when the stage hands its input through at the same size.
     pub fn is_passthrough(&self) -> bool {
         self.input == self.output
     }
 }
 
-/// The dimensions a modifier produces, or `None` when it preserves its input.
-///
-/// Resize resolves here rather than storing resolved pixels, so a percentage
-/// tracks whatever its input actually turns out to be. Crop is still hoisted
-/// out of the stack and applied as a sampling window after the chain; making it
-/// an ordinary stage is the remaining half of this function's purpose.
 fn output_spec(kind: &ModifierKind, input: ImageSpec) -> Option<ImageSpec> {
     match kind {
         ModifierKind::Resize(r) => Some(r.output_for(input)),
@@ -80,15 +59,10 @@ fn output_spec(kind: &ModifierKind, input: ImageSpec) -> Option<ImageSpec> {
     }
 }
 
-/// Resolves the geometry of every plan item, given the source dimensions.
-///
-/// Returns one [`StageSpec`] per plan item, in plan order, so
-/// `specs[i]` describes `plan[i]`.
 pub fn infer_specs(source: ImageSpec, plan: &[PlanItem]) -> Vec<StageSpec> {
     let mut cur = source;
     plan.iter()
         .map(|item| {
-            // A fused run is pointwise by construction, so it cannot resize.
             let output = match item {
                 PlanItem::Fused(_) => cur,
                 PlanItem::Step(_, m) => output_spec(&m.kind, cur).unwrap_or(cur),
@@ -100,14 +74,12 @@ pub fn infer_specs(source: ImageSpec, plan: &[PlanItem]) -> Vec<StageSpec> {
         .collect()
 }
 
-/// The dimensions the whole plan produces from `source`.
 pub fn chain_output_spec(source: ImageSpec, plan: &[PlanItem]) -> ImageSpec {
     infer_specs(source, plan)
         .last()
         .map_or(source, |s| s.output)
 }
 
-/// Reduces a modifier stack to its execution plan.
 pub fn plan_modifiers(modifiers: &[Modifier]) -> Vec<PlanItem<'_>> {
     let mut plan: Vec<PlanItem> = Vec::new();
     let mut current: Vec<&Modifier> = Vec::new();
@@ -151,8 +123,6 @@ mod tests {
         m(ModifierKind::GaussianBlur(GaussianBlur { radius: 4.0 }))
     }
 
-    /// Compact plan shape, for asserting structure without naming modifiers:
-    /// `F(n)` is a fused run of n, `S(i)` is a standalone step at stack index i.
     fn shape(plan: &[PlanItem]) -> Vec<String> {
         plan.iter()
             .map(|p| match p {
@@ -179,9 +149,6 @@ mod tests {
         assert_eq!(chain_output_spec(SRC, &[]), SRC);
     }
 
-    /// Everything except resize is dimension-preserving. Crop is the notable
-    /// absence: it is still hoisted out of the stack, so it does not appear
-    /// here even though it changes geometry.
     #[test]
     fn only_resize_changes_dimensions() {
         let mods = vec![
@@ -223,7 +190,6 @@ mod tests {
         let plan = plan_modifiers(&mods);
         let specs = infer_specs(SRC, &plan);
 
-        // exposure (passthrough) -> resize (halves) -> blur (at the new size)
         assert_eq!(specs[0].input, SRC);
         assert_eq!(specs[0].output, SRC);
         assert_eq!(specs[1].input, SRC);
@@ -235,9 +201,6 @@ mod tests {
         );
     }
 
-    /// A percent resize resolves against its actual input, so an upstream
-    /// resize compounds rather than being ignored. This is why the mode is
-    /// stored rather than resolved at edit time.
     #[test]
     fn percent_resizes_compound() {
         let mods = vec![resize_pct(50.0), resize_pct(50.0)];
@@ -248,10 +211,6 @@ mod tests {
         );
     }
 
-    /// 50% then 200% returns to the original dimensions but is emphatically
-    /// not a no-op: the detail lost in the middle is gone. Both stages must
-    /// survive planning, or the render would skip the degradation the user
-    /// asked for.
     #[test]
     fn opposing_resizes_are_not_collapsed() {
         let mods = vec![resize_pct(50.0), resize_pct(200.0)];
@@ -260,9 +219,6 @@ mod tests {
         assert_eq!(chain_output_spec(SRC, &plan), SRC);
     }
 
-    /// An identity resize stays in the plan too. Dropping it would make the
-    /// chain's geometry implicit, and it costs nothing: `resample` returns
-    /// early when the dimensions already match.
     #[test]
     fn identity_resize_is_retained() {
         let mods = vec![resize_pct(100.0)];
@@ -271,9 +227,6 @@ mod tests {
         assert_eq!(chain_output_spec(SRC, &plan), SRC);
     }
 
-    /// Specs must chain: each stage's input is the previous stage's output.
-    /// Trivially true while everything is passthrough, but this is the property
-    /// resize will rely on, so it is worth pinning before the behavior exists.
     #[test]
     fn stage_inputs_chain_from_previous_outputs() {
         let mods = vec![exposure(), blur(), exposure()];
@@ -317,8 +270,6 @@ mod tests {
 
     #[test]
     fn step_indices_refer_to_the_original_stack() {
-        // The disabled modifier is dropped, but indices must still point into
-        // the *input* stack: backends use them to look up positional side data.
         let mut disabled = exposure();
         disabled.enabled = false;
         let mods = vec![disabled, exposure(), blur()];
@@ -339,8 +290,6 @@ mod tests {
 
     #[test]
     fn modifiers_that_report_no_effect_are_dropped() {
-        // PixelSort is inert at threshold >= 1.0, so `has_effect` is state
-        // dependent, not a per-type constant.
         let inert = m(ModifierKind::PixelSort(PixelSort {
             threshold: 1.0,
             angle: 0.0,
@@ -369,20 +318,10 @@ mod tests {
         );
     }
 
-    /// Every modifier type, classified by the planner.
-    ///
-    /// The CPU backend historically branched on `ModifierKind` directly while
-    /// the GPU backend branched on `effect_class()`. Those two rules must agree
-    /// for every type, or a modifier gets fused on one backend and split on the
-    /// other — which shows up as a rendering difference, not a compile error.
-    /// This walks `ModifierType::ALL` so a newly added type cannot skip the
-    /// check.
     #[test]
     fn planner_classification_covers_every_modifier_type() {
         use crate::modifiers::ModifierType;
 
-        // Types the CPU backend gives a dedicated (non-fused) branch to. Keep
-        // in sync with the match in `cpu::render_full`.
         const CPU_DEDICATED: &[&str] = &[
             "Gaussian Blur",
             "Chromatic Aberration",
@@ -411,9 +350,6 @@ mod tests {
 
     #[test]
     fn every_non_pointwise_kind_gets_its_own_step() {
-        // Locks the partition the CPU and GPU backends both branch on. A new
-        // modifier that is non-pointwise but missing from a backend's match
-        // would show up here as a shape change.
         let mods = vec![
             blur(),
             m(ModifierKind::MotionBlur(MotionBlur {

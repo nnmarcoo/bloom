@@ -1,19 +1,16 @@
+//! Streaming raster export: encode an image band by band rather than
+//! materializing the whole frame.
+//!
+//! Band height comes from the chain's accumulated apron, at least 4x it so the
+//! overlap stays a small fraction of the work, clamped to a sane range. Peak
+//! memory is one band instead of three full frames.
+
 use rayon::prelude::*;
 
 use super::Geom;
 
 const STRIP_HEIGHT: u32 = 64;
 
-/// Rows of output to render per band when streaming.
-///
-/// A fixed strip is wrong once a chain has any vertical reach: a 500px blur
-/// makes each 64-row strip fetch 1064 source rows, so 94% of the work is
-/// discarded and every row is blurred ~17 times over. Sizing the band against
-/// the chain's own apron keeps that overhead bounded -- the band is at least
-/// four times the apron, so no more than a fifth of the work is redundant.
-///
-/// The cap keeps peak memory in hand: at 50000px wide, 4096 rows is ~800 MB
-/// per buffer, and a kernel stage holds two.
 fn band_height(apron_rows: u32, out_h: u32) -> u32 {
     const MIN: u32 = 64;
     const MAX: u32 = 4096;
@@ -64,15 +61,6 @@ pub(super) fn render_strips(
     Ok(())
 }
 
-/// Renders and emits the output strip by strip, rendering each strip's pixels
-/// on demand instead of reading them from a materialized frame.
-///
-/// Only valid when [`super::can_stream_bands`] holds: every stage must be
-/// bandable and the rotation must be 0 or 180, so an output row maps to a
-/// bounded span of processed rows.
-///
-/// Peak memory is one strip plus whatever apron the chain's kernels require --
-/// independent of image height, which is the whole point of the exercise.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn stream_bands(
     geom: &Geom,
@@ -85,9 +73,6 @@ pub(super) fn stream_bands(
 ) -> Result<(), String> {
     let row_bytes = geom.out_w as usize * 4;
 
-    // Size the band against the chain's vertical reach rather than a fixed
-    // strip: with a large apron a small strip re-renders the same rows many
-    // times over, which dominates the export cost.
     let apron = crate::modifiers::cpu::chain_apron_rows(&crate::modifiers::plan::plan_modifiers(
         &data.modifiers,
     ));
@@ -98,9 +83,6 @@ pub(super) fn stream_bands(
     while oy < geom.out_h {
         let strip_h = (geom.out_h - oy).min(strip_rows);
 
-        // Output rows oy..oy+strip_h read processed rows through the crop
-        // offset; under rotation 2 the mapping is reversed, so take the span
-        // that covers both ends rather than assuming an order.
         let (a, b) = if geom.rotation == 2 {
             (
                 geom.cy0 + geom.ch.saturating_sub(oy + strip_h),
@@ -153,8 +135,6 @@ struct BandCtx<'a> {
     band_h: u32,
 }
 
-/// Same mapping as [`fill_row`], but indexing into a band that covers only
-/// processed rows `band_y0..band_y0 + band_h`.
 fn fill_row_from_band(row: &mut [u8], oy: u32, ctx: &BandCtx) {
     let g = &ctx.geom;
     let stride = g.img_w as usize * 4;
@@ -162,7 +142,6 @@ fn fill_row_from_band(row: &mut [u8], oy: u32, ctx: &BandCtx) {
         let (cx, cy) = match g.rotation {
             0 => (ox, oy),
             2 => (g.cw - 1 - ox, g.ch - 1 - oy),
-            // Rotations 1 and 3 are excluded by `can_stream_bands`.
             _ => (ox, oy),
         };
 

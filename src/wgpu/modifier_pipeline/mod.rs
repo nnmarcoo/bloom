@@ -1,3 +1,10 @@
+//! The GPU modifier pipeline: per-tile render targets, cached bind groups, and
+//! the signature that decides when work must be redone.
+//!
+//! Preview quality is scaled down when the zoom level or the VRAM budget calls
+//! for it, so a complex stack on a large image stays interactive. VRAM size is
+//! not discoverable from wgpu, so the budget is policy rather than measurement.
+
 use iced::wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindingResource, BlendState,
     CommandEncoder, Device, LoadOp, Operations, PrimitiveTopology, Queue,
@@ -100,10 +107,7 @@ struct TileOutput {
     valid: bool,
     width: u32,
     height: u32,
-    /// Document-space region this output covers, in image pixels.
     proc_px: Option<[f32; 4]>,
-    /// Runtime quality factor this output was rendered at. See
-    /// [`quality_scale`](super::quality_scale) for the doc/device distinction.
     quality_scale: f32,
 }
 
@@ -169,33 +173,6 @@ impl Scheduler {
     }
 }
 
-/// Two different kinds of pixel coordinate flow through this pipeline, and
-/// conflating them is the bug class this naming exists to prevent.
-///
-/// **Document space** is the image's own coordinate system: tile rects,
-/// `proc_px`, crop windows, and every modifier parameter the user types. A
-/// 20px motion blur is 20 document pixels whether you are zoomed to 10% or
-/// 400%. These values define what the image *is*.
-///
-/// **Device space** is what actually gets allocated and rasterized. It is
-/// document space multiplied by [`quality_scale_for`] — a runtime-only factor
-/// derived from zoom level and clamped further by VRAM
-/// ([`fit_process_scale`]). It changes as the user zooms or as memory
-/// pressure varies, and it must never flow back into document space.
-///
-/// The rule: modifier parameters are document-space and are converted to
-/// device space *at the point of use*. Chromatic aberration (`amount /
-/// full_w`) and motion blur (`distance / full_w`) normalise against the full
-/// image, so the shader works in UV and is scale-invariant by construction.
-/// Gaussian blur instead scales explicitly — `radius * scale` in
-/// `execute_kernel_chain` — because it needs a device-space tap count. Both
-/// are correct; the blur path is just the one where the conversion is
-/// visible, and therefore the one to check first when a scaling bug appears.
-///
-/// This factor is display-only: `physical_scale` defaults to 1.0 and is set
-/// solely by the view pipeline from the current zoom, while export renders
-/// through `cpu::render_full` and never reaches this code. That is why the
-/// oracle hashes are insensitive to it.
 fn quality_scale_for(physical_scale: f32) -> f32 {
     if physical_scale > 0.0 {
         physical_scale.log2().ceil().exp2().min(1.0)
@@ -490,34 +467,9 @@ impl ModifierPipeline {
 
         let mut plan_vec = plan_modifiers(modifiers);
 
-        // The tiled executor works in a single coordinate space: tiles are
-        // carved from the source, `proc_px` is document-space throughout, and
-        // ROI walks backward through one geometry. A stage that changes
-        // dimensions mid-chain would put the stages on either side of it in
-        // different spaces, which this executor cannot express.
-        //
-        // Resize is therefore dropped from the *preview* plan. Export is
-        // unaffected: it runs `cpu::render_full`, which honours the resize at
-        // any position.
-        //
-        // KNOWN LIMITATION, not a design choice. When a resize sits mid-chain
-        // the preview renders the stages after it at the pre-resize geometry,
-        // so it disagrees with the export -- a blur following a 50% resize
-        // previews at half the relative radius it will export with. Nothing
-        // prevents that placement; the fix is teaching this executor per-stage
-        // geometry (chain segmentation), not restricting where the user may
-        // put a modifier.
         plan_vec.retain(|item| !matches!(item, PlanItem::Step(_, m) if is_resize(&m.kind)));
 
         if plan_vec.is_empty() {
-            // Nothing left to render. This happens when the stack is *only*
-            // resizes: they are dropped above, and returning here would leave
-            // every `tile_outputs` entry `None`, which the view renders as an
-            // empty viewport rather than as the unmodified image.
-            //
-            // Clearing the outputs makes `tile_display_bg` return `None` for
-            // every tile, which is the signal the view already uses to fall
-            // back to drawing the source directly.
             for o in self.tile_outputs.iter_mut() {
                 *o = None;
             }
@@ -530,10 +482,6 @@ impl ModifierPipeline {
             return;
         }
 
-        // With resize removed, every remaining stage must be passthrough. This
-        // assert now guards the *invariant the executor relies on* rather than
-        // the absence of resize, so a future geometry-changing modifier still
-        // trips it.
         let source_spec = ImageSpec::new(source.full_width, source.full_height);
         debug_assert!(
             infer_specs(source_spec, &plan_vec)
@@ -552,7 +500,6 @@ impl ModifierPipeline {
                 th = th.max(t.height);
             }
         }
-        // VRAM can force quality below what the zoom level asked for.
         let fit = fit_process_scale(
             tw,
             th,

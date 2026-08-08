@@ -103,11 +103,6 @@ fn value_row<'a>(
     .into()
 }
 
-/// A labelled on/off switch.
-///
-/// Boolean parameters were previously expressed as 0..=1 sliders, which reads
-/// as a continuous value and gives no affordance for "this is a state, not a
-/// magnitude".
 fn toggle_row<'a>(
     label: &'a str,
     value: bool,
@@ -135,8 +130,6 @@ fn toggle_row<'a>(
         }
     });
 
-    // The knob is pushed to one end with a Space, so the track needs no
-    // absolute positioning and stays correct under any theme or scale factor.
     let track_inner = if value {
         row![iced::widget::Space::new().width(Length::Fill), knob]
     } else {
@@ -175,7 +168,6 @@ fn toggle_row<'a>(
     .into()
 }
 
-/// A labelled dropdown for a small fixed set of options.
 fn picker_row<'a, T: Copy + PartialEq + 'a>(
     label: &'a str,
     options: &'a [(T, &'a str)],
