@@ -1,3 +1,13 @@
+//! Pixel sorting on the GPU, as a compute pass.
+//!
+//! One invocation handles one line, dispatched 64 at a time. Cardinal
+//! directions (rows and columns) and diagonals take separate pipelines because
+//! a diagonal's line count and lengths do not follow from the image dimensions
+//! the same way.
+//!
+//! This is a compute pass rather than a fragment one because sorting a line is
+//! inherently sequential over that line, which a fragment shader cannot express.
+
 use bytemuck::{Pod, Zeroable};
 use iced::wgpu::{
     BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,

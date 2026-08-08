@@ -1,3 +1,13 @@
+//! Composites a frame: checkerboard, the tiled image or its modified output,
+//! then the pixel grid.
+//!
+//! Full-quality reprocessing is deferred until the view stops moving.
+//! VIEW_SETTLE is how long the transform must hold still first, so panning and
+//! zooming stay smooth instead of restarting an expensive chain every frame.
+//!
+//! Per-tile ROIs are written here from viewport culling, and the modifier
+//! pipeline reads them to decide how much of each tile to process.
+
 use bytemuck::bytes_of;
 use glam::{Mat4, Vec2, vec2, vec3, vec4};
 use iced::{

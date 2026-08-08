@@ -1,3 +1,9 @@
+//! Video export: encoding a modified sequence back out through ffmpeg.
+//!
+//! Frames are still held in memory as a decoded sequence rather than streamed,
+//! so this path's peak use scales with clip length. That is the remaining
+//! memory ceiling for video, mirroring the one still present on image loading.
+
 use std::path::Path;
 use std::time::Duration;
 

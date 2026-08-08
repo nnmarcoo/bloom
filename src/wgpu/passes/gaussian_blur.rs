@@ -1,3 +1,13 @@
+//! Gaussian blur as a separable pair of render passes.
+//!
+//! A 2D Gaussian factors into a horizontal and a vertical 1D pass, so cost is
+//! linear in radius rather than quadratic. The caller records the pass twice
+//! with different `direction` vectors.
+//!
+//! Radii above the kernel cap are rendered at reduced scale, matching what the
+//! CPU path does so preview and export agree. The cap itself is defined once,
+//! in `modifiers::cpu`.
+
 use bytemuck::{Pod, Zeroable};
 use iced::wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,

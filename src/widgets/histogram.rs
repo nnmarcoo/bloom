@@ -1,3 +1,12 @@
+//! The RGB/luma histogram widget.
+//!
+//! Bin counts are computed off the UI thread and handed here as a finished
+//! result, since scanning a large image per frame would stall rendering.
+//!
+//! Bars are normalized linearly against the tallest bin across all channels,
+//! so the channels stay comparable to each other rather than each filling the
+//! full height.
+
 use iced::advanced::Renderer as _;
 use iced::advanced::layout;
 use iced::advanced::renderer::{self, Quad};

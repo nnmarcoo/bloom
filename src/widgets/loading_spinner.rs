@@ -1,3 +1,8 @@
+//! Indeterminate progress indicators, circular and linear.
+//!
+//! Both animate from wall-clock time rather than a frame counter, so the
+//! motion stays correct when frames are dropped or the window is occluded.
+
 use iced::advanced::layout;
 use iced::advanced::renderer::{self, Quad};
 use iced::advanced::widget::tree::{self, Tree};

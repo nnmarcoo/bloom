@@ -1,4 +1,15 @@
-﻿use crate::modifiers::cpu::{blend_over, f32_to_pixel, pixel_to_f32, smoothstep};
+//! Rasterizing brush strokes into a cached layer composited over the image.
+//!
+//! The layer is capped at MAX_LAYER_SIDE (8192) on its longest edge and scaled
+//! to fit, so a drawing on a very large image costs a bounded amount of memory
+//! rather than one byte per source pixel.
+//!
+//! Completed strokes are baked into a base buffer and never re-rasterized. Only
+//! the stroke currently being drawn is redrawn each frame, and only within its
+//! own dirty rect, so cost tracks what the user is doing rather than the
+//! history behind it.
+
+use crate::modifiers::cpu::{blend_over, f32_to_pixel, pixel_to_f32, smoothstep};
 use crate::modifiers::kinds::{Drawing, Stroke};
 
 pub const MAX_LAYER_SIDE: u32 = 8192;

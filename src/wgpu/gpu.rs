@@ -1,6 +1,15 @@
+//! Thin wgpu helpers: pipelines, bind groups, uniform buffers, textures, and
+//! mipmap generation.
+//!
+//! Everything here is mechanical construction shared by the passes. The one
+//! rule worth stating is that mip level counts must come from the texture's
+//! own dimensions, since requesting more levels than a texture can hold is a
+//! crash rather than a clamp.
+
 use std::borrow::Cow;
 
 use bytemuck::{Pod, bytes_of};
+
 use iced::wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer, BufferBindingType,

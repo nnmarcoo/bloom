@@ -1,3 +1,10 @@
+//! Playback transport: play, pause, seek, and frame stepping, shared by
+//! animations and video.
+//!
+//! The two sources keep time differently. An animation advances by frame
+//! delays, a video by its own clock, so this layer holds the intent (playing,
+//! target position) and lets each source resolve it.
+
 use std::time::{Duration, Instant};
 
 use iced::Task;

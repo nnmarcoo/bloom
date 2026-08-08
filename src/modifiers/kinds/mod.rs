@@ -1,3 +1,10 @@
+//! The modifier implementations, plus the shared row builders their panels use.
+//!
+//! value_row, toggle_row, and picker_row exist so a parameter's control matches
+//! the shape of its data: a magnitude gets a slider, a state gets a switch, and
+//! a choice from a closed set gets a dropdown. Rendering all three as sliders
+//! read wrong for the latter two.
+
 mod brightness_contrast;
 mod chromatic_aberration;
 mod color_balance;

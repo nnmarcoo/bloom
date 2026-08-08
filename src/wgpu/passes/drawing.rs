@@ -1,3 +1,9 @@
+//! Uploads the CPU-rasterized drawing layer and composites it over the image.
+//!
+//! `sync` uploads only the dirty rect the raster reports, not the whole layer,
+//! so an in-progress stroke costs a small upload per frame rather than a
+//! full-layer transfer.
+
 use bytemuck::{Pod, Zeroable};
 use iced::wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
