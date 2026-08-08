@@ -105,7 +105,10 @@ impl ModifierImpl for Text {
     }
 
     fn input_request(&self) -> InputRequest {
-        InputRequest::FullFrame
+        InputRequest::Neighborhood {
+            radius_px: 0.0,
+            separable: false,
+        }
     }
 
     fn apply_param(&mut self, param: ModifierParam, _img_size: Option<(u32, u32)>) {

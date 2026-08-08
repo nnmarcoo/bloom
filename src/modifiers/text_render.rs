@@ -1,3 +1,11 @@
+//! Text shaping and the glyph cache behind the text modifier.
+//!
+//! Font resources are process-wide and behind a Mutex, because loading and
+//! scanning system fonts is expensive and every text layer needs the same set.
+//!
+//! Shaped output is cached by content and style, so retyping one character does
+//! not reshape unrelated runs.
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 

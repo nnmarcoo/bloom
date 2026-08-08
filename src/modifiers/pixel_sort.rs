@@ -1,3 +1,10 @@
+//! Pixel sorting: gather runs of pixels along a direction, sort them by a key,
+//! and write them back.
+//!
+//! Index arithmetic here must be done in usize. Computing y * width + x in i32
+//! wraps negative once an image passes 2.1 billion pixels, which panicked on a
+//! 50000x50000 export.
+
 use rayon::prelude::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -87,7 +94,7 @@ fn for_each_diagonal_line(
             line.clear();
             let (mut x, mut y) = (x0, y0);
             while in_bounds(x, y) {
-                line.push((y * w + x) as usize);
+                line.push(y as usize * width + x as usize);
                 x += dx;
                 y += dy;
             }
@@ -303,6 +310,28 @@ mod tests {
                 .enumerate()
                 .filter(|&(_, &c)| c != 1)
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn diagonal_indices_survive_more_than_i32_max_pixels() {
+        const W: usize = 50_000;
+        const H: usize = 50_000;
+        let total = W * H;
+        assert!(total > i32::MAX as usize, "test must exceed the i32 range");
+
+        let mut checked = 0usize;
+        let mut worst = 0usize;
+        for_each_diagonal_line(W, H, 1, 1, |line| {
+            if let Some(&last) = line.last() {
+                worst = worst.max(last);
+                checked += 1;
+            }
+        });
+        assert!(checked > 0, "no diagonal lines were produced");
+        assert!(
+            worst < total,
+            "diagonal index {worst} is outside a {W}x{H} buffer of {total} pixels"
         );
     }
 

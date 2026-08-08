@@ -1,3 +1,9 @@
+//! Edit-mode state: the active tool and the modifier stack's message handling.
+//!
+//! Modifiers live in an ordered list the user can reorder freely; nothing here
+//! restricts what may sit where. Geometry-changing modifiers are handled by the
+//! renderer's planning, not by constraining the stack.
+
 use iced::Task;
 
 use crate::{

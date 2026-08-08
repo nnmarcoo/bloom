@@ -1,3 +1,15 @@
+//! Splits an image into GPU textures, since one image can exceed the device's
+//! maximum texture dimension.
+//!
+//! Tiles are a fixed grid sized by max_texture_dimension_2d, with edge tiles
+//! taking the remainder. Every tile is uploaded up front and none are evicted,
+//! so VRAM use tracks total image size rather than what is on screen. That is
+//! the known ceiling for very large images.
+//!
+//! Mipmaps are generated only when zooming out needs them, and regenerated
+//! when mips_dirty is set. Level count is derived from the tile's own
+//! dimensions, since asking for more levels than a tile can hold is a crash.
+
 use glam::{Mat4, Vec2};
 use iced::wgpu::{
     BindGroup, BindGroupLayout, Buffer, CommandEncoder, Device, Extent3d, Queue, RenderPipeline,

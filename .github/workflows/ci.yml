@@ -52,3 +52,16 @@ jobs:
 
       - name: test
         run: cargo test --features heif,av
+
+      # The GPU-backed tests (pipeline goldens, per-pass comparisons) skip when
+      # no adapter is present, so the step above cannot prove they ran. lavapipe
+      # gives the runner a software Vulkan device; BLOOM_REQUIRE_GPU=1 then turns
+      # a missing adapter into a failure instead of a silent skip.
+      - name: Install software GPU (lavapipe)
+        run: sudo apt-get install -y mesa-vulkan-drivers vulkan-tools
+
+      - name: test (GPU paths)
+        env:
+          BLOOM_REQUIRE_GPU: "1"
+          WGPU_BACKEND: vulkan
+        run: "cargo test --features heif,av wgpu::"

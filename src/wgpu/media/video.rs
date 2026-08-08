@@ -1,3 +1,17 @@
+//! Video playback: a decode thread feeding frames to the UI thread.
+//!
+//! Decoding runs on its own thread and communicates over channels, so a slow
+//! decode never blocks the UI. Commands go one way, decoded frames the other.
+//!
+//! AvClock is the timebase. It stores an anchor presentation timestamp plus
+//! the instant that anchor was set, so the current position is a subtraction
+//! rather than an accumulator that drifts. Pausing folds elapsed time back
+//! into the anchor.
+//!
+//! Seeks carry an epoch number. Frames decoded before a seek are still in
+//! flight when it lands, so anything tagged with an older epoch is discarded
+//! rather than displayed.
+
 use std::collections::VecDeque;
 use std::io::Error;
 use std::path::{Path, PathBuf};

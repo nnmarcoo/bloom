@@ -1,3 +1,10 @@
+//! A button that opens a popup anchored to itself.
+//!
+//! This is the shared primitive under the theme, font, and modifier option
+//! pickers. The popup is drawn in an overlay layer so it escapes the parent's
+//! clip bounds, and MenuAlign decides which edge it hangs from when there is
+//! not room below.
+
 use iced::advanced::layout;
 use iced::advanced::renderer;
 use iced::advanced::widget::tree::{self, Tree};

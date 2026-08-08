@@ -5,8 +5,8 @@ use iced::Element;
 use iced::widget::column;
 
 use crate::app::{EditMsg, Message};
-use crate::modifiers::pixel_sort::SortAxis;
-use crate::modifiers::{Axis, InputRequest, ModifierImpl, ModifierParam, ViewCtx};
+use crate::modifiers::pixel_sort::{SortAxis, SortMode};
+use crate::modifiers::{InputRequest, ModifierImpl, ModifierParam, ViewCtx};
 use crate::widgets::value_slider::Fmt;
 
 use super::{angle_row, finish, hash_f32, value_row};
@@ -36,11 +36,12 @@ impl ModifierImpl for PixelSort {
     }
 
     fn input_request(&self) -> InputRequest {
-        let axis = match SortAxis::from_angle(self.angle) {
-            SortAxis::Horizontal { .. } => Axis::Horizontal,
-            SortAxis::Vertical { .. } => Axis::Vertical,
+        let step = match SortMode::from_angle(self.angle) {
+            SortMode::Cardinal(SortAxis::Horizontal { .. }) => (1, 0),
+            SortMode::Cardinal(SortAxis::Vertical { .. }) => (0, 1),
+            SortMode::Diagonal { dx, dy } => (dx, dy),
         };
-        InputRequest::ScanLines { axis }
+        InputRequest::ScanLines { step }
     }
 
     fn apply_param(&mut self, param: ModifierParam, _img_size: Option<(u32, u32)>) {

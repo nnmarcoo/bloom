@@ -1,3 +1,10 @@
+//! User settings and their on-disk form.
+//!
+//! Config is what the app runs on; ConfigFile is what gets serialized. They
+//! are separate types with conversions between them so the file format can
+//! carry optional and versioned fields without the runtime type growing
+//! Options for values that always have a resolved default.
+
 use std::collections::HashSet;
 use std::path::PathBuf;
 

@@ -1,27 +1,29 @@
+//! Golden tests: the tiled GPU executor against the CPU oracle.
+//!
+//! The two backends must produce the same bytes, and they can diverge silently,
+//! so these compare rendered output rather than checking either in isolation.
+//!
+//! Most goldens give every tile a full-bounds ROI, which means no apron or
+//! reach value can change the result. The partial-ROI harness restricts tiles
+//! to a centered window so a stage must actually fetch beyond what it writes,
+//! which is what makes under-fetch observable.
+//!
+//! The three resize goldens are ignored and fail by design: they define what
+//! per-stage geometry must deliver, and the executor does not do it yet.
+
 use super::*;
 use crate::modifiers::kinds::{
     ChromaticAberration, Exposure, GaussianBlur, MotionBlur, PixelSort, Posterize,
 };
 use crate::wgpu::media::image_data::ImageData;
 use crate::wgpu::passes::display::DisplayPass;
-use iced::wgpu::{
-    CommandEncoderDescriptor, DeviceDescriptor, Instance, PowerPreference, RequestAdapterOptions,
-};
+use iced::wgpu::CommandEncoderDescriptor;
 
 const GOLDEN_W: u32 = 96;
 const GOLDEN_H: u32 = 64;
 const FORCED_TILE_DIM: u32 = 48;
 
-pub(super) fn try_device() -> Option<(Device, Queue)> {
-    let instance = Instance::default();
-    let adapter = futures::executor::block_on(instance.request_adapter(&RequestAdapterOptions {
-        power_preference: PowerPreference::default(),
-        force_fallback_adapter: false,
-        compatible_surface: None,
-    }))
-    .ok()?;
-    futures::executor::block_on(adapter.request_device(&DeviceDescriptor::default())).ok()
-}
+pub(super) use crate::wgpu::test_device::try_device;
 
 fn test_pixels(w: u32, h: u32) -> Vec<u8> {
     let mut v = Vec::with_capacity((w * h * 4) as usize);
@@ -165,6 +167,155 @@ fn assemble_scaled(
     full
 }
 
+fn set_partial_roi(source: &mut TiledSource, frac: f32) {
+    let (fw, fh) = (source.full_width as f32, source.full_height as f32);
+    let (half_w, half_h) = (fw * frac * 0.5, fh * frac * 0.5);
+    let view = [
+        fw * 0.5 - half_w,
+        fh * 0.5 - half_h,
+        fw * 0.5 + half_w,
+        fh * 0.5 + half_h,
+    ];
+    for t in &mut source.tiles {
+        let (tl, tt) = (t.x as f32, t.y as f32);
+        let (tr, tb) = (tl + t.width as f32, tt + t.height as f32);
+        let isect = [
+            view[0].max(tl),
+            view[1].max(tt),
+            view[2].min(tr),
+            view[3].min(tb),
+        ];
+        t.proc_rect_px = (isect[2] > isect[0] && isect[3] > isect[1]).then_some(isect);
+    }
+}
+
+fn diff_within_roi(
+    device: &Device,
+    queue: &Queue,
+    mp: &ModifierPipeline,
+    source: &TiledSource,
+    cpu_full: &[u8],
+    tol: u8,
+) -> (u8, f64, usize) {
+    let fw = source.full_width;
+    let mut max_d = 0u8;
+    let mut over = 0usize;
+    let mut compared = 0usize;
+
+    for (ti, tile) in source.tiles.iter().enumerate() {
+        let (Some(o), Some(roi)) = (mp.tile_outputs[ti].as_ref(), tile.proc_rect_px) else {
+            continue;
+        };
+        let px = o.proc_px.expect("executor outputs always carry proc_px");
+        let data = read_texture(device, queue, &o._tex, o.width, o.height);
+
+        let x0 = roi[0].ceil() as u32;
+        let y0 = roi[1].ceil() as u32;
+        let x1 = (roi[2].floor() as u32).min(fw);
+        let y1 = (roi[3].floor() as u32).min(source.full_height);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let lx = x as f32 - px[0];
+                let ly = y as f32 - px[1];
+                if lx < 0.0 || ly < 0.0 || lx >= o.width as f32 || ly >= o.height as f32 {
+                    continue;
+                }
+                let s = ((ly as u32 * o.width + lx as u32) * 4) as usize;
+                let d = ((y * fw + x) * 4) as usize;
+                for c in 0..4 {
+                    let diff = data[s + c].abs_diff(cpu_full[d + c]);
+                    max_d = max_d.max(diff);
+                    if diff > tol {
+                        over += 1;
+                    }
+                    compared += 1;
+                }
+            }
+        }
+    }
+    (
+        max_d,
+        over as f64 * 100.0 / compared.max(1) as f64,
+        compared,
+    )
+}
+
+fn run_roi_golden(
+    label: &str,
+    modifiers: &[Modifier],
+    tile_dim: u32,
+    frac: f32,
+    tol: u8,
+    w: u32,
+    h: u32,
+) {
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let pixels = test_pixels(w, h);
+    let image = ImageData::new(pixels.clone(), w, h);
+    let mut source = make_source(&device, &queue, &image, Some(tile_dim));
+    set_partial_roi(&mut source, frac);
+
+    let partial = source
+        .tiles
+        .iter()
+        .filter(|t| {
+            t.proc_rect_px.is_some_and(|r| {
+                r[0] > t.x as f32
+                    || r[1] > t.y as f32
+                    || r[2] < (t.x + t.width) as f32
+                    || r[3] < (t.y + t.height) as f32
+            })
+        })
+        .count();
+    assert!(
+        partial > 0,
+        "{label}: no tile got a strictly-partial ROI, so this test would not \
+         exercise anything the full-bounds goldens miss"
+    );
+
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
+    converge(&mut mp, &device, &queue, &source, modifiers, label);
+
+    let strict = source
+        .tiles
+        .iter()
+        .enumerate()
+        .filter(|(ti, tile)| {
+            mp.tile_outputs[*ti]
+                .as_ref()
+                .and_then(|o| o.proc_px)
+                .is_some_and(|p| {
+                    p[0] > tile.x as f32
+                        || p[1] > tile.y as f32
+                        || p[2] < (tile.x + tile.width) as f32
+                        || p[3] < (tile.y + tile.height) as f32
+                })
+        })
+        .count();
+    assert!(
+        strict > 0,
+        "{label}: every tile rendered its full bounds, so the apron is not \
+         observable here. Tiles must exceed ROI_MARGIN_PX ({ROI_MARGIN_PX}) \
+         for a partial region to survive clamping."
+    );
+
+    let cpu_full = crate::modifiers::cpu::render_full(modifiers, &[], &[], &pixels, w, h);
+    let (max_d, pct, compared) = diff_within_roi(&device, &queue, &mp, &source, &cpu_full, tol);
+    assert!(
+        compared > 0,
+        "{label}: compared no pixels; the ROI collapsed and the test proved nothing"
+    );
+    assert!(
+        max_d <= tol,
+        "{label}: GPU diverges from oracle inside the ROI: max channel diff \
+         {max_d} > tol {tol} ({pct:.3}% of {compared} channels over). A stage \
+         is reading input the ROI did not fetch."
+    );
+}
+
 #[test]
 fn tiling_invisible_blur_at_downscale() {
     let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -206,9 +357,9 @@ fn oversized_sort_lines_reduce_scale_instead_of_failing() {
     let o = mp.tile_outputs[0].as_ref().expect("output");
     assert!(o.valid);
     assert!(
-        o.proc_scale < 1.0,
+        o.quality_scale < 1.0,
         "expected reduced processing scale, got {}",
-        o.proc_scale
+        o.quality_scale
     );
 }
 
@@ -255,7 +406,7 @@ fn diff_stats(a: &[u8], b: &[u8], tol: u8) -> (u8, f64) {
     (max_d, over as f64 * 100.0 / a.len() as f64)
 }
 
-pub(super) static GPU_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(super) use crate::wgpu::test_device::GPU_LOCK;
 
 fn converge(
     mp: &mut ModifierPipeline,
@@ -417,9 +568,17 @@ fn blur_extreme_radius_converges_capped() {
 #[test]
 fn golden_blur_banded_tall_image() {
     let chain = vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
-        radius: 100.0,
+        radius: 40.0,
     }))];
     run_golden_dims("blur-banded/96x3000", &chain, None, 4, 96, 3000);
+}
+
+#[test]
+fn golden_blur_banded_above_the_cap() {
+    let chain = vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
+        radius: 100.0,
+    }))];
+    run_golden_dims("blur-banded-scaled/96x3000", &chain, None, 32, 96, 3000);
 }
 
 #[test]
@@ -541,6 +700,233 @@ fn golden_motion_blur_multi_tile() {
         Some(FORCED_TILE_DIM),
         4,
     );
+}
+
+#[test]
+fn roi_blur_partial_viewport() {
+    run_roi_golden("roi/blur", &blur_chain(), 1024, 0.42, 4, 2048, 2048);
+}
+
+#[test]
+fn roi_chromatic_aberration_partial_viewport() {
+    run_roi_golden("roi/ca", &ca_chain(), 1024, 0.42, 4, 2048, 2048);
+}
+
+#[test]
+fn roi_motion_blur_partial_viewport() {
+    run_roi_golden(
+        "roi/motion-blur",
+        &motion_blur_chain(),
+        1024,
+        0.42,
+        4,
+        2048,
+        2048,
+    );
+}
+
+#[test]
+fn roi_pointwise_then_blur_partial_viewport() {
+    let chain = vec![
+        Modifier::new(ModifierKind::Exposure(Exposure { exposure: 0.3 })),
+        Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 6.0 })),
+    ];
+    run_roi_golden("roi/pointwise+blur", &chain, 1024, 0.42, 4, 2048, 2048);
+}
+
+#[test]
+fn resize_only_stack_leaves_no_stale_tile_outputs() {
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let pixels = test_pixels(GOLDEN_W, GOLDEN_H);
+    let image = ImageData::new(pixels, GOLDEN_W, GOLDEN_H);
+    let source = make_source(&device, &queue, &image, Some(FORCED_TILE_DIM));
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, GOLDEN_W, GOLDEN_H);
+
+    mp.prepare(&device, &queue, &source, &blur_chain(), true);
+    assert!(
+        mp.tile_outputs.iter().any(|o| o.is_some()),
+        "precondition: the blur chain should have produced tile outputs"
+    );
+
+    let resize = vec![Modifier::new(ModifierKind::Resize(Resize {
+        mode: ResizeMode::Percent,
+        width: 50.0,
+        height: 50.0,
+        filter: ResizeFilter::Lanczos,
+        lock_aspect: true,
+    }))];
+    mp.prepare(&device, &queue, &source, &resize, true);
+
+    for i in 0..source.tiles.len() {
+        assert!(
+            mp.tile_display_bg(i, false).is_none() && mp.tile_display_bg(i, true).is_none(),
+            "tile {i} still has a display bind group after a resize-only stack"
+        );
+    }
+}
+
+#[test]
+fn golden_trailing_resize_is_dropped_from_the_preview() {
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let pixels = test_pixels(GOLDEN_W, GOLDEN_H);
+    let image = ImageData::new(pixels.clone(), GOLDEN_W, GOLDEN_H);
+
+    let resize = Modifier::new(ModifierKind::Resize(Resize {
+        mode: ResizeMode::Percent,
+        width: 50.0,
+        height: 50.0,
+        filter: ResizeFilter::Lanczos,
+        lock_aspect: true,
+    }));
+
+    let mut with_resize = blur_chain();
+    with_resize.push(resize);
+
+    let mut outs: Vec<Vec<u8>> = Vec::new();
+    for chain in [with_resize, blur_chain()] {
+        let source = make_source(&device, &queue, &image, Some(FORCED_TILE_DIM));
+        let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, GOLDEN_W, GOLDEN_H);
+        converge(&mut mp, &device, &queue, &source, &chain, "trailing-resize");
+        outs.push(assemble(&device, &queue, &mp, &source));
+    }
+
+    let (max_d, pct) = diff_stats(&outs[0], &outs[1], 0);
+    assert_eq!(
+        max_d, 0,
+        "a trailing resize changed the preview: max diff {max_d} ({pct:.3}% over)"
+    );
+}
+
+fn run_resize_golden(label: &str, modifiers: &[Modifier], tile_dim: Option<u32>, tol: u8) {
+    use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let pixels = test_pixels(GOLDEN_W, GOLDEN_H);
+    let image = ImageData::new(pixels.clone(), GOLDEN_W, GOLDEN_H);
+    let source = make_source(&device, &queue, &image, tile_dim);
+
+    let out = chain_output_spec(
+        ImageSpec::new(GOLDEN_W, GOLDEN_H),
+        &plan_modifiers(modifiers),
+    );
+    assert_ne!(
+        (out.w, out.h),
+        (GOLDEN_W, GOLDEN_H),
+        "{label}: this harness is for chains that change size"
+    );
+
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, GOLDEN_W, GOLDEN_H);
+    converge(&mut mp, &device, &queue, &source, modifiers, label);
+
+    let gpu_img = assemble_output(&device, &queue, &mp, &source, out.w, out.h);
+    let cpu_img =
+        crate::modifiers::cpu::render_full(modifiers, &[], &[], &pixels, GOLDEN_W, GOLDEN_H);
+    assert_eq!(
+        gpu_img.len(),
+        cpu_img.len(),
+        "{label}: GPU produced {} bytes, oracle {} -- the preview is not at the \
+         chain's output size ({}x{})",
+        gpu_img.len(),
+        cpu_img.len(),
+        out.w,
+        out.h
+    );
+    let (max_d, pct_over) = diff_stats(&gpu_img, &cpu_img, tol);
+    assert!(
+        max_d <= tol,
+        "{label}: GPU vs CPU oracle diverges: max channel diff {max_d} > tol {tol} \
+         ({pct_over:.3}% of channels over)"
+    );
+}
+
+fn assemble_output(
+    device: &Device,
+    queue: &Queue,
+    mp: &ModifierPipeline,
+    source: &TiledSource,
+    out_w: u32,
+    out_h: u32,
+) -> Vec<u8> {
+    let sx = out_w as f32 / source.full_width as f32;
+    let sy = out_h as f32 / source.full_height as f32;
+    let mut full = vec![0u8; (out_w * out_h * 4) as usize];
+    for ti in 0..source.tiles.len() {
+        let Some(o) = mp.tile_outputs[ti].as_ref() else {
+            continue;
+        };
+        let tile = &source.tiles[ti];
+        let px = o.proc_px.unwrap_or([
+            tile.x as f32,
+            tile.y as f32,
+            (tile.x + tile.width) as f32,
+            (tile.y + tile.height) as f32,
+        ]);
+        let x0 = (px[0] * sx).round() as u32;
+        let y0 = (px[1] * sy).round() as u32;
+        let data = read_texture(device, queue, &o._tex, o.width, o.height);
+        for r in 0..o.height.min(out_h.saturating_sub(y0)) {
+            let cols = o.width.min(out_w.saturating_sub(x0));
+            if cols == 0 {
+                break;
+            }
+            let d = (((y0 + r) * out_w + x0) * 4) as usize;
+            let s = (r * o.width * 4) as usize;
+            full[d..d + (cols * 4) as usize].copy_from_slice(&data[s..s + (cols * 4) as usize]);
+        }
+    }
+    full
+}
+
+fn resize_half() -> Modifier {
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+    Modifier::new(ModifierKind::Resize(Resize {
+        mode: ResizeMode::Percent,
+        width: 50.0,
+        height: 50.0,
+        filter: ResizeFilter::Lanczos,
+        lock_aspect: true,
+    }))
+}
+
+#[test]
+#[ignore = "per-stage geometry not implemented: executor drops resize from the plan"]
+fn golden_resize_trailing_matches_the_oracle() {
+    let mut chain = blur_chain();
+    chain.push(resize_half());
+    run_resize_golden("resize/trailing", &chain, None, 4);
+}
+
+#[test]
+#[ignore = "per-stage geometry not implemented: executor drops resize from the plan"]
+fn golden_resize_mid_chain_matches_the_oracle() {
+    let chain = vec![
+        resize_half(),
+        Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 4.0 })),
+    ];
+    run_resize_golden("resize/mid-chain", &chain, None, 4);
+}
+
+#[test]
+#[ignore = "per-stage geometry not implemented: executor drops resize from the plan"]
+fn golden_resize_mid_chain_multi_tile() {
+    let chain = vec![
+        resize_half(),
+        Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 4.0 })),
+    ];
+    run_resize_golden("resize/mid-chain-2x2", &chain, Some(FORCED_TILE_DIM), 4);
 }
 
 #[test]

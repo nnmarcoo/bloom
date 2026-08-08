@@ -1,3 +1,16 @@
+//! Decoding still images into a common RGBA8 buffer, across roughly fifteen
+//! container and codec families.
+//!
+//! Every loader here decodes the whole image into memory. That is the
+//! remaining memory ceiling on the input side: export streams in bands, but
+//! loading does not, so peak use scales with the source's full pixel count.
+//!
+//! Pixels sit behind a Mutex<Arc<Vec<u8>>> so a snapshot can be handed out
+//! cheaply while the buffer stays replaceable. release_pixels drops the
+//! backing store for an image that is no longer displayed, though it only runs
+//! when selecting a different image, so it never lowers the peak for the image
+//! being viewed.
+
 use std::fs::File;
 use std::io::{BufReader, Error};
 use std::path::Path;
@@ -670,8 +683,8 @@ impl ImageData {
             let buf = layer.raw_rgba_buffer();
             for py in 0..lh.min(height) {
                 for px in 0..lw.min(width) {
-                    let src = buf[(py * lw + px) as usize].0;
-                    let dst = (py * width + px) as usize * 4;
+                    let src = buf[py as usize * lw as usize + px as usize].0;
+                    let dst = (py as usize * width as usize + px as usize) * 4;
                     let sa = src[3] as u32;
                     let da = canvas[dst + 3] as u32;
                     let out_a = sa + da * (255 - sa) / 255;

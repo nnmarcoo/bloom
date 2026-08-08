@@ -1,3 +1,9 @@
+//! Uploads the CPU-rasterized drawing layer and composites it over the image.
+//!
+//! `sync` uploads only the dirty rect the raster reports, not the whole layer,
+//! so an in-progress stroke costs a small upload per frame rather than a
+//! full-layer transfer.
+
 use bytemuck::{Pod, Zeroable};
 use iced::wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
@@ -64,8 +70,8 @@ impl DrawingLayer {
             return None;
         }
         let w = self.cache.w;
-        let offset = ((y0 * w + x0) * 4) as usize;
-        let len = (((y1 - 1 - y0) * w + (x1 - x0)) * 4) as usize;
+        let offset = (y0 as usize * w as usize + x0 as usize) * 4;
+        let len = ((y1 - 1 - y0) as usize * w as usize + (x1 - x0) as usize) * 4;
         queue.write_texture(
             iced::wgpu::TexelCopyTextureInfo {
                 texture: &self.texture,
@@ -234,22 +240,8 @@ mod tests {
     use super::*;
     use crate::modifiers::kinds::Stroke;
     use crate::modifiers::{Modifier, ModifierKind, cpu, drawing_raster};
-    use iced::wgpu::{
-        CommandEncoderDescriptor, DeviceDescriptor, Instance, PowerPreference,
-        RequestAdapterOptions,
-    };
-
-    fn try_device() -> Option<(Device, Queue)> {
-        let instance = Instance::default();
-        let adapter =
-            futures::executor::block_on(instance.request_adapter(&RequestAdapterOptions {
-                power_preference: PowerPreference::default(),
-                force_fallback_adapter: false,
-                compatible_surface: None,
-            }))
-            .ok()?;
-        futures::executor::block_on(adapter.request_device(&DeviceDescriptor::default())).ok()
-    }
+    use crate::wgpu::test_device::try_device;
+    use iced::wgpu::CommandEncoderDescriptor;
 
     fn gradient(w: u32, h: u32) -> Vec<u8> {
         let mut px = vec![0u8; (w * h * 4) as usize];

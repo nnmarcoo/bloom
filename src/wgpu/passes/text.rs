@@ -1,3 +1,12 @@
+//! Text rendering through an MSDF glyph atlas.
+//!
+//! Glyphs are rasterized once into a shared atlas and tracked by a residency
+//! map from glyph key to UV rect, so repeated characters cost a lookup rather
+//! than a re-raster.
+//!
+//! Signed distance fields are used so text stays sharp at any zoom without
+//! re-rasterizing per scale, which matters because the viewport zooms freely.
+
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 

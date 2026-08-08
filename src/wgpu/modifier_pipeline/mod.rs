@@ -1,3 +1,10 @@
+//! The GPU modifier pipeline: per-tile render targets, cached bind groups, and
+//! the signature that decides when work must be redone.
+//!
+//! Preview quality is scaled down when the zoom level or the VRAM budget calls
+//! for it, so a complex stack on a large image stays interactive. VRAM size is
+//! not discoverable from wgpu, so the budget is policy rather than measurement.
+
 use iced::wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindingResource, BlendState,
     CommandEncoder, Device, LoadOp, Operations, PrimitiveTopology, Queue,
@@ -29,6 +36,8 @@ mod executor;
 mod geom;
 #[cfg(test)]
 mod goldens;
+#[cfg(test)]
+mod gpu_bench;
 
 use geom::*;
 
@@ -99,7 +108,7 @@ struct TileOutput {
     width: u32,
     height: u32,
     proc_px: Option<[f32; 4]>,
-    proc_scale: f32,
+    quality_scale: f32,
 }
 
 struct ScratchTarget {
@@ -132,10 +141,7 @@ impl ScratchTarget {
     }
 }
 
-enum PlanItem<'a> {
-    Fused(Vec<&'a Modifier>),
-    Step(usize, &'a Modifier),
-}
+use crate::modifiers::plan::{ImageSpec, PlanItem, infer_specs, plan_modifiers};
 
 const TILE_BUDGET: usize = 2;
 
@@ -165,6 +171,18 @@ impl Scheduler {
     fn pending(&self) -> bool {
         self.deferred
     }
+}
+
+fn quality_scale_for(physical_scale: f32) -> f32 {
+    if physical_scale > 0.0 {
+        physical_scale.log2().ceil().exp2().min(1.0)
+    } else {
+        1.0
+    }
+}
+
+fn is_resize(kind: &ModifierKind) -> bool {
+    matches!(kind, ModifierKind::Resize(_))
 }
 
 const ROI_MARGIN_PX: f32 = 256.0;
@@ -339,12 +357,8 @@ impl ModifierPipeline {
         }
 
         let physical_scale = source.physical_scale;
-        let proc_scale = if physical_scale > 0.0 {
-            physical_scale.log2().ceil().exp2().min(1.0)
-        } else {
-            1.0
-        };
-        let downscale = proc_scale < 1.0;
+        let quality_scale = quality_scale_for(physical_scale);
+        let downscale = quality_scale < 1.0;
 
         if self.text_layers.len() != modifiers.len() {
             self.text_layers.clear();
@@ -451,11 +465,31 @@ impl ModifierPipeline {
             }
         }
 
-        let plan_vec = plan_modifiers(modifiers);
+        let mut plan_vec = plan_modifiers(modifiers);
+
+        plan_vec.retain(|item| !matches!(item, PlanItem::Step(_, m) if is_resize(&m.kind)));
 
         if plan_vec.is_empty() {
+            for o in self.tile_outputs.iter_mut() {
+                *o = None;
+            }
+            for bg in self.tile_display_bgs_linear.iter_mut() {
+                *bg = None;
+            }
+            for bg in self.tile_display_bgs_nearest.iter_mut() {
+                *bg = None;
+            }
             return;
         }
+
+        let source_spec = ImageSpec::new(source.full_width, source.full_height);
+        debug_assert!(
+            infer_specs(source_spec, &plan_vec)
+                .iter()
+                .all(|s| s.is_passthrough()),
+            "a modifier changes dimensions, but the GPU executor still sizes \
+             every stage from the source"
+        );
 
         let mut n_proc = 0u64;
         let (mut tw, mut th) = (1u32, 1u32);
@@ -466,11 +500,18 @@ impl ModifierPipeline {
                 th = th.max(t.height);
             }
         }
-        let fit = fit_process_scale(tw, th, n_proc, 1, process_vram_budget(device), proc_scale);
-        let (ps, ds) = if fit < proc_scale {
+        let fit = fit_process_scale(
+            tw,
+            th,
+            n_proc,
+            1,
+            process_vram_budget(device),
+            quality_scale,
+        );
+        let (ps, ds) = if fit < quality_scale {
             (fit, true)
         } else {
-            (proc_scale, downscale)
+            (quality_scale, downscale)
         };
         if let [PlanItem::Fused(seg)] = plan_vec.as_slice() {
             let seg = seg.clone();

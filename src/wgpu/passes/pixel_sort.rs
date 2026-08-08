@@ -1,3 +1,13 @@
+//! Pixel sorting on the GPU, as a compute pass.
+//!
+//! One invocation handles one line, dispatched 64 at a time. Cardinal
+//! directions (rows and columns) and diagonals take separate pipelines because
+//! a diagonal's line count and lengths do not follow from the image dimensions
+//! the same way.
+//!
+//! This is a compute pass rather than a fragment one because sorting a line is
+//! inherently sequential over that line, which a fragment shader cannot express.
+
 use bytemuck::{Pod, Zeroable};
 use iced::wgpu::{
     BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
@@ -278,22 +288,8 @@ mod tests {
     use super::*;
     use crate::modifiers::pixel_sort::{SortMode, pixel_sort_cpu};
 
-    use iced::wgpu::{
-        CommandEncoderDescriptor, DeviceDescriptor, Instance, PowerPreference,
-        RequestAdapterOptions,
-    };
-
-    fn try_device() -> Option<(Device, Queue)> {
-        let instance = Instance::default();
-        let adapter =
-            futures::executor::block_on(instance.request_adapter(&RequestAdapterOptions {
-                power_preference: PowerPreference::default(),
-                force_fallback_adapter: false,
-                compatible_surface: None,
-            }))
-            .ok()?;
-        futures::executor::block_on(adapter.request_device(&DeviceDescriptor::default())).ok()
-    }
+    use crate::wgpu::test_device::try_device;
+    use iced::wgpu::CommandEncoderDescriptor;
 
     fn pack(rgba: &[u8]) -> Vec<u32> {
         rgba.chunks_exact(4)

@@ -39,7 +39,7 @@ pub(super) fn tile_proc_rect(
     tile: &crate::wgpu::tiled_source::Tile,
     full_w: f32,
     full_h: f32,
-    proc_scale: f32,
+    quality_scale: f32,
     downscale: bool,
     apron_px: f32,
     roi_enabled: bool,
@@ -66,7 +66,7 @@ pub(super) fn tile_proc_rect(
 
     let pw_px = (px[2] - px[0]).max(1.0);
     let ph_px = (px[3] - px[1]).max(1.0);
-    let scale = if downscale { proc_scale } else { 1.0 };
+    let scale = if downscale { quality_scale } else { 1.0 };
     let w = ((pw_px * scale).ceil() as u32).max(1);
     let h = ((ph_px * scale).ceil() as u32).max(1);
 
@@ -153,26 +153,4 @@ pub(super) fn tex_copy_info(
         origin,
         aspect: iced::wgpu::TextureAspect::All,
     }
-}
-
-pub(super) fn plan_modifiers(modifiers: &[Modifier]) -> Vec<PlanItem<'_>> {
-    let mut plan: Vec<PlanItem> = Vec::new();
-    let mut current: Vec<&Modifier> = Vec::new();
-    for (i, m) in modifiers.iter().enumerate() {
-        if !m.has_visible_effect() {
-            continue;
-        }
-        if !m.kind.effect_class().is_pointwise() {
-            if !current.is_empty() {
-                plan.push(PlanItem::Fused(std::mem::take(&mut current)));
-            }
-            plan.push(PlanItem::Step(i, m));
-        } else {
-            current.push(m);
-        }
-    }
-    if !current.is_empty() {
-        plan.push(PlanItem::Fused(current));
-    }
-    plan
 }

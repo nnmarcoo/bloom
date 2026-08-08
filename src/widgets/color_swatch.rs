@@ -1,3 +1,11 @@
+//! The color picker: a swatch that opens a saturation/value field with hue and
+//! alpha sliders.
+//!
+//! The color itself lives with the caller; this widget keeps only the popup's
+//! open state and one text buffer per numeric field. Those buffers are synced
+//! from the incoming color except for the field being typed in, so editing one
+//! value does not fight the reformatting of the others.
+
 use iced::advanced::layout;
 use iced::advanced::renderer::{self, Quad};
 use iced::advanced::widget::tree::{self, Tree};

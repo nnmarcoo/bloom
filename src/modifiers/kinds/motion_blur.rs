@@ -39,7 +39,10 @@ impl ModifierImpl for MotionBlur {
     }
 
     fn input_request(&self) -> InputRequest {
-        InputRequest::FullFrame
+        InputRequest::Neighborhood {
+            radius_px: self.distance.abs() * 0.5,
+            separable: false,
+        }
     }
 
     fn apply_param(&mut self, param: ModifierParam, _img_size: Option<(u32, u32)>) {

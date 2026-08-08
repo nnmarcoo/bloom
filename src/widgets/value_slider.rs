@@ -1,3 +1,13 @@
+//! The slider used for every numeric modifier parameter.
+//!
+//! Fmt carries how a value should read (decimals, sign, unit suffix) so the
+//! number shown matches the quantity rather than the raw float. Track decides
+//! whether the groove is a plain fill or a gradient, which lets a hue or
+//! channel slider show the value it is selecting.
+//!
+//! Dragging is not the only input: the value is also editable directly, so
+//! precise entry does not require hitting a pixel.
+
 use iced::advanced::layout;
 use iced::advanced::renderer::{self, Quad};
 use iced::advanced::widget::tree::{self, Tree};

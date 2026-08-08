@@ -1,3 +1,12 @@
+//! The interactive crop rectangle drawn over the viewport.
+//!
+//! The rect is stored in image coordinates, not screen ones, so it stays put
+//! across pan and zoom. Hit testing converts the cursor into that space rather
+//! than converting the rect out of it.
+//!
+//! Handles have a grab margin larger than their drawn size, since a corner
+//! that is only clickable on its exact pixels is unusable at low zoom.
+
 use glam::{Vec2, vec2};
 use iced::advanced::Renderer as _;
 use iced::advanced::layout;

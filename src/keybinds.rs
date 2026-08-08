@@ -1,3 +1,11 @@
+//! Keyboard actions and the user-editable keymap.
+//!
+//! Action is the closed set of things a key can do; the keymap is a lookup from
+//! chord to action, so rebinding never touches the code that performs one.
+//!
+//! Bindings serialize as text rather than key codes, so a config file stays
+//! readable and portable across layouts.
+
 use std::collections::HashMap;
 
 use iced::keyboard::{

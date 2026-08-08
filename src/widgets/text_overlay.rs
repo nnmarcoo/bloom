@@ -1,3 +1,12 @@
+//! The interactive text-editing overlay drawn over the viewport.
+//!
+//! Like the crop overlay, the box lives in image coordinates so it holds its
+//! place across pan and zoom, and hit testing converts the cursor inward
+//! rather than converting the box outward.
+//!
+//! Editing state (caret, selection, composition) lives here rather than in the
+//! modifier, so the modifier stores only the finished text and its styling.
+
 use std::borrow::Cow;
 
 use glam::{Vec2, vec2};

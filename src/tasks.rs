@@ -1,3 +1,12 @@
+//! Background work returned to the runtime as iced Tasks.
+//!
+//! Anything slow enough to stall a frame goes here: loading media, exporting,
+//! and computing histograms.
+//!
+//! Loads carry a generation number. A user can open another file before the
+//! previous load finishes, so a result whose generation no longer matches is
+//! dropped rather than displayed over the newer selection.
+
 use std::path::PathBuf;
 use std::sync::Arc;
 

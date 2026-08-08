@@ -1,4 +1,16 @@
+//! Export: turning the current document plus its modifier stack into a file.
+//!
+//! Large images go through the streaming path in raster.rs, which requires a
+//! bandable plan and no rotation that would reorder rows. Everything else falls
+//! back to rendering the full frame.
+//!
+//! Video frames and the JPEG and raw RGBA encoders still buffer whole frames.
+
+#[cfg(test)]
+mod bench;
 mod image;
+#[cfg(test)]
+mod oracle;
 mod raster;
 #[cfg(feature = "av")]
 mod video;
@@ -8,6 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::modifiers::drawing_raster::{self, DrawingRaster, LayerView};
+use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
 use crate::modifiers::text_raster::{self, TextRaster};
 use crate::modifiers::{Modifier, cpu};
 
@@ -121,8 +134,10 @@ struct Geom {
 }
 
 fn geom_of(data: &ExportData) -> Geom {
-    let img_w = data.width;
-    let img_h = data.height;
+    let plan = plan_modifiers(&data.modifiers);
+    let processed = chain_output_spec(ImageSpec::new(data.width, data.height), &plan);
+    let img_w = processed.w;
+    let img_h = processed.h;
 
     let (cx0, cy0, cw, ch) = match data.crop {
         Some([min_u, min_v, max_u, max_v]) => {
@@ -184,6 +199,10 @@ fn process_frame(
         data.width,
         data.height,
     ))
+}
+
+fn can_stream_bands(data: &ExportData) -> bool {
+    data.rotation.is_multiple_of(2) && cpu::plan_is_bandable(&plan_modifiers(&data.modifiers))
 }
 
 pub fn render_still_rgba(data: &ExportData) -> Result<(u32, u32, Vec<u8>), String> {
@@ -257,12 +276,26 @@ pub fn do_export(data: ExportData, path: &Path, progress: impl Fn(f32)) -> Resul
             let still = frames
                 .get(still_index)
                 .ok_or_else(|| "No frame available.".to_string())?;
-            let processed = process_frame(&data, &text_layers, &drawing_layers, &still.pixels)?;
-            let ctx = ctx_with(&geom, &processed);
-            match ext.as_str() {
-                "jpg" | "jpeg" => image::encode_jpeg(&ctx, path, &progress)?,
-                "png" => image::encode_png(&ctx, path, &progress)?,
-                _ => image::encode_rgba(&ctx, path, &progress)?,
+
+            if ext == "png" && can_stream_bands(&data) {
+                ensure_available(&still.pixels, data.width, data.height)?;
+                image::encode_png_streaming(
+                    &geom,
+                    &data,
+                    &text_layers,
+                    &drawing_layers,
+                    &still.pixels,
+                    path,
+                    &progress,
+                )?;
+            } else {
+                let processed = process_frame(&data, &text_layers, &drawing_layers, &still.pixels)?;
+                let ctx = ctx_with(&geom, &processed);
+                match ext.as_str() {
+                    "jpg" | "jpeg" => image::encode_jpeg(&ctx, path, &progress)?,
+                    "png" => image::encode_png(&ctx, path, &progress)?,
+                    _ => image::encode_rgba(&ctx, path, &progress)?,
+                }
             }
         }
     }
@@ -362,6 +395,283 @@ mod tests {
     use super::*;
     use crate::modifiers::ModifierKind;
     use crate::modifiers::kinds::Text;
+
+    #[test]
+    fn export_geometry_follows_the_chain_output() {
+        use crate::modifiers::kinds::GaussianBlur;
+
+        let (w, h) = (128u32, 96u32);
+        let data = ExportData {
+            source: ExportSource::Frames {
+                frames: vec![ExportFrame {
+                    pixels: Arc::new(vec![0u8; (w * h * 4) as usize]),
+                    delay: Duration::ZERO,
+                }],
+                still_index: 0,
+            },
+            width: w,
+            height: h,
+            modifiers: vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
+                radius: 3.0,
+            }))],
+            crop: None,
+            rotation: 0,
+            trim: None,
+        };
+
+        let plan = plan_modifiers(&data.modifiers);
+        let chain_out = chain_output_spec(ImageSpec::new(w, h), &plan);
+        let geom = geom_of(&data);
+        assert_eq!(
+            (geom.img_w, geom.img_h),
+            (chain_out.w, chain_out.h),
+            "geom_of must size the processed buffer from the chain"
+        );
+        assert_eq!((geom.out_w, geom.out_h), (w, h));
+    }
+
+    fn assert_streamed_png_matches_buffered(
+        label: &str,
+        modifiers: Vec<Modifier>,
+        crop: Option<[f32; 4]>,
+        rotation: u8,
+        w: u32,
+        h: u32,
+    ) {
+        let mut px = vec![0u8; (w * h * 4) as usize];
+        let mut s = 0x1234567u32;
+        for b in px.chunks_mut(4) {
+            for c in b.iter_mut().take(3) {
+                s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+                *c = (s >> 24) as u8;
+            }
+            b[3] = 255;
+        }
+
+        let data = ExportData {
+            source: ExportSource::Frames {
+                frames: vec![ExportFrame {
+                    pixels: Arc::new(px.clone()),
+                    delay: Duration::ZERO,
+                }],
+                still_index: 0,
+            },
+            width: w,
+            height: h,
+            modifiers,
+            crop,
+            rotation,
+            trim: None,
+        };
+        assert!(
+            can_stream_bands(&data),
+            "{label}: chain is not streamable, the test would prove nothing"
+        );
+
+        let geom = geom_of(&data);
+        let dir = std::env::temp_dir().join("bloom-band-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join(format!("{label}-stream.png"));
+        let b = dir.join(format!("{label}-buffer.png"));
+
+        image::encode_png_streaming(&geom, &data, &[], &[], &px, &a, &|_| {}).unwrap();
+
+        let processed = process_frame(&data, &[], &[], &px).unwrap();
+        let ctx = ctx_with(&geom, &processed);
+        image::encode_png(&ctx, &b, &|_| {}).unwrap();
+
+        let (ba, bb) = (std::fs::read(&a).unwrap(), std::fs::read(&b).unwrap());
+        let _ = std::fs::remove_file(&a);
+        let _ = std::fs::remove_file(&b);
+        assert_eq!(
+            ba,
+            bb,
+            "{label}: streamed PNG differs from buffered PNG ({} vs {} bytes)",
+            ba.len(),
+            bb.len()
+        );
+    }
+
+    #[test]
+    fn streamed_png_matches_buffered_pointwise() {
+        use crate::modifiers::kinds::Exposure;
+        assert_streamed_png_matches_buffered(
+            "pointwise",
+            vec![Modifier::new(ModifierKind::Exposure(Exposure {
+                exposure: 0.3,
+            }))],
+            None,
+            0,
+            70,
+            90,
+        );
+    }
+
+    #[test]
+    fn streamed_png_matches_buffered_blur() {
+        use crate::modifiers::kinds::GaussianBlur;
+        assert_streamed_png_matches_buffered(
+            "blur",
+            vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
+                radius: 4.0,
+            }))],
+            None,
+            0,
+            70,
+            90,
+        );
+    }
+
+    #[test]
+    fn streamed_png_matches_buffered_with_crop() {
+        use crate::modifiers::kinds::GaussianBlur;
+        assert_streamed_png_matches_buffered(
+            "crop",
+            vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
+                radius: 3.0,
+            }))],
+            Some([0.2, 0.3, 0.8, 0.9]),
+            0,
+            80,
+            100,
+        );
+    }
+
+    #[test]
+    fn streamed_png_matches_buffered_rotated_180() {
+        use crate::modifiers::kinds::GaussianBlur;
+        assert_streamed_png_matches_buffered(
+            "rot180",
+            vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
+                radius: 3.0,
+            }))],
+            None,
+            2,
+            64,
+            96,
+        );
+    }
+
+    #[test]
+    fn streamed_png_matches_buffered_vignette() {
+        use crate::modifiers::kinds::Vignette;
+        assert_streamed_png_matches_buffered(
+            "vignette",
+            vec![Modifier::new(ModifierKind::Vignette(Vignette::default()))],
+            None,
+            0,
+            72,
+            88,
+        );
+    }
+
+    #[test]
+    fn unstreamable_exports_are_rejected() {
+        use crate::modifiers::kinds::{ChromaticAberration, GaussianBlur, PixelSort};
+
+        let mk = |mods: Vec<Modifier>, rotation: u8| ExportData {
+            source: ExportSource::Frames {
+                frames: vec![ExportFrame {
+                    pixels: Arc::new(vec![0u8; 16 * 16 * 4]),
+                    delay: Duration::ZERO,
+                }],
+                still_index: 0,
+            },
+            width: 16,
+            height: 16,
+            modifiers: mods,
+            crop: None,
+            rotation,
+            trim: None,
+        };
+
+        let ca = vec![Modifier::new(ModifierKind::ChromaticAberration(
+            ChromaticAberration { amount: 4.0 },
+        ))];
+        assert!(!can_stream_bands(&mk(ca, 0)), "CA must not stream");
+
+        let vsort = vec![Modifier::new(ModifierKind::PixelSort(PixelSort {
+            threshold: 0.4,
+            angle: 90.0,
+        }))];
+        assert!(
+            !can_stream_bands(&mk(vsort, 0)),
+            "column sort must not stream"
+        );
+
+        let blur = vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
+            radius: 2.0,
+        }))];
+        assert!(
+            !can_stream_bands(&mk(blur.clone(), 1)),
+            "90 degree rotation must not stream"
+        );
+        assert!(can_stream_bands(&mk(blur, 0)), "plain blur should stream");
+    }
+
+    fn resize_data(w: u32, h: u32, modifiers: Vec<Modifier>, crop: Option<[f32; 4]>) -> ExportData {
+        ExportData {
+            source: ExportSource::Frames {
+                frames: vec![ExportFrame {
+                    pixels: Arc::new(vec![0u8; (w * h * 4) as usize]),
+                    delay: Duration::ZERO,
+                }],
+                still_index: 0,
+            },
+            width: w,
+            height: h,
+            modifiers,
+            crop,
+            rotation: 0,
+            trim: None,
+        }
+    }
+
+    #[test]
+    fn export_dimensions_follow_a_resize() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        let data = resize_data(
+            128,
+            96,
+            vec![Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: 50.0,
+                height: 50.0,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            }))],
+            None,
+        );
+        let geom = geom_of(&data);
+        assert_eq!((geom.img_w, geom.img_h), (64, 48));
+        assert_eq!((geom.out_w, geom.out_h), (64, 48));
+    }
+
+    #[test]
+    fn crop_applies_to_the_resized_buffer() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        let data = resize_data(
+            128,
+            96,
+            vec![Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: 50.0,
+                height: 50.0,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            }))],
+            Some([0.0, 0.0, 0.5, 0.5]),
+        );
+        let geom = geom_of(&data);
+        assert_eq!(
+            (geom.img_w, geom.img_h),
+            (64, 48),
+            "crop must not change the processed buffer size"
+        );
+        assert_eq!((geom.out_w, geom.out_h), (32, 24));
+    }
 
     #[test]
     fn text_appears_in_still_export() {

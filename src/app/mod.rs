@@ -1,3 +1,12 @@
+//! The application root: state, the message enum, and the update loop.
+//!
+//! Message is the single channel every interaction flows through, including
+//! results arriving from background tasks in `tasks`.
+//!
+//! Config edits are staged in `editing_config` rather than applied live, so
+//! the preferences panel can be cancelled, and `config_dirty` marks when the
+//! committed version needs writing to disk.
+
 mod edit;
 mod transport;
 
