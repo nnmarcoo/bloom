@@ -181,11 +181,33 @@ impl Scheduler {
     }
 }
 
-fn quality_scale_for(physical_scale: f32) -> f32 {
-    if physical_scale > 0.0 {
-        physical_scale.log2().ceil().exp2().min(1.0)
+/// The fraction of the chain's output resolution worth rendering.
+///
+/// `physical_scale` is how large the *document* is drawn on screen, so it says
+/// how much of the chain's output actually survives to a pixel. Rendering the
+/// next power of two above it is free: the display shrinks the result anyway.
+///
+/// `doc_over_src` is the document's size relative to the source, which is 1
+/// without a resize and 2 for a 200% upscale. It matters because zooming out is
+/// what makes `physical_scale` small, and after an upscale the view zoom is
+/// *already* small just to fit the bigger document on screen. Dividing them out
+/// would render a 2x upscale at half resolution -- exactly the source's own
+/// pixel count -- so the upscale would add nothing to the preview and the image
+/// would look blurrier the further out you zoomed. Never render below the
+/// source's resolution: that is where the real detail stops.
+fn quality_scale_for(physical_scale: f32, doc_over_src: f32) -> f32 {
+    if physical_scale <= 0.0 {
+        return 1.0;
+    }
+    let stepped = physical_scale.log2().ceil().exp2().min(1.0);
+    // The source's resolution as a fraction of the document's. Only an upscale
+    // has one: when the document is no bigger than the source there is nothing
+    // to hold onto, and clamping there would disable the zoom optimization for
+    // every chain that does not resize.
+    if doc_over_src > 1.0 {
+        stepped.max(1.0 / doc_over_src).min(1.0)
     } else {
-        1.0
+        stepped
     }
 }
 
@@ -381,7 +403,20 @@ impl ModifierPipeline {
         }
 
         let physical_scale = source.physical_scale;
-        let quality_scale = quality_scale_for(physical_scale);
+        // How much bigger the chain's output is than the source. A 200% upscale
+        // makes this 2, and keeps the preview from being rendered at the
+        // source's resolution just because the bigger document had to be zoomed
+        // out to fit on screen.
+        let doc_over_src = {
+            let out = crate::modifiers::plan::chain_output_spec(
+                crate::modifiers::plan::ImageSpec::new(source.full_width, source.full_height),
+                &crate::modifiers::plan::plan_modifiers(modifiers),
+            );
+            let sx = out.w as f32 / source.full_width.max(1) as f32;
+            let sy = out.h as f32 / source.full_height.max(1) as f32;
+            sx.max(sy)
+        };
+        let quality_scale = quality_scale_for(physical_scale, doc_over_src);
         let downscale = quality_scale < 1.0;
 
         if self.text_layers.len() != modifiers.len() {
@@ -639,5 +674,75 @@ impl ModifierPipeline {
             &self.nearest_sampler,
             &format!("modifier-tile{ti}-display-nearest"),
         ));
+    }
+}
+
+/// How zoom and an upscale together decide the processing resolution.
+///
+/// Marco reported that upscaling and then zooming out made the image blurrier
+/// the further out he went. The cause was that `physical_scale` measures the
+/// *document* on screen while `quality_scale` sizes the render of a chain whose
+/// output is bigger than the source: a 2x upscale has to be zoomed to ~0.5 just
+/// to fit, which rounded to a quality scale of 0.5 and rendered the 2x document
+/// at the source's own pixel count. The upscale added nothing, and zooming
+/// further made it worse.
+#[cfg(test)]
+mod quality_scale_tests {
+    use super::quality_scale_for;
+
+    /// Without a resize the behavior is unchanged: round up to the next power
+    /// of two, never above 1.
+    #[test]
+    fn zoom_alone_rounds_up_to_a_power_of_two() {
+        assert_eq!(quality_scale_for(0.42, 1.0), 0.5);
+        assert_eq!(quality_scale_for(0.25, 1.0), 0.25);
+        assert_eq!(quality_scale_for(0.3, 1.0), 0.5);
+        assert_eq!(quality_scale_for(1.0, 1.0), 1.0);
+        assert_eq!(quality_scale_for(4.0, 1.0), 1.0, "never renders above 1:1");
+    }
+
+    /// Zooming out past the fit must not keep degrading the upscale.
+    ///
+    /// This is the "gets really blurry as it gets smaller" report: each zoom
+    /// step halved the resolution again, with no floor. The values here are
+    /// chosen so the floor actually binds -- at the fit zoom itself (~0.42 for
+    /// a 2x upscale) the stepped value already equals the floor, so a test
+    /// there passes whether or not the floor exists and proves nothing.
+    #[test]
+    fn zooming_further_out_stops_at_the_source_resolution() {
+        // 2x upscale: without the floor these would be 0.25, 0.125, 0.0625.
+        assert_eq!(quality_scale_for(0.2, 2.0), 0.5);
+        assert_eq!(quality_scale_for(0.1, 2.0), 0.5);
+        assert_eq!(quality_scale_for(0.05, 2.0), 0.5);
+
+        // 4x upscale floors at a quarter instead.
+        assert_eq!(quality_scale_for(0.1, 4.0), 0.25);
+        assert_eq!(quality_scale_for(0.02, 4.0), 0.25);
+    }
+
+    /// At the fit zoom the floor and the stepped value coincide, so the upscale
+    /// is rendered at exactly the source's pixel count.
+    ///
+    /// Kept as documentation of the boundary, not as proof of the fix: see the
+    /// test above for the values that discriminate.
+    #[test]
+    fn an_upscale_at_the_fit_zoom_renders_at_the_source_resolution() {
+        assert_eq!(quality_scale_for(0.42, 2.0), 0.5);
+    }
+
+    /// A downscaling chain keeps the old behavior: its output has fewer pixels
+    /// than the source, so there is no floor to hold and zooming out should
+    /// still save work.
+    #[test]
+    fn a_downscale_still_reduces_with_zoom() {
+        assert_eq!(quality_scale_for(0.25, 0.5), 0.25);
+        assert_eq!(quality_scale_for(0.1, 0.5), 0.125);
+    }
+
+    /// A degenerate scale must not produce a NaN or a zero-sized render.
+    #[test]
+    fn a_nonpositive_scale_falls_back_to_full() {
+        assert_eq!(quality_scale_for(0.0, 2.0), 1.0);
+        assert_eq!(quality_scale_for(-1.0, 1.0), 1.0);
     }
 }
