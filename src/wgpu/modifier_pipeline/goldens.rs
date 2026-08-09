@@ -1043,26 +1043,30 @@ fn resize_targets_document_geometry_at_reduced_quality() {
         let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, GOLDEN_W, GOLDEN_H);
         converge(&mut mp, &device, &queue, &source, &chain, "resize-quality");
 
-        // Half the source, so each tile must cover half the pixels it did.
+        // `proc_px` reports the region in the resized document; the texture may
+        // be smaller still when quality is reduced, which is how the preview
+        // has always traded resolution for speed. What must hold is that the
+        // region is the resized one rather than the source's, so the display
+        // quad lands in the right place.
+        //
+        // Checking the region rather than the texture keeps this independent of
+        // the quality scale, which was the flaw in the original version: it
+        // derived an expected texture size and so only held at quality 1.0.
         for (ti, tile) in source.tiles.iter().enumerate() {
             let Some(o) = mp.tile_outputs[ti].as_ref() else {
                 continue;
             };
-            let px = o.proc_px.unwrap_or([
-                tile.x as f32,
-                tile.y as f32,
-                (tile.x + tile.width) as f32,
-                (tile.y + tile.height) as f32,
-            ]);
-            let want_w = ((px[2] * 0.5).round() - (px[0] * 0.5).round()) as u32;
-            let want_h = ((px[3] * 0.5).round() - (px[1] * 0.5).round()) as u32;
-            assert_eq!(
-                (o.width, o.height),
-                (want_w.max(1), want_h.max(1)),
-                "at physical_scale {phys}, tile {ti} is {}x{} but covers a \
-                 {want_w}x{want_h} region of the resized document",
-                o.width,
-                o.height
+            let Some(px) = o.proc_px else { continue };
+            let want_w = ((tile.width as f32 * 0.5).round()).max(1.0);
+            let want_h = ((tile.height as f32 * 0.5).round()).max(1.0);
+            let (rw, rh) = (px[2] - px[0], px[3] - px[1]);
+            assert!(
+                (rw - want_w).abs() <= 1.0 && (rh - want_h).abs() <= 1.0,
+                "at physical_scale {phys}, tile {ti} covers {rw}x{rh} but a 50% \
+                 resize of a {}x{} tile should cover {want_w}x{want_h}; the \
+                 display quad would land in the wrong place",
+                tile.width,
+                tile.height
             );
         }
     }
@@ -1209,5 +1213,52 @@ fn a_resampled_tile_keeps_its_display_bind_groups() {
                  whatever was on screen before"
             );
         }
+    }
+}
+
+/// A resampled tile's `proc_px` must describe the resized document.
+///
+/// The display quad is built from `proc_px`. Leaving it in source space makes
+/// the quad full-size while the texture is not, so the resized pixels are
+/// stretched straight back across the original area: the resize runs and is
+/// then undone at draw time. That is the wrong image Marco saw, and the correct
+/// one only appeared while the redraw loop was producing fresh frames on top.
+#[test]
+fn a_resampled_tile_reports_its_region_in_the_resized_document() {
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let pixels = test_pixels(GOLDEN_W, GOLDEN_H);
+    let image = ImageData::new(pixels, GOLDEN_W, GOLDEN_H);
+    let source = make_source(&device, &queue, &image, None);
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, GOLDEN_W, GOLDEN_H);
+
+    let resize = vec![Modifier::new(ModifierKind::Resize(Resize {
+        mode: ResizeMode::Pixels,
+        width: 1.0,
+        height: 1.0,
+        filter: ResizeFilter::Lanczos,
+        lock_aspect: false,
+    }))];
+
+    for frame in 0..4 {
+        mp.prepare(&device, &queue, &source, &resize, frame == 0);
+        // The settled path rebuilds transforms without re-running the chain, so
+        // it must agree with the fresh path.
+        if frame == 2 {
+            mp.refresh_display_transforms(&device, &queue, &source);
+        }
+        let o = mp.tile_outputs[0].as_ref().expect("tile 0 output");
+        let px = o.proc_px.expect("proc_px");
+        let (rw, rh) = (px[2] - px[0], px[3] - px[1]);
+        assert!(
+            (rw - o.width as f32).abs() < 1.5 && (rh - o.height as f32).abs() < 1.5,
+            "frame {frame}: texture is {}x{} but proc_px covers {rw}x{rh}; the              display quad would stretch the resized pixels back over the              original area",
+            o.width,
+            o.height
+        );
     }
 }

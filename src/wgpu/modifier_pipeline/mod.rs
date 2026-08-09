@@ -264,6 +264,9 @@ pub struct ModifierPipeline {
     trilinear_sampler: Sampler,
     linear_sampler: Sampler,
     nearest_sampler: Sampler,
+    /// The chain's output size, so  can normalize a
+    /// resampled tile's quad without re-deriving the plan.
+    doc_size: (u32, u32),
     exec_band_cursor: u32,
     exec_sig: u64,
     exec_slab_pool: Vec<Option<ScratchTarget>>,
@@ -341,6 +344,7 @@ impl ModifierPipeline {
             trilinear_sampler,
             linear_sampler,
             nearest_sampler,
+            doc_size: (width, height),
             exec_band_cursor: 0,
             exec_sig: 0,
             exec_slab_pool: Vec::new(),
@@ -633,6 +637,16 @@ impl ModifierPipeline {
             let dst_w = (((px[2] * sx).round() - x0) as u32).max(1);
             let dst_h = (((px[3] * sy).round() - y0) as u32).max(1);
             if (dst_w, dst_h) == (src_w, src_h) {
+                // The texture is already the right size, which happens when the
+                // quality scale has coincidentally shrunk it by the same factor
+                // the resize asks for. No resampling is needed, but `proc_px`
+                // must still move into the resized document or the display quad
+                // stays full-size and stretches the tile back over the original
+                // area.
+                let slot = self.tile_outputs[ti].as_mut().unwrap();
+                slot.proc_px = Some([px[0] * sx, px[1] * sy, px[2] * sx, px[3] * sy]);
+                slot.resampled = true;
+                resampled_tiles.push(ti);
                 continue;
             }
 
@@ -686,6 +700,15 @@ impl ModifierPipeline {
             // 1024..1024 would end up overrunning the bounds of the Destination
             // texture of Y size 3". Marking it resampled forces a fresh
             // allocation next frame.
+            // `proc_px` is the region this output covers, and the display quad
+            // is built from it. Leaving it in source space makes the quad
+            // full-size while the texture is not, so the resized pixels get
+            // stretched back across the original area -- the resize does its
+            // work and is then undone at draw time.
+            //
+            // Moving it into the resized document keeps the quad and the
+            // texture describing the same region.
+            slot.proc_px = Some([px[0] * sx, px[1] * sy, px[2] * sx, px[3] * sy]);
             slot.resampled = true;
             resampled_tiles.push(ti);
         }
@@ -700,15 +723,17 @@ impl ModifierPipeline {
         // without drawing it, which is what produced the flicker: the tile
         // appeared on frames where the bind group survived and vanished on
         // frames where it did not.
-        let full_w = source.full_width as f32;
-        let full_h = source.full_height as f32;
+        // `proc_px` is now in the resized document, so the quad is normalized
+        // against that rather than the source.
+        self.doc_size = (out.w, out.h);
+        let (doc_w, doc_h) = (out.w as f32, out.h as f32);
         for ti in resampled_tiles {
             let tile = &source.tiles[ti];
             let (proc_px, w, h) = {
                 let o = self.tile_outputs[ti].as_ref().unwrap();
                 (o.proc_px, o.width, o.height)
             };
-            let pr = proc_rect_from_px(proc_px, tile, full_w, full_h, w, h);
+            let pr = proc_rect_from_px(proc_px, tile, doc_w, doc_h, w, h);
             let roi_active = proc_px.is_some() && tile.isec_px.is_some();
             self.build_roi_display_bgs(device, queue, ti, tile, &pr, roi_active);
         }
@@ -733,8 +758,15 @@ impl ModifierPipeline {
             if !o.valid {
                 continue;
             }
-            let (proc_px, w, h) = (o.proc_px, o.width, o.height);
-            let pr = proc_rect_from_px(proc_px, tile, full_w, full_h, w, h);
+            let (proc_px, w, h, resampled) = (o.proc_px, o.width, o.height, o.resampled);
+            // A resampled tile carries proc_px in the resized document, so the
+            // quad must be normalized against that instead of the source.
+            let (dw, dh) = if resampled {
+                (self.doc_size.0 as f32, self.doc_size.1 as f32)
+            } else {
+                (full_w, full_h)
+            };
+            let pr = proc_rect_from_px(proc_px, tile, dw, dh, w, h);
             let roi_active = proc_px.is_some() && tile.isec_px.is_some();
             self.build_roi_display_bgs(device, queue, ti, tile, &pr, roi_active);
         }
