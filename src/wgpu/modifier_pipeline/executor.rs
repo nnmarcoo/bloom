@@ -1072,12 +1072,6 @@ impl ModifierPipeline {
                 }
             }
 
-            eprintln!(
-                "SLAB rect={:?} tex {}x{} | u_px={u_px:?}",
-                prev.rect,
-                prev.tex.width(),
-                prev.tex.height()
-            );
             let slab_r = scale_rect(prev.rect, scale);
             for &ti in &procs {
                 let p = scale_rect(prs[ti].as_ref().unwrap().px, scale);
@@ -1091,15 +1085,6 @@ impl ModifierPipeline {
                     continue;
                 }
                 let o = self.tile_outputs[ti].as_ref().unwrap();
-                eprintln!(
-                    "CP ti={ti} p={p:?} i={i:?} tex {}x{} dst_origin=({},{}) extent=({},{})",
-                    o.width,
-                    o.height,
-                    i[0] - p[0],
-                    i[1] - p[1],
-                    (i[2] - i[0]).min(o.width.saturating_sub(i[0] - p[0])),
-                    (i[3] - i[1]).min(o.height.saturating_sub(i[1] - p[1]))
-                );
                 encoder.copy_texture_to_texture(
                     tex_copy_info(
                         &prev.tex,

@@ -269,4 +269,92 @@ mod tests {
         }
         println!();
     }
+
+    /// What an upscale costs as the view zooms out.
+    ///
+    /// `quality_scale` is floored at the source's resolution when the chain
+    /// upscales, because rendering below it discards the resize entirely. That
+    /// floor has a price: zooming out no longer reduces the work, so this is
+    /// the case to watch when the preview feels slow.
+    ///
+    /// The comparison that matters is the same row across zoom levels. Without
+    /// the floor the cost falls away as you zoom out (and the image degrades);
+    /// with it the cost stays flat at roughly the source's own pixel count.
+    #[test]
+    #[ignore = "GPU timing baseline; run with --release --ignored --nocapture"]
+    fn gpu_bench_resize() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((device, queue)) = try_device() else {
+            eprintln!("gpu_bench_resize: no adapter, skipping");
+            return;
+        };
+
+        let image = ImageData::new(pixels(W, H), W, H);
+        let mut source = make_source(&device, &queue, &image);
+
+        let resize = |pct: f32, filter: ResizeFilter| -> Vec<Modifier> {
+            vec![m(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: pct,
+                height: pct,
+                filter,
+                lock_aspect: true,
+            }))]
+        };
+
+        let cases: Vec<(&str, Vec<Modifier>)> = vec![
+            ("resize 50% lanczos", resize(50.0, ResizeFilter::Lanczos)),
+            ("resize 200% nearest", resize(200.0, ResizeFilter::Nearest)),
+            (
+                "resize 200% bilinear",
+                resize(200.0, ResizeFilter::Bilinear),
+            ),
+            ("resize 200% lanczos", resize(200.0, ResizeFilter::Lanczos)),
+            ("resize 400% lanczos", resize(400.0, ResizeFilter::Lanczos)),
+            (
+                "resize 200% + blur r=8",
+                vec![
+                    m(ModifierKind::Resize(Resize {
+                        mode: ResizeMode::Percent,
+                        width: 200.0,
+                        height: 200.0,
+                        filter: ResizeFilter::Lanczos,
+                        lock_aspect: true,
+                    })),
+                    m(ModifierKind::GaussianBlur(GaussianBlur { radius: 8.0 })),
+                ],
+            ),
+        ];
+
+        // Zoom levels a user passes through after upscaling: the fit for a 2x
+        // document, then progressively further out, which is where the floor
+        // keeps the resolution up and the old code degraded it.
+        let views: [(&str, f32, f32); 4] = [
+            ("100% zoom", 0.25, 1.0),
+            ("fit after 2x (~0.5)", 1.0, 0.5),
+            ("zoomed out (0.25)", 1.0, 0.25),
+            ("far out (0.1)", 1.0, 0.1),
+        ];
+
+        println!("\nGPU resize baseline — {W}x{H} source, best of {RUNS}");
+        println!("(the floor means an upscale's cost no longer falls as you zoom out)");
+
+        for (view_label, frac, phys) in views {
+            set_viewport(&mut source, frac, phys);
+            println!("\n  {view_label}  (physical_scale={phys})");
+            println!("  {:-<46}", "");
+            println!("  {:<28} {:>14}", "chain", "ms");
+            println!("  {:-<46}", "");
+            for (label, modifiers) in &cases {
+                match time_chain(&device, &queue, &source, modifiers) {
+                    Some(d) => println!("  {:<28} {:>14.2}", label, d.as_secs_f64() * 1000.0),
+                    None => println!("  {:<28} {:>14}", label, "did not converge"),
+                }
+            }
+            println!("  {:-<46}", "");
+        }
+        println!();
+    }
 }
