@@ -16,7 +16,22 @@
 struct ResampleUniforms {
     // x: output length on the resampled axis, y: source length on that axis.
     // z: 0 for horizontal, 1 for vertical. w: filter (0 near, 1 bilin, 2 lanc).
+    //
+    // Both lengths are the *whole image* on that axis, never the region being
+    // rendered. The ratio between them is the resize the user asked for, and it
+    // does not change because the executor chose to render one band at a time.
     axis: vec4<f32>,
+    // Where this render target sits, on the resampled axis only.
+    //
+    // x: first output index this target covers.
+    // y: first source index the bound input texture holds.
+    // z: length of the bound input texture on that axis.
+    // w: length of the render target on that axis.
+    //
+    // Without these a band cannot tell where it is: output index 0 of the
+    // target would mean image row 0, so every band would resample the top of
+    // the image and only the band that truly starts at zero would be right.
+    region: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: ResampleUniforms;
@@ -80,16 +95,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let src_len = u.axis.y;
     let vertical = u.axis.z > 0.5;
     let kind = u.axis.w;
+    let out_base = u.region.x;
+    let src_base = u.region.y;
+    let tex_len = u.region.z;
+    let dst_len = u.region.w;
 
     // Index of this fragment along the axis being resampled, and the position
-    // on the other axis which passes through untouched.
+    // on the other axis which passes through untouched. The index is made
+    // absolute at once: every calculation below is in whole-image coordinates,
+    // and only the final texture fetch returns to the bound region's own space.
     var out_idx: f32;
     var other_uv: f32;
     if (vertical) {
-        out_idx = floor(in.uv.y * out_len);
+        out_idx = out_base + floor(in.uv.y * dst_len);
         other_uv = in.uv.x;
     } else {
-        out_idx = floor(in.uv.x * out_len);
+        out_idx = out_base + floor(in.uv.x * dst_len);
         other_uv = in.uv.y;
     }
 
@@ -100,9 +121,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     let center = (out_idx + 0.5) / scale;
 
+    // Absolute source index -> uv within the bound texture, which holds
+    // `tex_len` samples starting at `src_base`.
     if (kind < 0.5) {
         let s = clamp(floor(center), 0.0, src_len - 1.0);
-        let t = (s + 0.5) / src_len;
+        let t = (s - src_base + 0.5) / tex_len;
         var uv = vec2<f32>(t, other_uv);
         if (vertical) {
             uv = vec2<f32>(other_uv, t);
@@ -122,7 +145,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             break;
         }
         let w = weight_of(kind, (s + 0.5 - center) / inv);
-        let t = (s + 0.5) / src_len;
+        let t = (s - src_base + 0.5) / tex_len;
         var uv = vec2<f32>(t, other_uv);
         if (vertical) {
             uv = vec2<f32>(other_uv, t);

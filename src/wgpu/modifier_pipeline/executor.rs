@@ -12,6 +12,7 @@
 use super::*;
 use crate::modifiers::pixel_sort::SortMode as ExecSortMode;
 use crate::modifiers::roi::{self, RegionPx, StepClass};
+use crate::wgpu::passes::resample::ResampleRegion;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 
@@ -904,9 +905,24 @@ impl ModifierPipeline {
                         //
                         // out_r is already in this stage's output space, from
                         // the backward walk, so its dimensions are the target.
+                        //
+                        // The resample itself is defined by the two documents'
+                        // full lengths: that ratio is the resize the user asked
+                        // for, and it must not shift because this pass is
+                        // rendering one band. The rects say which part of the
+                        // image the target and the bound input stand for, and
+                        // that is what `ResampleRegion` carries.
                         let filter = m.kind.as_resize().unwrap().filter;
                         let (ow, oh) = rect_dims(out_r, scale);
                         let (pw, _ph) = rect_dims(prev.rect, scale);
+                        // Whole-image lengths at the working scale, so the
+                        // ratio matches what the CPU oracle computes on the
+                        // full document.
+                        let in_len_x = ((specs[k].input.w as f32 * scale).round() as u32).max(1);
+                        let in_len_y = ((specs[k].input.h as f32 * scale).round() as u32).max(1);
+                        let out_len_x = ((specs[k].output.w as f32 * scale).round() as u32).max(1);
+                        let out_len_y = ((specs[k].output.h as f32 * scale).round() as u32).max(1);
+                        let base = |v: f32| (v * scale).round() as u32;
 
                         // Intermediate: resampled horizontally, still at the
                         // input's vertical extent.
@@ -928,10 +944,16 @@ impl ModifierPipeline {
                             &self.resample_uniforms[ub_h],
                             &prev.view,
                             &mid.view,
-                            ow,
-                            pw,
+                            out_len_x,
+                            in_len_x,
                             false,
                             filter,
+                            ResampleRegion {
+                                out_base: base(out_r[0]),
+                                dst_len: mw,
+                                src_base: base(prev.rect[0]),
+                                tex_len: pw,
+                            },
                         );
 
                         let outs = self.pooled_stage(device, &mut slab_slot, ow, oh, out_r);
@@ -942,10 +964,16 @@ impl ModifierPipeline {
                             &self.resample_uniforms[ub_v],
                             &mid.view,
                             &outs.view,
-                            oh,
-                            mh,
+                            out_len_y,
+                            in_len_y,
                             true,
                             filter,
+                            ResampleRegion {
+                                out_base: base(out_r[1]),
+                                dst_len: oh,
+                                src_base: base(mid_r[1]),
+                                tex_len: mh,
+                            },
                         );
                         pool_used += 1;
                         prev = outs;

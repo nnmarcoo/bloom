@@ -24,6 +24,46 @@ use crate::wgpu::gpu;
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct ResampleUniforms {
     axis: [f32; 4],
+    region: [f32; 4],
+}
+
+/// Which part of the image a single resample invocation is responsible for.
+///
+/// A resample is defined by the whole image's lengths -- that ratio is the
+/// resize the user asked for. But the executor renders one band or tile at a
+/// time, so the pass also has to know where the target sits and which slice of
+/// the source is actually bound. Without that the region's first row is treated
+/// as the image's first row, and every region except the one at the origin
+/// resamples the wrong part of the source.
+#[derive(Clone, Copy)]
+pub struct ResampleRegion {
+    /// First output index the render target covers, in whole-image coordinates.
+    pub out_base: u32,
+    /// Length of the render target on the resampled axis.
+    pub dst_len: u32,
+    /// First source index the bound input texture holds.
+    pub src_base: u32,
+    /// Length of the bound input texture on the resampled axis.
+    pub tex_len: u32,
+}
+
+impl ResampleRegion {
+    /// The whole image: the target is the full output and the bound texture is
+    /// the full source. This is the identity case, and the only one where
+    /// region-agnostic arithmetic happens to be correct.
+    ///
+    /// The executor always renders a region, so this is used by the tests that
+    /// resample a whole image -- `allow` rather than `expect` because whether
+    /// it is reached depends on the target configuration.
+    #[allow(dead_code)]
+    pub fn full(out_len: u32, src_len: u32) -> Self {
+        Self {
+            out_base: 0,
+            dst_len: out_len,
+            src_base: 0,
+            tex_len: src_len,
+        }
+    }
 }
 
 fn filter_code(f: ResizeFilter) -> f32 {
@@ -99,9 +139,11 @@ impl ResamplePass {
 
     /// Resample one axis into `target`.
     ///
-    /// `out_len` and `src_len` are the lengths along the axis being resampled;
-    /// the other axis passes through unchanged, so the caller sizes `target`
-    /// accordingly.
+    /// `out_len` and `src_len` are the **whole image's** lengths along the axis
+    /// being resampled -- their ratio is the resize itself, and it must not
+    /// change when only part of the image is being rendered. `region` says
+    /// which part that is. The other axis passes through unchanged, so the
+    /// caller sizes `target` accordingly.
     #[allow(clippy::too_many_arguments)]
     pub fn record(
         &self,
@@ -115,6 +157,7 @@ impl ResamplePass {
         src_len: u32,
         vertical: bool,
         filter: ResizeFilter,
+        region: ResampleRegion,
     ) {
         gpu::write_uniform(
             queue,
@@ -125,6 +168,12 @@ impl ResamplePass {
                     src_len as f32,
                     if vertical { 1.0 } else { 0.0 },
                     filter_code(filter),
+                ],
+                region: [
+                    region.out_base as f32,
+                    region.src_base as f32,
+                    region.tex_len.max(1) as f32,
+                    region.dst_len.max(1) as f32,
                 ],
             },
         );
@@ -326,7 +375,17 @@ mod tests {
             label: Some("resample-test-h"),
         });
         pass.record(
-            device, queue, &mut enc, &ub_h, &src_view, &mid_view, dst_w, SRC_W, false, filter,
+            device,
+            queue,
+            &mut enc,
+            &ub_h,
+            &src_view,
+            &mid_view,
+            dst_w,
+            SRC_W,
+            false,
+            filter,
+            ResampleRegion::full(dst_w, SRC_W),
         );
         queue.submit([enc.finish()]);
 
@@ -335,11 +394,164 @@ mod tests {
             label: Some("resample-test-v"),
         });
         pass.record(
-            device, queue, &mut enc2, &ub_v, &mid_view, &dst_view, dst_h, SRC_H, true, filter,
+            device,
+            queue,
+            &mut enc2,
+            &ub_v,
+            &mid_view,
+            &dst_view,
+            dst_h,
+            SRC_H,
+            true,
+            filter,
+            ResampleRegion::full(dst_h, SRC_H),
         );
         queue.submit([enc2.finish()]);
 
         readback(device, queue, &dst, dst_w, dst_h)
+    }
+
+    /// Resample output rows `band_y0..band_y1` the way the executor does.
+    ///
+    /// The horizontal pass runs over the source rows the band needs; the
+    /// vertical pass then produces just the band. Both are given the region
+    /// they operate on, which is exactly the executor's situation.
+    #[allow(clippy::too_many_arguments)]
+    fn gpu_resample_band(
+        device: &Device,
+        queue: &Queue,
+        src: &[u8],
+        dst_w: u32,
+        dst_h: u32,
+        band_y0: u32,
+        band_y1: u32,
+        filter: ResizeFilter,
+    ) -> Vec<u8> {
+        let pass = ResamplePass::new(device, TextureFormat::Rgba8Unorm);
+        let src_tex = texture_from(device, queue, src, SRC_W, SRC_H);
+        let src_view = src_tex.create_view(&Default::default());
+
+        // Source rows this band reads, with a Lanczos-3 apron, mirroring the
+        // executor's backward walk through `input_needed`.
+        let sy = SRC_H as f32 / dst_h as f32;
+        let src_y0 = (((band_y0 as f32) * sy).floor() - 3.0).max(0.0) as u32;
+        let src_y1 = ((((band_y1 as f32) * sy).ceil() + 3.0) as u32).min(SRC_H);
+        let src_rows = src_y1 - src_y0;
+
+        let usage = iced::wgpu::TextureUsages::TEXTURE_BINDING
+            | iced::wgpu::TextureUsages::RENDER_ATTACHMENT
+            | iced::wgpu::TextureUsages::COPY_SRC
+            | iced::wgpu::TextureUsages::COPY_DST;
+
+        // The band's slice of the source, as its own texture: the executor's
+        // `prev` stage holds only the region the band needs.
+        let sub = gpu::texture_2d(
+            device,
+            SRC_W,
+            src_rows,
+            TextureFormat::Rgba8Unorm,
+            usage,
+            Some("resample-band-src"),
+        );
+        let mut enc0 = device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
+            label: Some("resample-band-copy"),
+        });
+        enc0.copy_texture_to_texture(
+            iced::wgpu::TexelCopyTextureInfo {
+                texture: &src_tex,
+                mip_level: 0,
+                origin: iced::wgpu::Origin3d {
+                    x: 0,
+                    y: src_y0,
+                    z: 0,
+                },
+                aspect: iced::wgpu::TextureAspect::All,
+            },
+            iced::wgpu::TexelCopyTextureInfo {
+                texture: &sub,
+                mip_level: 0,
+                origin: iced::wgpu::Origin3d::ZERO,
+                aspect: iced::wgpu::TextureAspect::All,
+            },
+            iced::wgpu::Extent3d {
+                width: SRC_W,
+                height: src_rows,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([enc0.finish()]);
+        let _ = &src_view;
+        let sub_view = sub.create_view(&Default::default());
+
+        let mid = gpu::texture_2d(
+            device,
+            dst_w,
+            src_rows,
+            TextureFormat::Rgba8Unorm,
+            usage,
+            Some("resample-band-mid"),
+        );
+        let mid_view = mid.create_view(&Default::default());
+        let band_h = band_y1 - band_y0;
+        let dst = gpu::texture_2d(
+            device,
+            dst_w,
+            band_h,
+            TextureFormat::Rgba8Unorm,
+            usage,
+            Some("resample-band-dst"),
+        );
+        let dst_view = dst.create_view(&Default::default());
+
+        // Horizontal: the full width, so this axis is the whole image and needs
+        // no offset. Only the vertical axis is banded here.
+        let ub_h = pass.uniform_buffer(device);
+        let mut enc = device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
+            label: Some("resample-band-h"),
+        });
+        pass.record(
+            device,
+            queue,
+            &mut enc,
+            &ub_h,
+            &sub_view,
+            &mid_view,
+            dst_w,
+            SRC_W,
+            false,
+            filter,
+            ResampleRegion::full(dst_w, SRC_W),
+        );
+        queue.submit([enc.finish()]);
+
+        let ub_v = pass.uniform_buffer(device);
+        let mut enc2 = device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
+            label: Some("resample-band-v"),
+        });
+        // The vertical axis is the banded one: the target covers output rows
+        // `band_y0..band_y1` of a `dst_h`-tall image, and the bound texture
+        // holds source rows `src_y0..src_y1` of a `SRC_H`-tall image.
+        pass.record(
+            device,
+            queue,
+            &mut enc2,
+            &ub_v,
+            &mid_view,
+            &dst_view,
+            dst_h,
+            SRC_H,
+            true,
+            filter,
+            ResampleRegion {
+                out_base: band_y0,
+                dst_len: band_h,
+                src_base: src_y0,
+                tex_len: src_rows,
+            },
+        );
+        queue.submit([enc2.finish()]);
+
+        readback(device, queue, &dst, dst_w, band_h)
     }
 
     fn max_diff(a: &[u8], b: &[u8]) -> u8 {
@@ -409,5 +621,62 @@ mod tests {
     #[test]
     fn lanczos_anisotropic_matches_cpu() {
         check(ResizeFilter::Lanczos, 96, 12, 2, "lanczos/aniso");
+    }
+
+    /// Resampling a band must agree with the same rows of a whole-image resize.
+    ///
+    /// Every test above resamples the entire image, so `out_len`/`src_len` are
+    /// the image's own lengths and output index 0 is image row 0. The executor
+    /// never calls it that way once a document needs banding: it hands the pass
+    /// one band at a time. If the pass cannot express where that band sits, it
+    /// resamples every band as though it were the whole image, and only the
+    /// first band -- the one that really does start at zero -- comes out right.
+    #[test]
+    fn a_band_matches_the_same_rows_of_a_full_resize() {
+        let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((device, queue)) = try_device() else {
+            return;
+        };
+        let src = source_pixels();
+        let (dst_w, dst_h) = (SRC_W * 2, SRC_H * 2);
+        let want = cpu::resample(&src, SRC_W, SRC_H, dst_w, dst_h, ResizeFilter::Lanczos);
+
+        // A band in the lower half of the output, chosen so it starts well away
+        // from the origin and the taps it needs are interior rather than
+        // clamped -- a band at the edge could pass on the edge case alone.
+        let (band_y0, band_y1) = (dst_h / 2, dst_h / 2 + 16);
+        let got = gpu_resample_band(
+            &device,
+            &queue,
+            &src,
+            dst_w,
+            dst_h,
+            band_y0,
+            band_y1,
+            ResizeFilter::Lanczos,
+        );
+
+        let stride = (dst_w * 4) as usize;
+        let mut worst = (0u8, 0usize);
+        for row in 0..(band_y1 - band_y0) as usize {
+            let g = &got[row * stride..row * stride + stride];
+            let w = &want[(band_y0 as usize + row) * stride..][..stride];
+            let d = g
+                .iter()
+                .zip(w)
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap_or(0);
+            if d > worst.0 {
+                worst = (d, band_y0 as usize + row);
+            }
+        }
+        assert!(
+            worst.0 <= 2,
+            "output row {} of the band differs from the full resize by {} levels; \
+             a band must resample to the same pixels as the rows it stands for",
+            worst.1,
+            worst.0
+        );
     }
 }

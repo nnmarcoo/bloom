@@ -977,6 +977,49 @@ fn golden_resize_mid_chain_multi_tile() {
     run_resize_golden("resize/mid-chain-2x2", &chain, Some(FORCED_TILE_DIM), 4);
 }
 
+/// The upscale counterparts of the three goldens above.
+///
+/// Every resize golden written before these downscaled, so the suite proved one
+/// direction of the parameter and said nothing about the other. That is how a
+/// resample that ignored its region's origin passed everything: at 50% the
+/// executor produced a single band starting at row 0, where treating the region
+/// as the whole image happens to give the right answer.
+fn resize_double() -> Modifier {
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+    Modifier::new(ModifierKind::Resize(Resize {
+        mode: ResizeMode::Percent,
+        width: 200.0,
+        height: 200.0,
+        filter: ResizeFilter::Lanczos,
+        lock_aspect: true,
+    }))
+}
+
+#[test]
+fn golden_upscale_trailing_matches_the_oracle() {
+    let mut chain = blur_chain();
+    chain.push(resize_double());
+    run_resize_golden("upscale/trailing", &chain, None, 4);
+}
+
+#[test]
+fn golden_upscale_mid_chain_matches_the_oracle() {
+    let chain = vec![
+        resize_double(),
+        Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 4.0 })),
+    ];
+    run_resize_golden("upscale/mid-chain", &chain, None, 4);
+}
+
+#[test]
+fn golden_upscale_mid_chain_multi_tile() {
+    let chain = vec![
+        resize_double(),
+        Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 4.0 })),
+    ];
+    run_resize_golden("upscale/mid-chain-2x2", &chain, Some(FORCED_TILE_DIM), 4);
+}
+
 #[test]
 fn golden_ca_single_tile() {
     run_golden("ca/1-tile", &ca_chain(), None, 4);
@@ -1211,6 +1254,32 @@ fn tiles_cover_a_resized_odd_sized_document() {
     assert_tiles_cover_document(&mp, &source, out.w, out.h, "cover/resized");
 }
 
+/// The same coverage property when the document grows rather than shrinks.
+#[test]
+fn tiles_cover_an_upscaled_odd_sized_document() {
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+    use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let (source, _image) = real_source(&device, &queue);
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, REAL_W, REAL_H);
+
+    let chain = vec![Modifier::new(ModifierKind::Resize(Resize {
+        mode: ResizeMode::Percent,
+        width: 200.0,
+        height: 200.0,
+        filter: ResizeFilter::Lanczos,
+        lock_aspect: true,
+    }))];
+
+    let out = chain_output_spec(ImageSpec::new(REAL_W, REAL_H), &plan_modifiers(&chain));
+    assert_geometry_is_stable(&mut mp, &device, &queue, &source, &chain, "cover/upscaled");
+    assert_tiles_cover_document(&mp, &source, out.w, out.h, "cover/upscaled");
+}
+
 /// Changing the resize while outputs exist must not reuse them.
 ///
 /// `proc_px` is expressed in the output document, so an output built for one
@@ -1283,14 +1352,18 @@ fn changing_the_resize_does_not_reuse_stale_outputs() {
 /// rows 1024 and 2048. The first is 44.2% down: the seam's location.
 ///
 /// The geometry there is exact -- band heights sum to the document with no gap
-/// or overlap -- so a coverage check cannot see this. What differs is the
-/// pixels: a resample tap near a band's edge reaches rows the band did not
-/// fetch, and `ClampToEdge` substitutes the edge row instead.
+/// or overlap -- so a coverage check cannot see this, and the seam was only the
+/// most visible part of a divergence that covered nearly the whole image.
+///
+/// The cause was in the resample pass rather than in banding: it was given the
+/// *region's* lengths and no origin, so it treated each band's first row as the
+/// image's first row and resampled the top of the source every time. Only the
+/// band at the origin came out right, which is why a 4x4 upscale looked correct
+/// while this one did not. `ResampleRegion` carries the origin now.
 ///
 /// The chain is resize-only so nothing else contributes an apron, which is what
 /// makes this specific to the resample rather than to banding in general.
 #[test]
-#[ignore = "upscale diverges from the oracle at large sizes; see bloom-resize-upscale-broken"]
 fn rows_across_a_band_boundary_match_the_oracle() {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
     use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
