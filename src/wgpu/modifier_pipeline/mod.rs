@@ -611,6 +611,7 @@ impl ModifierPipeline {
             | TextureUsages::TEXTURE_BINDING
             | TextureUsages::COPY_SRC
             | TextureUsages::COPY_DST;
+        let mut resampled_tiles: Vec<usize> = Vec::new();
 
         for ti in 0..source.tiles.len() {
             let Some(o) = self.tile_outputs[ti].as_ref() else {
@@ -686,10 +687,31 @@ impl ModifierPipeline {
             // texture of Y size 3". Marking it resampled forces a fresh
             // allocation next frame.
             slot.resampled = true;
-            self.tile_display_bgs_linear[ti] = None;
-            self.tile_display_bgs_nearest[ti] = None;
+            resampled_tiles.push(ti);
         }
         queue.submit([encoder.finish()]);
+
+        // Rebuild the display bind groups against the new textures.
+        //
+        // They point at the texture view, so replacing it invalidates them. The
+        // executor builds them before this runs, and nothing rebuilds them
+        // afterward, so simply clearing them left `tile_display_bg` returning
+        // None. The draw loop pushes nothing for such a tile and falls through
+        // without drawing it, which is what produced the flicker: the tile
+        // appeared on frames where the bind group survived and vanished on
+        // frames where it did not.
+        let full_w = source.full_width as f32;
+        let full_h = source.full_height as f32;
+        for ti in resampled_tiles {
+            let tile = &source.tiles[ti];
+            let (proc_px, w, h) = {
+                let o = self.tile_outputs[ti].as_ref().unwrap();
+                (o.proc_px, o.width, o.height)
+            };
+            let pr = proc_rect_from_px(proc_px, tile, full_w, full_h, w, h);
+            let roi_active = proc_px.is_some() && tile.isec_px.is_some();
+            self.build_roi_display_bgs(device, queue, ti, tile, &pr, roi_active);
+        }
     }
 
     pub fn refresh_display_transforms(

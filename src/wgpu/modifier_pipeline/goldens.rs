@@ -1161,3 +1161,53 @@ fn a_resampled_output_is_not_reused_as_a_render_target() {
         }
     }
 }
+
+/// A resampled tile must still have display bind groups.
+///
+/// `resample_outputs` replaces the tile's texture, which invalidates any bind
+/// group pointing at the old view. It used to clear them and stop there, and
+/// nothing rebuilt them: the executor builds them before the resample runs.
+///
+/// `tile_display_bg` then returned None, and the draw loop pushes nothing for
+/// such a tile. It is not the same as having no pipeline, which draws the
+/// source instead, so the tile was simply absent and the viewport showed
+/// whatever the previous frame left. That is the flicker: the correct image
+/// appears only on frames where a bind group happened to survive.
+#[test]
+fn a_resampled_tile_keeps_its_display_bind_groups() {
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let pixels = test_pixels(GOLDEN_W, GOLDEN_H);
+    let image = ImageData::new(pixels, GOLDEN_W, GOLDEN_H);
+    let source = make_source(&device, &queue, &image, Some(FORCED_TILE_DIM));
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, GOLDEN_W, GOLDEN_H);
+
+    let resize = vec![Modifier::new(ModifierKind::Resize(Resize {
+        mode: ResizeMode::Percent,
+        width: 25.0,
+        height: 25.0,
+        filter: ResizeFilter::Lanczos,
+        lock_aspect: true,
+    }))];
+
+    // Several frames, since the flicker is a per-frame inconsistency rather
+    // than a one-time failure.
+    for frame in 0..4 {
+        mp.prepare(&device, &queue, &source, &resize, frame == 0);
+        for ti in 0..source.tiles.len() {
+            if mp.tile_outputs[ti].is_none() {
+                continue;
+            }
+            assert!(
+                mp.tile_display_bg(ti, false).is_some() && mp.tile_display_bg(ti, true).is_some(),
+                "frame {frame}: tile {ti} has a resampled output but no display \
+                 bind group, so the draw loop skips it and the viewport keeps \
+                 whatever was on screen before"
+            );
+        }
+    }
+}
