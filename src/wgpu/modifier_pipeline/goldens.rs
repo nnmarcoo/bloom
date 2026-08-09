@@ -1008,3 +1008,228 @@ fn golden_ca_single_tile() {
 fn golden_ca_multi_tile() {
     run_golden("ca/2x2", &ca_chain(), Some(FORCED_TILE_DIM), 4);
 }
+
+/// Tile outputs must cover the document exactly: no gaps, no overlaps, and
+/// integer boundaries.
+///
+/// This is the property the post-hoc resample design broke, and none of the
+/// existing goldens could see it. They compare pixel content at 96x64 with 48px
+/// tiles, which divides evenly and produces no partial tiles, no fractional
+/// boundary, and no rounding disagreement between the last row and the interior.
+///
+/// A real image has all three. At 1179x1159 with 512px tiles there are 9 tiles,
+/// the right column is 155 wide, the bottom row is 135 tall, and halving any of
+/// those lands off an integer. The three faults reported from use were each
+/// visible here:
+///
+///   - flicker: the output size oscillated between frames
+///   - segmented: adjacent tiles stopped sharing a boundary
+///   - blacked-out bottom: the last row rounded outward past the document
+///
+/// The assertions are deliberately about geometry rather than pixels. Content
+/// goldens pass while the layout is wrong, which is exactly how this got as far
+/// as it did.
+fn assert_tiles_cover_document(
+    mp: &ModifierPipeline,
+    source: &TiledSource,
+    doc_w: u32,
+    doc_h: u32,
+    label: &str,
+) {
+    // Every document pixel must be claimed exactly once. A byte per pixel is
+    // affordable at these sizes and catches gaps and overlaps in one pass.
+    let mut covered = vec![0u8; (doc_w * doc_h) as usize];
+
+    for (ti, tile) in source.tiles.iter().enumerate() {
+        let Some(o) = mp.tile_outputs[ti].as_ref() else {
+            continue;
+        };
+        let px = o.proc_px.unwrap_or([
+            tile.x as f32,
+            tile.y as f32,
+            (tile.x + tile.width) as f32,
+            (tile.y + tile.height) as f32,
+        ]);
+
+        for (i, v) in px.iter().enumerate() {
+            assert!(
+                (v - v.round()).abs() < 1e-3,
+                "{label}: tile {ti} proc_px[{i}] is {v}, not an integer. \
+                 Fractional boundaries mean adjacent tiles no longer meet, \
+                 which shows as seams between tiles."
+            );
+        }
+
+        let (x0, y0) = (px[0].round() as i64, px[1].round() as i64);
+        let (x1, y1) = (px[2].round() as i64, px[3].round() as i64);
+        assert!(
+            x0 >= 0 && y0 >= 0 && x1 <= doc_w as i64 && y1 <= doc_h as i64,
+            "{label}: tile {ti} covers [{x0},{y0}..{x1},{y1}] but the document \
+             is {doc_w}x{doc_h}. A tile reaching past the edge leaves the strip \
+             beyond it unpainted."
+        );
+
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let idx = (y as u32 * doc_w + x as u32) as usize;
+                covered[idx] += 1;
+            }
+        }
+    }
+
+    let gaps = covered.iter().filter(|&&c| c == 0).count();
+    let overlaps = covered.iter().filter(|&&c| c > 1).count();
+    assert_eq!(
+        gaps,
+        0,
+        "{label}: {gaps} of {} document pixels are covered by no tile, so they \
+         are never painted",
+        covered.len()
+    );
+    assert_eq!(
+        overlaps, 0,
+        "{label}: {overlaps} document pixels are covered by more than one tile, \
+         so tiles draw over each other",
+    );
+}
+
+/// The chain must produce the same tile geometry on every frame.
+///
+/// Oscillation is invisible to a single-frame test and is what the viewport
+/// showed as flicker: the output alternated between the source size and the
+/// resized size, so one frame in two was wrong.
+/// A tile's geometry as the display sees it: texture size and claimed region.
+type TileGeometry = Option<(u32, u32, Option<[f32; 4]>)>;
+
+fn assert_geometry_is_stable(
+    mp: &mut ModifierPipeline,
+    device: &Device,
+    queue: &Queue,
+    source: &TiledSource,
+    modifiers: &[Modifier],
+    label: &str,
+) {
+    let snapshot = |mp: &ModifierPipeline| -> Vec<TileGeometry> {
+        mp.tile_outputs
+            .iter()
+            .map(|o| o.as_ref().map(|o| (o.width, o.height, o.proc_px)))
+            .collect()
+    };
+
+    converge(mp, device, queue, source, modifiers, label);
+    let first = snapshot(mp);
+
+    for frame in 1..4 {
+        mp.prepare(device, queue, source, modifiers, false);
+        let now = snapshot(mp);
+        assert_eq!(
+            now, first,
+            "{label}: tile geometry changed on frame {frame} without the stack \
+             changing. An alternating size is what the viewport shows as \
+             flicker."
+        );
+    }
+}
+
+/// Dimensions that break even division, matching a real photo.
+///
+/// 1179x1159 with 512px tiles gives 9 tiles: a 155-wide right column and a
+/// 135-tall bottom row. Halving any of those lands off an integer, which is
+/// where the previous design produced fractional boundaries and an
+/// out-of-bounds last row.
+const REAL_W: u32 = 1179;
+const REAL_H: u32 = 1159;
+const REAL_TILE: u32 = 512;
+
+fn real_source(device: &Device, queue: &Queue) -> (TiledSource, ImageData) {
+    let pixels = test_pixels(REAL_W, REAL_H);
+    let image = ImageData::new(pixels, REAL_W, REAL_H);
+    let source = make_source(device, queue, &image, Some(REAL_TILE));
+    assert_eq!(
+        source.tiles.len(),
+        9,
+        "expected a 3x3 grid with partial edge tiles"
+    );
+    (source, image)
+}
+
+#[test]
+fn tiles_cover_an_odd_sized_document_without_a_resize() {
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let (source, _image) = real_source(&device, &queue);
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, REAL_W, REAL_H);
+    let chain = pointwise_chain();
+    converge(&mut mp, &device, &queue, &source, &chain, "cover/plain");
+    assert_tiles_cover_document(&mp, &source, REAL_W, REAL_H, "cover/plain");
+}
+
+#[test]
+fn tile_geometry_is_stable_across_frames() {
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let (source, _image) = real_source(&device, &queue);
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, REAL_W, REAL_H);
+    let chain = pointwise_chain();
+    assert_geometry_is_stable(
+        &mut mp,
+        &device,
+        &queue,
+        &source,
+        &chain,
+        "stable/pointwise",
+    );
+}
+
+#[test]
+fn tile_geometry_is_stable_with_a_blur() {
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let (source, _image) = real_source(&device, &queue);
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, REAL_W, REAL_H);
+    assert_geometry_is_stable(
+        &mut mp,
+        &device,
+        &queue,
+        &source,
+        &blur_chain(),
+        "stable/blur",
+    );
+}
+
+/// The target for the reworked resize preview.
+///
+/// Ignored until tiles are carved in output space. When that lands, this must
+/// pass: a 50% resize of 1179x1159 is 590x580, and the tiles must cover exactly
+/// that, on integer boundaries, identically on every frame.
+#[test]
+#[ignore = "resize preview is being reworked to carve tiles in output space"]
+fn tiles_cover_a_resized_odd_sized_document() {
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+    use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let (source, _image) = real_source(&device, &queue);
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, REAL_W, REAL_H);
+
+    let chain = vec![Modifier::new(ModifierKind::Resize(Resize {
+        mode: ResizeMode::Percent,
+        width: 50.0,
+        height: 50.0,
+        filter: ResizeFilter::Lanczos,
+        lock_aspect: true,
+    }))];
+
+    let out = chain_output_spec(ImageSpec::new(REAL_W, REAL_H), &plan_modifiers(&chain));
+    assert_geometry_is_stable(&mut mp, &device, &queue, &source, &chain, "cover/resized");
+    assert_tiles_cover_document(&mp, &source, out.w, out.h, "cover/resized");
+}
