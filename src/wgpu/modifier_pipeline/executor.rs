@@ -829,6 +829,60 @@ impl ModifierPipeline {
                         }
                         prev = outs;
                     }
+                    PlanItem::Step(_, m) if m.kind.as_resize().is_some() => {
+                        // A resample is two passes, horizontal then vertical,
+                        // matching cpu::resample. One 2D gather over the same
+                        // radius is a different filter and would not agree with
+                        // the export.
+                        //
+                        // out_r is already in this stage's output space, from
+                        // the backward walk, so its dimensions are the target.
+                        let filter = m.kind.as_resize().unwrap().filter;
+                        let (ow, oh) = rect_dims(out_r, scale);
+                        let (pw, _ph) = rect_dims(prev.rect, scale);
+
+                        // Intermediate: resampled horizontally, still at the
+                        // input's vertical extent.
+                        let mid_r = [out_r[0], prev.rect[1], out_r[2], prev.rect[3]];
+                        let (mw, mh) = rect_dims(mid_r, scale);
+                        let mid = self.pooled_stage(device, &mut slab_slot, mw, mh, mid_r);
+                        while self.resample_uniforms.len() < (pool_used + 1) * 2 {
+                            self.resample_uniforms
+                                .push(self.resample.uniform_buffer(device));
+                        }
+                        let (ub_h, ub_v) = {
+                            let base = pool_used * 2;
+                            (base, base + 1)
+                        };
+                        self.resample.record(
+                            device,
+                            queue,
+                            &mut encoder,
+                            &self.resample_uniforms[ub_h],
+                            &prev.view,
+                            &mid.view,
+                            ow,
+                            pw,
+                            false,
+                            filter,
+                        );
+
+                        let outs = self.pooled_stage(device, &mut slab_slot, ow, oh, out_r);
+                        self.resample.record(
+                            device,
+                            queue,
+                            &mut encoder,
+                            &self.resample_uniforms[ub_v],
+                            &mid.view,
+                            &outs.view,
+                            oh,
+                            mh,
+                            true,
+                            filter,
+                        );
+                        pool_used += 1;
+                        prev = outs;
+                    }
                     PlanItem::Step(_, m) => {
                         let radius = m.kind.effect_class().separable_apron().unwrap_or(0.0);
                         let apron_img = radius.ceil();

@@ -804,8 +804,15 @@ fn roi_pointwise_then_blur_partial_viewport() {
     run_roi_golden("roi/pointwise+blur", &chain, 1024, 0.42, 4, 2048, 2048);
 }
 
+/// A resize-only stack must render, not fall back to the source.
+///
+/// This replaces a test that required the opposite: it asserted every display
+/// bind group was cleared, which was right while resize was dropped from the
+/// plan and wrong once it became a real stage. Clearing them makes the view
+/// draw the source tiles at full resolution, so the image keeps every pixel
+/// while claiming to be smaller.
 #[test]
-fn resize_only_stack_leaves_no_stale_tile_outputs() {
+fn resize_only_stack_renders_through_the_pipeline() {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
 
     let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -814,68 +821,41 @@ fn resize_only_stack_leaves_no_stale_tile_outputs() {
     };
     let pixels = test_pixels(GOLDEN_W, GOLDEN_H);
     let image = ImageData::new(pixels, GOLDEN_W, GOLDEN_H);
-    let source = make_source(&device, &queue, &image, Some(FORCED_TILE_DIM));
+    let source = make_source(&device, &queue, &image, None);
     let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, GOLDEN_W, GOLDEN_H);
-
-    mp.prepare(&device, &queue, &source, &blur_chain(), true);
-    assert!(
-        mp.tile_outputs.iter().any(|o| o.is_some()),
-        "precondition: the blur chain should have produced tile outputs"
-    );
 
     let resize = vec![Modifier::new(ModifierKind::Resize(Resize {
         mode: ResizeMode::Percent,
-        width: 50.0,
-        height: 50.0,
+        width: 25.0,
+        height: 25.0,
         filter: ResizeFilter::Lanczos,
         lock_aspect: true,
     }))];
-    mp.prepare(&device, &queue, &source, &resize, true);
+    converge(&mut mp, &device, &queue, &source, &resize, "resize-only");
 
+    assert!(
+        mp.tile_outputs.iter().any(|o| o.is_some()),
+        "a resize-only stack produced no tile outputs, so the view falls back \
+         to drawing the unresized source"
+    );
     for i in 0..source.tiles.len() {
+        if mp.tile_outputs[i].is_none() {
+            continue;
+        }
         assert!(
-            mp.tile_display_bg(i, false).is_none() && mp.tile_display_bg(i, true).is_none(),
-            "tile {i} still has a display bind group after a resize-only stack"
+            mp.tile_display_bg(i, true).is_some(),
+            "tile {i} rendered but has no display bind group, so the draw loop \
+             skips it"
         );
     }
 }
 
-#[test]
-fn golden_trailing_resize_is_dropped_from_the_preview() {
-    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
-
-    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((device, queue)) = try_device() else {
-        return;
-    };
-    let pixels = test_pixels(GOLDEN_W, GOLDEN_H);
-    let image = ImageData::new(pixels.clone(), GOLDEN_W, GOLDEN_H);
-
-    let resize = Modifier::new(ModifierKind::Resize(Resize {
-        mode: ResizeMode::Percent,
-        width: 50.0,
-        height: 50.0,
-        filter: ResizeFilter::Lanczos,
-        lock_aspect: true,
-    }));
-
-    let mut with_resize = blur_chain();
-    with_resize.push(resize);
-
-    let mut outs: Vec<Vec<u8>> = Vec::new();
-    for chain in [with_resize, blur_chain()] {
-        let source = make_source(&device, &queue, &image, Some(FORCED_TILE_DIM));
-        let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, GOLDEN_W, GOLDEN_H);
-        converge(&mut mp, &device, &queue, &source, &chain, "trailing-resize");
-        outs.push(assemble(&device, &queue, &mp, &source));
-    }
-
-    let (max_d, pct) = diff_stats(&outs[0], &outs[1], 0);
-    assert_eq!(
-        max_d, 0,
-        "a trailing resize changed the preview: max diff {max_d} ({pct:.3}% over)"
-    );
-}
+// `golden_trailing_resize_is_dropped_from_the_preview` was deleted here. It
+// rendered a chain with and without a trailing resize and required the two to
+// be byte-identical, which encoded the bug as the specification: the executor
+// dropped the resize, so of course nothing changed. It is superseded by
+// `golden_resize_trailing_matches_the_oracle`, which compares against the CPU
+// at the chain's output size instead.
 
 fn run_resize_golden(label: &str, modifiers: &[Modifier], tile_dim: Option<u32>, tol: u8) {
     use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
@@ -972,7 +952,6 @@ fn resize_half() -> Modifier {
 }
 
 #[test]
-#[ignore = "per-stage geometry not implemented: executor drops resize from the plan"]
 fn golden_resize_trailing_matches_the_oracle() {
     let mut chain = blur_chain();
     chain.push(resize_half());
@@ -980,7 +959,6 @@ fn golden_resize_trailing_matches_the_oracle() {
 }
 
 #[test]
-#[ignore = "per-stage geometry not implemented: executor drops resize from the plan"]
 fn golden_resize_mid_chain_matches_the_oracle() {
     let chain = vec![
         resize_half(),

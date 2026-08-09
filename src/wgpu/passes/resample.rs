@@ -8,12 +8,6 @@
 //! shader and must land on exact texel centers; a linear sampler would blend
 //! each tap with its neighbor before weighting, which is a second filter
 //! applied underneath the first.
-//!
-//! Only the parity tests construct this so far. It is kept because its
-//! agreement with the CPU is established and the preview will need it, but the
-//! design that consumes it is being reworked -- see the resize notes.
-
-#![allow(dead_code, reason = "the reworked resize preview will consume this")]
 
 use bytemuck::{Pod, Zeroable};
 use iced::wgpu::{

@@ -183,10 +183,6 @@ fn quality_scale_for(physical_scale: f32) -> f32 {
     }
 }
 
-fn is_resize(kind: &ModifierKind) -> bool {
-    matches!(kind, ModifierKind::Resize(_))
-}
-
 const ROI_MARGIN_PX: f32 = 256.0;
 
 const PROCESS_VRAM_BUDGET_MIN: u64 = 512 * 1024 * 1024;
@@ -235,6 +231,8 @@ pub struct ModifierPipeline {
     pixel_sort: PixelSortCompute,
     text: TextPass,
     drawing: DrawingPass,
+    resample: crate::wgpu::passes::resample::ResamplePass,
+    resample_uniforms: Vec<iced::wgpu::Buffer>,
     display_bgl: BindGroupLayout,
     trilinear_sampler: Sampler,
     linear_sampler: Sampler,
@@ -310,6 +308,8 @@ impl ModifierPipeline {
             pixel_sort: PixelSortCompute::new(device),
             text: TextPass::new(device, format),
             drawing: DrawingPass::new(device, format),
+            resample: crate::wgpu::passes::resample::ResamplePass::new(device, format),
+            resample_uniforms: Vec::new(),
             display_bgl,
             trilinear_sampler,
             linear_sampler,
@@ -467,9 +467,7 @@ impl ModifierPipeline {
             }
         }
 
-        let mut plan_vec = plan_modifiers(modifiers);
-
-        plan_vec.retain(|item| !matches!(item, PlanItem::Step(_, m) if is_resize(&m.kind)));
+        let plan_vec = plan_modifiers(modifiers);
 
         if plan_vec.is_empty() {
             for o in self.tile_outputs.iter_mut() {
@@ -483,15 +481,6 @@ impl ModifierPipeline {
             }
             return;
         }
-
-        let source_spec = ImageSpec::new(source.full_width, source.full_height);
-        debug_assert!(
-            infer_specs(source_spec, &plan_vec)
-                .iter()
-                .all(|s| s.is_passthrough()),
-            "a modifier changes dimensions, but the GPU executor still sizes \
-             every stage from the source"
-        );
 
         let mut n_proc = 0u64;
         let (mut tw, mut th) = (1u32, 1u32);
