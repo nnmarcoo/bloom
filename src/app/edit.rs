@@ -210,12 +210,22 @@ pub fn update(
                 param,
                 ModifierParam::DrawingStrokeStart(_) | ModifierParam::DrawingStrokeExtend(_)
             );
+            // A resize changes the document's dimensions, so refit the view the
+            // way rotating does. Without it the image leaves the frame and the
+            // user has to zoom back out to see the change they just made.
+            let resizes = matches!(
+                param,
+                ModifierParam::ResizeWidth(_) | ModifierParam::ResizeHeight(_)
+            );
             let img_size = program.image_size();
             if let Some(m) = program.modifiers_mut().get_mut(i) {
                 m.apply_param(param, img_size);
             }
             if !stroke_edit {
                 program.mark_dirty();
+            }
+            if resizes {
+                program.fit();
             }
         }
         EditMsg::SetActive(i) => {
@@ -272,4 +282,107 @@ pub fn update(
         }
     }
     Task::none()
+}
+
+/// Refitting the view after a resize edit.
+///
+/// The behavior matches rotation, which has always refit unconditionally: the
+/// user's current zoom cannot stay meaningful across a change to the document's
+/// dimensions.
+#[cfg(test)]
+mod fit_on_resize_tests {
+    use super::*;
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+    use crate::wgpu::media::image_data::ImageData;
+    use glam::Vec2;
+    use iced::Rectangle;
+
+    const SRC_W: u32 = 800;
+    const SRC_H: u32 = 600;
+
+    fn program_with_resize() -> ViewProgram {
+        let mut p = ViewProgram::default();
+        p.set_image(ImageData::new(
+            vec![255u8; (SRC_W * SRC_H * 4) as usize],
+            SRC_W,
+            SRC_H,
+        ));
+        p.set_bounds(Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: 1000.0,
+            height: 800.0,
+        });
+        p.modifiers_mut()
+            .push(Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: 100.0,
+                height: 100.0,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            })));
+        p.fit();
+        p
+    }
+
+    fn edit(p: &mut ViewProgram, param: ModifierParam) {
+        let _ = update(
+            &mut EditState::default(),
+            p,
+            false,
+            EditMsg::Update(0, param),
+        );
+    }
+
+    /// The case Marco asked for: after upscaling, the document is back in frame
+    /// without the user having to zoom out.
+    #[test]
+    fn an_upscale_refits_the_view() {
+        let mut p = program_with_resize();
+        p.set_scale(4.0, Vec2::ZERO);
+
+        edit(&mut p, ModifierParam::ResizeWidth(200.0));
+
+        assert!(p.fit_active(), "the view is not in fit mode after a resize");
+        assert!(
+            p.scale() < 4.0,
+            "the view stayed at {} after a 2x upscale; the user still has to \
+             zoom out to see what they just did",
+            p.scale()
+        );
+    }
+
+    /// The other direction of the parameter, per `bloom-verify-by-breaking`.
+    #[test]
+    fn a_downscale_refits_the_view() {
+        let mut p = program_with_resize();
+        let before = p.scale();
+
+        edit(&mut p, ModifierParam::ResizeHeight(50.0));
+
+        assert!(p.fit_active());
+        assert!(
+            p.scale() > before,
+            "a half-size document should fill the viewport at a larger scale, \
+             but the scale stayed at {}",
+            p.scale()
+        );
+    }
+
+    /// An edit that leaves the dimensions alone must not disturb the view, so a
+    /// user comparing filters at high zoom keeps their position.
+    #[test]
+    fn changing_the_filter_leaves_the_view_alone() {
+        let mut p = program_with_resize();
+        p.set_scale(4.0, Vec2::ZERO);
+
+        edit(&mut p, ModifierParam::ResizeFilter(ResizeFilter::Nearest));
+
+        assert_eq!(
+            p.scale(),
+            4.0,
+            "changing the filter refit the view, which would fight a user who \
+             zoomed in to compare filters"
+        );
+    }
 }

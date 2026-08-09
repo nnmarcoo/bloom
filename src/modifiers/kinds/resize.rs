@@ -9,8 +9,10 @@
 //! direction: a lo-fi upscale wants Nearest precisely because it is blocky,
 //! and that intent cannot be recovered from the numbers.
 //!
-//! Export honors a resize at any position in the chain. The GPU preview drops
-//! it, so the viewport shows the source size.
+//! Both backends honor a resize at any position in the chain. The GPU preview
+//! renders it as a stage like any other, so the viewport shows the resized
+//! document rather than the source size, and the view refits when an edit
+//! changes those dimensions.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hash;
