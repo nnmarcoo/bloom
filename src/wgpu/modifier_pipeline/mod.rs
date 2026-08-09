@@ -201,6 +201,18 @@ const MAX_BLUR_FRAMES: u32 = 4;
 
 use crate::modifiers::gpu::UvRect;
 
+/// The source and output document sizes a display quad is placed against.
+///
+/// Carried together because they are only meaningful as a pair: a rect is
+/// mapped from one into the other.
+#[derive(Clone, Copy)]
+pub(super) struct DocScale {
+    pub src: (u32, u32),
+    pub out: (u32, u32),
+    /// Whether the tile has a visible sub-rect to inscribe the quad into.
+    pub roi_active: bool,
+}
+
 pub(super) struct ProcRect {
     px: [f32; 4],
     proc: UvRect,
@@ -243,6 +255,9 @@ pub struct ModifierPipeline {
     trilinear_sampler: Sampler,
     linear_sampler: Sampler,
     nearest_sampler: Sampler,
+    /// The document the last prepare produced, so refresh_display_transforms
+    /// can place quads without the modifier list.
+    doc_size: (u32, u32),
     exec_band_cursor: u32,
     exec_sig: u64,
     exec_slab_pool: Vec<Option<ScratchTarget>>,
@@ -320,6 +335,7 @@ impl ModifierPipeline {
             trilinear_sampler,
             linear_sampler,
             nearest_sampler,
+            doc_size: (width, height),
             exec_band_cursor: 0,
             exec_sig: 0,
             exec_slab_pool: Vec::new(),
@@ -540,7 +556,18 @@ impl ModifierPipeline {
             let (proc_px, w, h) = (o.proc_px, o.width, o.height);
             let pr = proc_rect_from_px(proc_px, tile, full_w, full_h, w, h);
             let roi_active = proc_px.is_some() && tile.isec_px.is_some();
-            self.build_roi_display_bgs(device, queue, ti, tile, &pr, roi_active);
+            self.build_roi_display_bgs(
+                device,
+                queue,
+                ti,
+                tile,
+                &pr,
+                DocScale {
+                    src: (source.full_width, source.full_height),
+                    out: self.doc_size,
+                    roi_active,
+                },
+            );
         }
     }
 
@@ -551,11 +578,17 @@ impl ModifierPipeline {
         ti: usize,
         tile: &crate::wgpu::tiled_source::Tile,
         pr: &ProcRect,
-        roi_active: bool,
+        doc: DocScale,
     ) {
-        let display_uniform: &iced::wgpu::Buffer = if roi_active
+        //  places pr.px within isec, so both must be in one
+        // space. pr.px is in the output document once the chain resizes, while
+        // isec is the tile's visible rect in the source, so isec is mapped the
+        // same way. Mixing them offsets each tile's quad by a different amount,
+        // which is what shows as seams between tiles.
+        let display_uniform: &iced::wgpu::Buffer = if doc.roi_active
             && let (Some(isec), Some(base)) = (tile.isec_px, tile.last_transform)
         {
+            let isec = tile_out_rect(isec, doc.src.0, doc.src.1, doc.out.0, doc.out.1);
             let t = inscribe_transform(base, isec, pr.px);
             if self.roi_display_uniforms[ti].is_none() {
                 self.roi_display_uniforms[ti] =

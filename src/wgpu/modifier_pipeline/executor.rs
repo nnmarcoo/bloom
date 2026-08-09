@@ -242,7 +242,19 @@ impl ModifierPipeline {
                 self.tile_outputs[ti].as_mut().unwrap().valid = true;
             }
 
-            self.build_roi_display_bgs(device, queue, ti, tile, &pr, true);
+            self.build_roi_display_bgs(
+                device,
+                queue,
+                ti,
+                tile,
+                &pr,
+                DocScale {
+                    src: (source.full_width, source.full_height),
+                    // The pointwise path has no size-changing stage.
+                    out: (source.full_width, source.full_height),
+                    roi_active: true,
+                },
+            );
         }
 
         self.reprocess_pending |= scheduler.pending();
@@ -316,6 +328,7 @@ impl ModifierPipeline {
         let source_spec = ImageSpec::new(source.full_width, source.full_height);
         let out_spec_doc = specs.last().map_or(source_spec, |s| s.output);
         let chain_resizes = out_spec_doc != source_spec;
+        self.doc_size = (out_spec_doc.w, out_spec_doc.h);
         let classes: Vec<StepClass> = plan
             .iter()
             .zip(&specs)
@@ -1031,6 +1044,12 @@ impl ModifierPipeline {
                 }
             }
 
+            eprintln!(
+                "SLAB rect={:?} tex {}x{} | u_px={u_px:?}",
+                prev.rect,
+                prev.tex.width(),
+                prev.tex.height()
+            );
             let slab_r = scale_rect(prev.rect, scale);
             for &ti in &procs {
                 let p = scale_rect(prs[ti].as_ref().unwrap().px, scale);
@@ -1044,6 +1063,15 @@ impl ModifierPipeline {
                     continue;
                 }
                 let o = self.tile_outputs[ti].as_ref().unwrap();
+                eprintln!(
+                    "CP ti={ti} p={p:?} i={i:?} tex {}x{} dst_origin=({},{}) extent=({},{})",
+                    o.width,
+                    o.height,
+                    i[0] - p[0],
+                    i[1] - p[1],
+                    (i[2] - i[0]).min(o.width.saturating_sub(i[0] - p[0])),
+                    (i[3] - i[1]).min(o.height.saturating_sub(i[1] - p[1]))
+                );
                 encoder.copy_texture_to_texture(
                     tex_copy_info(
                         &prev.tex,
@@ -1082,7 +1110,18 @@ impl ModifierPipeline {
 
         for &ti in &procs {
             let pr = prs[ti].take().unwrap();
-            self.build_roi_display_bgs(device, queue, ti, &source.tiles[ti], &pr, true);
+            self.build_roi_display_bgs(
+                device,
+                queue,
+                ti,
+                &source.tiles[ti],
+                &pr,
+                DocScale {
+                    src: (source.full_width, source.full_height),
+                    out: (out_spec_doc.w, out_spec_doc.h),
+                    roi_active: true,
+                },
+            );
         }
     }
 

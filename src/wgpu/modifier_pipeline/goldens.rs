@@ -910,8 +910,6 @@ fn assemble_output(
     out_w: u32,
     out_h: u32,
 ) -> Vec<u8> {
-    let sx = out_w as f32 / source.full_width as f32;
-    let sy = out_h as f32 / source.full_height as f32;
     let mut full = vec![0u8; (out_w * out_h * 4) as usize];
     for ti in 0..source.tiles.len() {
         let Some(o) = mp.tile_outputs[ti].as_ref() else {
@@ -924,8 +922,11 @@ fn assemble_output(
             (tile.x + tile.width) as f32,
             (tile.y + tile.height) as f32,
         ]);
-        let x0 = (px[0] * sx).round() as u32;
-        let y0 = (px[1] * sy).round() as u32;
+        // proc_px is already in the output document, so it is used directly.
+        // Scaling it again here double-counted the resize and placed every
+        // tile at a fraction of its true position.
+        let x0 = px[0].round() as u32;
+        let y0 = px[1].round() as u32;
         let data = read_texture(device, queue, &o._tex, o.width, o.height);
         for r in 0..o.height.min(out_h.saturating_sub(y0)) {
             let cols = o.width.min(out_w.saturating_sub(x0));
@@ -968,7 +969,6 @@ fn golden_resize_mid_chain_matches_the_oracle() {
 }
 
 #[test]
-#[ignore = "per-stage geometry not implemented: executor drops resize from the plan"]
 fn golden_resize_mid_chain_multi_tile() {
     let chain = vec![
         resize_half(),
@@ -1187,7 +1187,6 @@ fn tile_geometry_is_stable_with_a_blur() {
 /// pass: a 50% resize of 1179x1159 is 590x580, and the tiles must cover exactly
 /// that, on integer boundaries, identically on every frame.
 #[test]
-#[ignore = "resize preview is being reworked to carve tiles in output space"]
 fn tiles_cover_a_resized_odd_sized_document() {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
     use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
