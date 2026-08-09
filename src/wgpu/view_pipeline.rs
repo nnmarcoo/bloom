@@ -27,7 +27,7 @@ use crate::{
         error::ViewError,
         gpu,
         media::image_data::{ImageData, ImageId},
-        modifier_pipeline::ModifierPipeline,
+        modifier_pipeline::{ModifierPipeline, is_resize},
         passes::{
             checkerboard::{CheckerboardPass, CheckerboardUniforms},
             display::DisplayPass,
@@ -364,9 +364,20 @@ impl ViewPipeline {
             return;
         }
 
-        let has_expensive = modifiers
-            .iter()
-            .any(|m| m.has_visible_effect() && !m.kind.effect_class().is_pointwise());
+        // Deferring expensive work while the view moves keeps panning smooth,
+        // but the deferral must not include anything that changes the image's
+        // geometry. `refresh_display_transforms` moves the quads without
+        // re-running the chain, so a deferred resize leaves full-size textures
+        // on shrunken quads: the viewport shows the unresized image until the
+        // view settles, then snaps to the right one. That reads as flicker,
+        // with the correct result appearing only in glimpses.
+        //
+        // Resize declares `FullFrame` because it reads every pixel, which is
+        // true of its ROI but wrong as a cost signal. A resample is two cheap
+        // passes, so it is never worth deferring.
+        let has_expensive = modifiers.iter().any(|m| {
+            m.has_visible_effect() && !m.kind.effect_class().is_pointwise() && !is_resize(&m.kind)
+        });
         if has_expensive
             && self.interacting()
             && let Some(mp) = self.modifier_pipeline.as_mut()
@@ -601,6 +612,7 @@ impl Pipeline for ViewPipeline {
 
 #[cfg(test)]
 mod preview_gate_tests {
+    use super::is_resize;
     use crate::modifiers::kinds::{Exposure, Resize, ResizeFilter, ResizeMode};
     use crate::modifiers::{Modifier, ModifierKind};
 
@@ -623,6 +635,60 @@ mod preview_gate_tests {
             filter: ResizeFilter::Lanczos,
             lock_aspect: true,
         }))
+    }
+
+    /// Work deferred while the view moves must not include geometry changes.
+    ///
+    /// `refresh_display_transforms` moves the quads without re-running the
+    /// chain. Deferring a resize therefore leaves full-size textures on shrunken
+    /// quads, so the viewport shows the unresized image until the view settles
+    /// and then snaps. That reads as flicker, with the correct result appearing
+    /// only in glimpses.
+    fn defers_while_interacting(modifiers: &[Modifier]) -> bool {
+        modifiers.iter().any(|m| {
+            m.has_visible_effect() && !m.kind.effect_class().is_pointwise() && !is_resize(&m.kind)
+        })
+    }
+
+    #[test]
+    fn a_resize_is_never_deferred() {
+        assert!(
+            !defers_while_interacting(&[resize(25.0)]),
+            "a resize was deferred while interacting, so the viewport keeps \
+             full-size textures on shrunken quads and flickers"
+        );
+    }
+
+    /// Resize declares FullFrame because it reads every pixel. That is correct
+    /// as an ROI and wrong as a cost signal, which is what this gate wants.
+    #[test]
+    fn a_blur_is_still_deferred() {
+        let chain = vec![Modifier::new(ModifierKind::GaussianBlur(
+            crate::modifiers::kinds::GaussianBlur { radius: 8.0 },
+        ))];
+        assert!(defers_while_interacting(&chain));
+    }
+
+    #[test]
+    fn a_blur_with_a_resize_is_still_deferred() {
+        let chain = vec![
+            Modifier::new(ModifierKind::GaussianBlur(
+                crate::modifiers::kinds::GaussianBlur { radius: 8.0 },
+            )),
+            resize(50.0),
+        ];
+        assert!(
+            defers_while_interacting(&chain),
+            "the blur still needs deferring even though the resize does not"
+        );
+    }
+
+    #[test]
+    fn a_pointwise_stack_is_not_deferred() {
+        let chain = vec![Modifier::new(ModifierKind::Exposure(Exposure {
+            exposure: 0.4,
+        }))];
+        assert!(!defers_while_interacting(&chain));
     }
 
     #[test]

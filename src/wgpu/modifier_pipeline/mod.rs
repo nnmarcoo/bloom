@@ -189,7 +189,7 @@ fn quality_scale_for(physical_scale: f32) -> f32 {
     }
 }
 
-fn is_resize(kind: &ModifierKind) -> bool {
+pub(crate) fn is_resize(kind: &ModifierKind) -> bool {
     matches!(kind, ModifierKind::Resize(_))
 }
 
