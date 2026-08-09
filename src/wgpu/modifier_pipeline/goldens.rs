@@ -1274,3 +1274,97 @@ fn changing_the_resize_does_not_reuse_stale_outputs() {
         }
     }
 }
+
+/// Rows either side of a band boundary must match the CPU oracle.
+///
+/// Marco reported a horizontal seam "a bit under the middle" when upscaling
+/// D:/images/IMG_1815.png to 200%. That image is 1179x1159, which becomes
+/// 2358x2318, and `BLUR_MAX_BAND_H` is 1024, so the executor bands at output
+/// rows 1024 and 2048. The first is 44.2% down: the seam's location.
+///
+/// The geometry there is exact -- band heights sum to the document with no gap
+/// or overlap -- so a coverage check cannot see this. What differs is the
+/// pixels: a resample tap near a band's edge reaches rows the band did not
+/// fetch, and `ClampToEdge` substitutes the edge row instead.
+///
+/// The chain is resize-only so nothing else contributes an apron, which is what
+/// makes this specific to the resample rather than to banding in general.
+#[test]
+#[ignore = "upscale diverges from the oracle at large sizes; see bloom-resize-upscale-broken"]
+fn rows_across_a_band_boundary_match_the_oracle() {
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+    use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let (w, h) = (1179u32, 1159u32);
+    let pixels = test_pixels(w, h);
+    let image = ImageData::new(pixels.clone(), w, h);
+    let source = make_source(&device, &queue, &image, Some(512));
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
+
+    let chain = vec![Modifier::new(ModifierKind::Resize(Resize {
+        mode: ResizeMode::Percent,
+        width: 200.0,
+        height: 200.0,
+        filter: ResizeFilter::Lanczos,
+        lock_aspect: true,
+    }))];
+    let out = chain_output_spec(ImageSpec::new(w, h), &plan_modifiers(&chain));
+    converge(&mut mp, &device, &queue, &source, &chain, "band-seam");
+
+    let gpu = assemble_output(&device, &queue, &mp, &source, out.w, out.h);
+    let cpu = crate::modifiers::cpu::render_full(&chain, &[], &[], &pixels, w, h);
+    assert_eq!(
+        gpu.len(),
+        cpu.len(),
+        "output size disagrees with the oracle"
+    );
+
+    // Walk every row and report the worst, so a seam anywhere is found rather
+    // than only at the boundary this was written for.
+    let stride = out.w as usize * 4;
+    let mut worst = (0u8, 0usize);
+    for row in 0..out.h as usize {
+        let o = row * stride;
+        let d = gpu[o..o + stride]
+            .iter()
+            .zip(&cpu[o..o + stride])
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap_or(0);
+        if d > worst.0 {
+            worst = (d, row);
+        }
+    }
+    let bad: Vec<usize> = (0..out.h as usize)
+        .filter(|&row| {
+            let o = row * stride;
+            gpu[o..o + stride]
+                .iter()
+                .zip(&cpu[o..o + stride])
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap_or(0)
+                > 4
+        })
+        .collect();
+    println!(
+        "SEAMROWS {} of {} rows differ, first {:?} last {:?}",
+        bad.len(),
+        out.h,
+        bad.first(),
+        bad.last()
+    );
+    assert!(
+        worst.0 <= 4,
+        "row {} differs from the oracle by {} levels; band boundaries are at \
+         1024 and 2048 in this {}x{} document",
+        worst.1,
+        worst.0,
+        out.w,
+        out.h
+    );
+}
