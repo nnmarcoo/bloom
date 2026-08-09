@@ -897,6 +897,13 @@ impl ModifierPipeline {
                         }
                         prev = outs;
                     }
+                    // A resize that does not change the dimensions is a copy
+                    // through two resample passes for no result. It is the
+                    // default state of a freshly added Resize (100%), and a
+                    // slider passes through it, so leaving it in the chain
+                    // charges full price for nothing.
+                    PlanItem::Step(_, m)
+                        if m.kind.as_resize().is_some() && specs[k].input == specs[k].output => {}
                     PlanItem::Step(_, m) if m.kind.as_resize().is_some() => {
                         // A resample is two passes, horizontal then vertical,
                         // matching cpu::resample. One 2D gather over the same

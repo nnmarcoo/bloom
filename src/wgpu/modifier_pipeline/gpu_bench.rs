@@ -144,6 +144,38 @@ mod tests {
         best
     }
 
+    /// How many `prepare` calls a chain needs before it stops asking for more.
+    ///
+    /// Wall-clock time hides this: the executor renders one band per call and
+    /// defers the rest, so a chain that converges in 40 frames feels far worse
+    /// while dragging a slider than one that converges in 2, even when the
+    /// total work is similar.
+    fn frames_to_converge(
+        device: &Device,
+        queue: &Queue,
+        source: &TiledSource,
+        modifiers: &[Modifier],
+        w: u32,
+        h: u32,
+    ) -> Option<u32> {
+        let mut mp = ModifierPipeline::new(device, TextureFormat::Rgba8Unorm, w, h);
+        let mut dirty = true;
+        for n in 1..=256u32 {
+            mp.prepare(device, queue, source, modifiers, dirty);
+            dirty = false;
+            let all_valid = (0..source.tiles.len()).all(|ti| {
+                mp.tile_outputs
+                    .get(ti)
+                    .and_then(|o| o.as_ref())
+                    .is_none_or(|o| o.valid)
+            });
+            if !mp.reprocess_pending() && all_valid {
+                return Some(n);
+            }
+        }
+        None
+    }
+
     fn m(kind: ModifierKind) -> Modifier {
         Modifier::new(kind)
     }
@@ -354,6 +386,158 @@ mod tests {
                 }
             }
             println!("  {:-<46}", "");
+        }
+        println!();
+    }
+
+    /// A modest image at the size Marco reports as slow.
+    ///
+    /// 1000x1000 is a single tile and a few megapixels; nothing here should be
+    /// expensive. If it is, the cost is structural rather than a quality
+    /// tradeoff, so this reports frames-to-converge alongside the time.
+    #[test]
+    #[ignore = "GPU timing baseline; run with --release --ignored --nocapture"]
+    fn gpu_bench_small_image_resize() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((device, queue)) = try_device() else {
+            eprintln!("gpu_bench_small_image_resize: no adapter, skipping");
+            return;
+        };
+
+        const SW: u32 = 1000;
+        const SH: u32 = 1000;
+        let image = ImageData::new(pixels(SW, SH), SW, SH);
+        let mut source = make_source(&device, &queue, &image);
+
+        let resize = |pct: f32| -> Vec<Modifier> {
+            vec![m(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: pct,
+                height: pct,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            }))]
+        };
+
+        let cases: Vec<(&str, Vec<Modifier>)> = vec![
+            ("none", vec![]),
+            (
+                "exposure only",
+                vec![m(ModifierKind::Exposure(Exposure { exposure: 0.3 }))],
+            ),
+            ("resize 100% (identity)", resize(100.0)),
+            ("resize 50%", resize(50.0)),
+            ("resize 200%", resize(200.0)),
+            ("resize 400%", resize(400.0)),
+            ("resize 800%", resize(800.0)),
+        ];
+
+        println!(
+            "
+GPU small-image baseline — {SW}x{SH} source, best of {RUNS}"
+        );
+        println!("(frames = prepare() calls before the pipeline stops asking for more)");
+
+        for (view_label, frac, phys) in [("100% zoom", 1.0, 1.0), ("fit (0.5)", 1.0, 0.5)] {
+            set_viewport(&mut source, frac, phys);
+            println!(
+                "
+  {view_label}  (physical_scale={phys})"
+            );
+            println!("  {:-<52}", "");
+            println!("  {:<28} {:>9} {:>10}", "chain", "ms", "frames");
+            println!("  {:-<52}", "");
+            for (label, modifiers) in &cases {
+                let ms = match time_chain(&device, &queue, &source, modifiers) {
+                    Some(d) => format!("{:.2}", d.as_secs_f64() * 1000.0),
+                    None => "n/c".to_string(),
+                };
+                let fr = match frames_to_converge(&device, &queue, &source, modifiers, SW, SH) {
+                    Some(n) => n.to_string(),
+                    None => ">256".to_string(),
+                };
+                println!("  {:<28} {:>9} {:>10}", label, ms, fr);
+            }
+            println!("  {:-<52}", "");
+        }
+        println!();
+    }
+
+    /// Dragging the resize slider: many edits in a row, each invalidating the
+    /// previous document.
+    ///
+    /// This is what the user actually does, and it is not what the other
+    /// benchmarks measure. Each tick changes the document size, so every tile
+    /// output is rebuilt at a new size and nothing is reused. Reported as the
+    /// mean cost of one tick.
+    #[test]
+    #[ignore = "GPU timing baseline; run with --release --ignored --nocapture"]
+    fn gpu_bench_resize_slider_drag() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((device, queue)) = try_device() else {
+            eprintln!("gpu_bench_resize_slider_drag: no adapter, skipping");
+            return;
+        };
+
+        for (sw, sh) in [(1000u32, 1000u32), (2000, 2000)] {
+            let image = ImageData::new(pixels(sw, sh), sw, sh);
+            let mut source = make_source(&device, &queue, &image);
+            set_viewport(&mut source, 1.0, 0.5);
+
+            println!(
+                "
+  slider drag — {sw}x{sh} source"
+            );
+            println!("  {:-<58}", "");
+            println!(
+                "  {:<20} {:>12} {:>10} {:>10}",
+                "range", "total ms", "ticks", "ms/tick"
+            );
+            println!("  {:-<58}", "");
+
+            for (label, lo, hi, refit) in [
+                ("100->150 no refit", 100.0f32, 150.0f32, false),
+                ("100->150 refit", 100.0, 150.0, true),
+                ("150->300 no refit", 150.0, 300.0, false),
+                ("150->300 refit", 150.0, 300.0, true),
+                ("300->400 no refit", 300.0, 400.0, false),
+                ("300->400 refit", 300.0, 400.0, true),
+            ] {
+                let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, sw, sh);
+                let ticks = 20u32;
+                let t = Instant::now();
+                for i in 0..ticks {
+                    let pct = lo + (hi - lo) * (i as f32 / (ticks - 1) as f32);
+                    let chain = vec![m(ModifierKind::Resize(Resize {
+                        mode: ResizeMode::Percent,
+                        width: pct,
+                        height: pct,
+                        filter: ResizeFilter::Lanczos,
+                        lock_aspect: true,
+                    }))];
+                    if refit {
+                        // What EditMsg::Update now does: refit, so the view zoom
+                        // tracks the document and physical_scale moves every tick.
+                        source.physical_scale = (1000.0 / (sw as f32 * pct / 100.0)).min(1.0);
+                    }
+                    // One prepare per tick, as the app does per frame.
+                    mp.prepare(&device, &queue, &source, &chain, true);
+                }
+                let _ = device.poll(iced::wgpu::PollType::wait_indefinitely());
+                let ms = t.elapsed().as_secs_f64() * 1000.0;
+                println!(
+                    "  {:<20} {:>12.2} {:>10} {:>10.2}",
+                    label,
+                    ms,
+                    ticks,
+                    ms / ticks as f64
+                );
+            }
+            println!("  {:-<58}", "");
         }
         println!();
     }
