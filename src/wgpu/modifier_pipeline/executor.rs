@@ -2,13 +2,9 @@
 //!
 //! Everything here works in one coordinate space: tiles are carved from the
 //! source, proc_px is document-space throughout, and the ROI walk runs backward
-//! through a single geometry. A stage that changes dimensions mid-chain would
+//! through a single geometry. A stage that changed dimensions mid-chain would
 //! put the stages on either side of it in different spaces, which this executor
-//! cannot express, so a resize in the middle is still dropped from the preview.
-//!
-//! Resizes at the tail are handled outside the chain: it runs at source
-//! geometry and `resample_outputs` scales each tile afterward, which needs no
-//! per-stage geometry because no stage follows.
+//! cannot express, so resize is dropped from the preview plan.
 //!
 //! Work is split into bands when a chain is expensive, with exec_band_cursor
 //! carrying progress across frames so the UI stays responsive.
@@ -152,7 +148,6 @@ impl ModifierPipeline {
 
             let visible_roi = tile.proc_rect_px;
             let reuse = match (self.tile_outputs[ti].as_ref(), visible_roi) {
-                (Some(o), _) if o.resampled => false,
                 (Some(o), Some(roi)) => {
                     o.proc_px.is_some_and(|p| rect_contains(p, roi))
                         && (o.quality_scale - cur_scale).abs() < 1e-4
@@ -191,7 +186,6 @@ impl ModifierPipeline {
                     height: pr.h,
                     proc_px: Some(pr.px),
                     quality_scale: cur_scale,
-                    resampled: false,
                 });
                 self.tile_display_bgs_linear[ti] = None;
                 self.tile_display_bgs_nearest[ti] = None;
@@ -378,8 +372,7 @@ impl ModifierPipeline {
                 continue;
             }
             let reuse = self.tile_outputs[ti].as_ref().is_some_and(|o| {
-                !o.resampled
-                    && o.proc_px.is_some_and(|p| rect_contains(p, roi))
+                o.proc_px.is_some_and(|p| rect_contains(p, roi))
                     && (o.quality_scale - scale).abs() < 1e-4
             });
             let pr = if reuse {
@@ -409,7 +402,6 @@ impl ModifierPipeline {
                     height: pr.h,
                     proc_px: Some(pr.px),
                     quality_scale: scale,
-                    resampled: false,
                 });
                 self.tile_display_bgs_linear[ti] = None;
                 self.tile_display_bgs_nearest[ti] = None;

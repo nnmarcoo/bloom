@@ -111,12 +111,6 @@ struct TileOutput {
     height: u32,
     proc_px: Option<[f32; 4]>,
     quality_scale: f32,
-    /// Set once `resample_outputs` has replaced the texture with a smaller one.
-    ///
-    /// `proc_px` and `quality_scale` still describe the geometry the chain
-    /// rendered at, so they no longer predict this texture's size. The executor
-    /// must not reuse it as a render target.
-    resampled: bool,
 }
 
 struct ScratchTarget {
@@ -149,7 +143,7 @@ impl ScratchTarget {
     }
 }
 
-use crate::modifiers::plan::{ImageSpec, PlanItem, chain_output_spec, infer_specs, plan_modifiers};
+use crate::modifiers::plan::{ImageSpec, PlanItem, infer_specs, plan_modifiers};
 
 const TILE_BUDGET: usize = 2;
 
@@ -189,25 +183,8 @@ fn quality_scale_for(physical_scale: f32) -> f32 {
     }
 }
 
-pub(crate) fn is_resize(kind: &ModifierKind) -> bool {
+fn is_resize(kind: &ModifierKind) -> bool {
     matches!(kind, ModifierKind::Resize(_))
-}
-
-/// The filter of the last enabled resize, which is the one that decides how the
-/// final downsample looks.
-///
-/// With several stacked resizes the CPU applies each in turn; the preview does
-/// them as one step, so it takes the last filter rather than blending them.
-fn resize_filter(modifiers: &[Modifier]) -> crate::modifiers::kinds::ResizeFilter {
-    modifiers
-        .iter()
-        .rev()
-        .filter(|m| m.enabled)
-        .find_map(|m| match &m.kind {
-            ModifierKind::Resize(r) => Some(r.filter),
-            _ => None,
-        })
-        .unwrap_or(crate::modifiers::kinds::ResizeFilter::Lanczos)
 }
 
 const ROI_MARGIN_PX: f32 = 256.0;
@@ -258,15 +235,10 @@ pub struct ModifierPipeline {
     pixel_sort: PixelSortCompute,
     text: TextPass,
     drawing: DrawingPass,
-    resample: crate::wgpu::passes::resample::ResamplePass,
-    resample_uniforms: Vec<iced::wgpu::Buffer>,
     display_bgl: BindGroupLayout,
     trilinear_sampler: Sampler,
     linear_sampler: Sampler,
     nearest_sampler: Sampler,
-    /// The chain's output size, so  can normalize a
-    /// resampled tile's quad without re-deriving the plan.
-    doc_size: (u32, u32),
     exec_band_cursor: u32,
     exec_sig: u64,
     exec_slab_pool: Vec<Option<ScratchTarget>>,
@@ -338,13 +310,10 @@ impl ModifierPipeline {
             pixel_sort: PixelSortCompute::new(device),
             text: TextPass::new(device, format),
             drawing: DrawingPass::new(device, format),
-            resample: crate::wgpu::passes::resample::ResamplePass::new(device, format),
-            resample_uniforms: Vec::new(),
             display_bgl,
             trilinear_sampler,
             linear_sampler,
             nearest_sampler,
-            doc_size: (width, height),
             exec_band_cursor: 0,
             exec_sig: 0,
             exec_slab_pool: Vec::new(),
@@ -500,32 +469,9 @@ impl ModifierPipeline {
 
         let mut plan_vec = plan_modifiers(modifiers);
 
-        // Resizes at the tail of the chain are separated out rather than
-        // dropped. Everything before them runs at source geometry, which is
-        // what this executor can express, and their combined effect is a change
-        // to the document's size. The viewport already fits that size, so the
-        // display draws the chain's output across the resized quad.
-        //
-        // A resize in the *middle* is still dropped: stages after it would have
-        // to run in the post-resize space, and one coordinate space is all the
-        // ROI walk and tiling can carry today.
-        let trailing_resizes = plan_vec
-            .iter()
-            .rev()
-            .take_while(|item| matches!(item, PlanItem::Step(_, m) if is_resize(&m.kind)))
-            .count();
-        plan_vec.truncate(plan_vec.len() - trailing_resizes);
         plan_vec.retain(|item| !matches!(item, PlanItem::Step(_, m) if is_resize(&m.kind)));
 
-        // Nothing to render *and* nothing to resize: clear the outputs so the
-        // view falls back to drawing the source directly.
-        //
-        // A resize-only stack must not take this path. Its plan is empty once
-        // the trailing resizes are split off, but falling back to the source
-        // draws full-resolution tiles inside the shrunken quad, so the image
-        // keeps all its detail while claiming to be smaller. At an extreme
-        // resize that reads as the whole picture crammed into a few pixels.
-        if plan_vec.is_empty() && trailing_resizes == 0 {
+        if plan_vec.is_empty() {
             for o in self.tile_outputs.iter_mut() {
                 *o = None;
             }
@@ -575,168 +521,6 @@ impl ModifierPipeline {
         } else {
             self.execute_kernel_chain(device, queue, source, &plan_vec, ps, ds);
         }
-
-        if trailing_resizes > 0 {
-            let out = chain_output_spec(source_spec, &plan_modifiers(modifiers));
-            self.resample_outputs(device, queue, source, out, resize_filter(modifiers));
-        }
-    }
-
-    /// Resize each tile's output to the extent it occupies in the resized
-    /// document.
-    ///
-    /// The target is an absolute size derived from the tile's `proc_px`, not a
-    /// ratio applied to the current texture. Those differ whenever the chain
-    /// rendered at reduced quality: the texture is already smaller than the
-    /// region it represents, so scaling it by the document ratio would shrink
-    /// it twice and leave the tiles mismatched against their neighbors.
-    ///
-    /// Rounding the region's edges rather than its extent keeps adjacent tiles
-    /// sharing a boundary. Rounding widths independently lets two tiles that
-    /// met exactly end up a pixel apart.
-    fn resample_outputs(
-        &mut self,
-        device: &Device,
-        queue: &Queue,
-        source: &TiledSource,
-        out: ImageSpec,
-        filter: crate::modifiers::kinds::ResizeFilter,
-    ) {
-        let sx = out.w as f32 / source.full_width.max(1) as f32;
-        let sy = out.h as f32 / source.full_height.max(1) as f32;
-        if (sx - 1.0).abs() < 1e-6 && (sy - 1.0).abs() < 1e-6 {
-            return;
-        }
-
-        let mut encoder = device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
-            label: Some("resize-outputs"),
-        });
-        let usage = TextureUsages::RENDER_ATTACHMENT
-            | TextureUsages::TEXTURE_BINDING
-            | TextureUsages::COPY_SRC
-            | TextureUsages::COPY_DST;
-        let mut resampled_tiles: Vec<usize> = Vec::new();
-
-        for ti in 0..source.tiles.len() {
-            let Some(o) = self.tile_outputs[ti].as_ref() else {
-                continue;
-            };
-            if !o.valid {
-                continue;
-            }
-            let tile = &source.tiles[ti];
-            let px = o.proc_px.unwrap_or([
-                tile.x as f32,
-                tile.y as f32,
-                (tile.x + tile.width) as f32,
-                (tile.y + tile.height) as f32,
-            ]);
-            let (src_w, src_h) = (o.width, o.height);
-            let x0 = (px[0] * sx).round();
-            let y0 = (px[1] * sy).round();
-            let dst_w = (((px[2] * sx).round() - x0) as u32).max(1);
-            let dst_h = (((px[3] * sy).round() - y0) as u32).max(1);
-            if (dst_w, dst_h) == (src_w, src_h) {
-                // The texture is already the right size, which happens when the
-                // quality scale has coincidentally shrunk it by the same factor
-                // the resize asks for. No resampling is needed, but `proc_px`
-                // must still move into the resized document or the display quad
-                // stays full-size and stretches the tile back over the original
-                // area.
-                let slot = self.tile_outputs[ti].as_mut().unwrap();
-                slot.proc_px = Some([px[0] * sx, px[1] * sy, px[2] * sx, px[3] * sy]);
-                slot.resampled = true;
-                resampled_tiles.push(ti);
-                continue;
-            }
-
-            while self.resample_uniforms.len() < (ti + 1) * 2 {
-                self.resample_uniforms
-                    .push(self.resample.uniform_buffer(device));
-            }
-
-            // Horizontal into an intermediate, then vertical into the final.
-            // Both axes in one texture would apply a 2D gather, which is a
-            // different filter than the CPU's separable pair.
-            let mid = gpu::texture_2d(device, dst_w, src_h, self.format, usage, Some("resize-mid"));
-            let mid_view = mid.create_view(&Default::default());
-            let dst = gpu::texture_2d(device, dst_w, dst_h, self.format, usage, Some("resize-out"));
-            let dst_view = dst.create_view(&Default::default());
-
-            self.resample.record(
-                device,
-                queue,
-                &mut encoder,
-                &self.resample_uniforms[ti * 2],
-                &o.view,
-                &mid_view,
-                dst_w,
-                src_w,
-                false,
-                filter,
-            );
-            self.resample.record(
-                device,
-                queue,
-                &mut encoder,
-                &self.resample_uniforms[ti * 2 + 1],
-                &mid_view,
-                &dst_view,
-                dst_h,
-                src_h,
-                true,
-                filter,
-            );
-
-            let slot = self.tile_outputs[ti].as_mut().unwrap();
-            slot._tex = dst;
-            slot.view = dst_view;
-            slot.width = dst_w;
-            slot.height = dst_h;
-            // The chain writes bands into this texture sized from `proc_px` at
-            // `quality_scale`, and those still describe the pre-resample
-            // geometry. Reusing a resampled output would copy a full-size band
-            // into a shrunken texture, which wgpu rejects outright: "Copy of Y
-            // 1024..1024 would end up overrunning the bounds of the Destination
-            // texture of Y size 3". Marking it resampled forces a fresh
-            // allocation next frame.
-            // `proc_px` is the region this output covers, and the display quad
-            // is built from it. Leaving it in source space makes the quad
-            // full-size while the texture is not, so the resized pixels get
-            // stretched back across the original area -- the resize does its
-            // work and is then undone at draw time.
-            //
-            // Moving it into the resized document keeps the quad and the
-            // texture describing the same region.
-            slot.proc_px = Some([px[0] * sx, px[1] * sy, px[2] * sx, px[3] * sy]);
-            slot.resampled = true;
-            resampled_tiles.push(ti);
-        }
-        queue.submit([encoder.finish()]);
-
-        // Rebuild the display bind groups against the new textures.
-        //
-        // They point at the texture view, so replacing it invalidates them. The
-        // executor builds them before this runs, and nothing rebuilds them
-        // afterward, so simply clearing them left `tile_display_bg` returning
-        // None. The draw loop pushes nothing for such a tile and falls through
-        // without drawing it, which is what produced the flicker: the tile
-        // appeared on frames where the bind group survived and vanished on
-        // frames where it did not.
-        // `proc_px` is now in the resized document, so the quad is normalized
-        // against that rather than the source.
-        self.doc_size = (out.w, out.h);
-        let (doc_w, doc_h) = (out.w as f32, out.h as f32);
-        for ti in resampled_tiles {
-            let tile = &source.tiles[ti];
-            let (proc_px, w, h) = {
-                let o = self.tile_outputs[ti].as_ref().unwrap();
-                (o.proc_px, o.width, o.height)
-            };
-            let pr = proc_rect_from_px(proc_px, tile, doc_w, doc_h, w, h);
-            let roi_active = proc_px.is_some() && tile.isec_px.is_some();
-            self.build_roi_display_bgs(device, queue, ti, tile, &pr, roi_active);
-        }
     }
 
     pub fn refresh_display_transforms(
@@ -758,15 +542,8 @@ impl ModifierPipeline {
             if !o.valid {
                 continue;
             }
-            let (proc_px, w, h, resampled) = (o.proc_px, o.width, o.height, o.resampled);
-            // A resampled tile carries proc_px in the resized document, so the
-            // quad must be normalized against that instead of the source.
-            let (dw, dh) = if resampled {
-                (self.doc_size.0 as f32, self.doc_size.1 as f32)
-            } else {
-                (full_w, full_h)
-            };
-            let pr = proc_rect_from_px(proc_px, tile, dw, dh, w, h);
+            let (proc_px, w, h) = (o.proc_px, o.width, o.height);
+            let pr = proc_rect_from_px(proc_px, tile, full_w, full_h, w, h);
             let roi_active = proc_px.is_some() && tile.isec_px.is_some();
             self.build_roi_display_bgs(device, queue, ti, tile, &pr, roi_active);
         }
