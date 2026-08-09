@@ -312,6 +312,9 @@ impl ModifierPipeline {
         // it actually reads rather than by the conservative FullFrame its
         // InputRequest must report without knowing the size.
         let specs = infer_specs(ImageSpec::new(source.full_width, source.full_height), plan);
+        let source_spec = ImageSpec::new(source.full_width, source.full_height);
+        let out_spec_doc = specs.last().map_or(source_spec, |s| s.output);
+        let chain_resizes = out_spec_doc != source_spec;
         let classes: Vec<StepClass> = plan
             .iter()
             .zip(&specs)
@@ -386,6 +389,28 @@ impl ModifierPipeline {
             } else {
                 pr_with_roi(tile, full_w, full_h, scale, downscale, roi, pitch)
             };
+            // The chain leaves its result in the output document, so a tile's
+            // region must be expressed there too. tile_out_rect maps the edges
+            // rather than the extent, so neighbouring tiles keep meeting.
+            let pr = if chain_resizes {
+                let px = tile_out_rect(
+                    pr.px,
+                    source.full_width,
+                    source.full_height,
+                    out_spec_doc.w,
+                    out_spec_doc.h,
+                );
+                let (w, h) = rect_dims(px, scale);
+                ProcRect {
+                    px,
+                    proc: uv_of(px, out_spec_doc.w as f32, out_spec_doc.h as f32),
+                    src: pr.src,
+                    w,
+                    h,
+                }
+            } else {
+                pr
+            };
             if !reuse {
                 let tex = gpu::texture_2d(
                     device,
@@ -433,7 +458,8 @@ impl ModifierPipeline {
                 u_px[3].max(p[3]),
             ];
         }
-        let u_px = snap_region(u_px, pitch, full_w, full_h);
+        let (doc_w, doc_h) = (out_spec_doc.w as f32, out_spec_doc.h as f32);
+        let u_px = snap_region(u_px, pitch, doc_w, doc_h);
 
         let single_band = classes
             .iter()
@@ -587,6 +613,11 @@ impl ModifierPipeline {
 
             for (k, item) in plan.iter().enumerate() {
                 let out_r = out_rects[k];
+                // Every rect for this stage is in its own output space, so UV
+                // normalizes against that. It differs from the source only when
+                // a stage resizes, which is why one pair of dimensions sufficed
+                // until now.
+                let (full_w, full_h) = (specs[k].output.w as f32, specs[k].output.h as f32);
                 match item {
                     PlanItem::Fused(seg) => {
                         let (w, h) = rect_dims(out_r, scale);
