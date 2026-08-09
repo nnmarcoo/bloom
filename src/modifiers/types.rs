@@ -309,6 +309,13 @@ impl ModifierKind {
         }
     }
 
+    pub fn as_resize(&self) -> Option<&Resize> {
+        match self {
+            ModifierKind::Resize(r) => Some(r),
+            _ => None,
+        }
+    }
+
     pub fn as_crop_mut(&mut self) -> Option<&mut Crop> {
         match self {
             ModifierKind::Crop(c) => Some(c),

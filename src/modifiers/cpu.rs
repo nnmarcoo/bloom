@@ -21,7 +21,7 @@ use rayon::prelude::*;
 use crate::modifiers::drawing_raster::LayerView;
 use crate::modifiers::kinds::ResizeFilter;
 use crate::modifiers::plan::{ImageSpec, PlanItem, infer_specs, plan_modifiers};
-use crate::modifiers::roi::{StepClass, step_class};
+use crate::modifiers::roi::{StepClass, step_class_for};
 use crate::modifiers::text_raster::TextRaster;
 use crate::modifiers::{Modifier, ModifierKind, motion_blur_samples};
 
@@ -60,11 +60,11 @@ pub(crate) fn source_rows_for_band(
 ) -> Option<(u32, u32)> {
     let (mut lo, mut hi) = (y0, y1);
     for (item, spec) in plan.iter().zip(specs).rev() {
+        let (in_h, out_h) = (spec.input.h, spec.output.h);
         let class = match item {
             PlanItem::Fused(_) => StepClass::Pointwise,
-            PlanItem::Step(_, m) => step_class(&m.kind),
+            PlanItem::Step(_, m) => step_class_for(&m.kind, in_h, out_h),
         };
-        let (in_h, out_h) = (spec.input.h, spec.output.h);
         let (n_lo, n_hi) = rows_needed(class, lo, hi, in_h, in_h, out_h)?;
         lo = n_lo;
         hi = n_hi.max(n_lo);
@@ -72,11 +72,19 @@ pub(crate) fn source_rows_for_band(
     Some((lo, hi))
 }
 
-pub(crate) fn chain_apron_rows(plan: &[PlanItem]) -> u32 {
+/// Rows of overlap a band needs so every stage can read what it samples.
+///
+/// Takes the source spec because a resample's reach depends on how far it
+/// scales, which only the per-stage geometry knows. A resize declares
+/// `FullFrame` from `input_request` alone, and using that here would both
+/// exclude it from banding and understate the apron.
+pub(crate) fn chain_apron_rows(source: ImageSpec, plan: &[PlanItem]) -> u32 {
+    let specs = infer_specs(source, plan);
     plan.iter()
-        .map(|item| match item {
+        .zip(&specs)
+        .map(|(item, spec)| match item {
             PlanItem::Fused(_) => 0,
-            PlanItem::Step(_, m) => match step_class(&m.kind) {
+            PlanItem::Step(_, m) => match step_class_for(&m.kind, spec.input.h, spec.output.h) {
                 StepClass::Kernel { apron_px, .. } => apron_px.ceil().max(0.0) as u32,
                 _ => 0,
             },
@@ -84,11 +92,12 @@ pub(crate) fn chain_apron_rows(plan: &[PlanItem]) -> u32 {
         .sum()
 }
 
-pub(crate) fn plan_is_bandable(plan: &[PlanItem]) -> bool {
-    plan.iter().all(|item| match item {
+pub(crate) fn plan_is_bandable(source: ImageSpec, plan: &[PlanItem]) -> bool {
+    let specs = infer_specs(source, plan);
+    plan.iter().zip(&specs).all(|(item, spec)| match item {
         PlanItem::Fused(_) => true,
         PlanItem::Step(_, m) => !matches!(
-            step_class(&m.kind),
+            step_class_for(&m.kind, spec.input.h, spec.output.h),
             StepClass::WholeFrame
                 | StepClass::Scanline { dir: (_, 1..) }
                 | StepClass::Scanline {
@@ -140,7 +149,7 @@ pub(crate) fn render_band(
     for (item, spec) in plan.iter().zip(&specs) {
         let class = match item {
             PlanItem::Fused(_) => StepClass::Pointwise,
-            PlanItem::Step(_, m) => step_class(&m.kind),
+            PlanItem::Step(_, m) => step_class_for(&m.kind, spec.input.h, spec.output.h),
         };
         cur = apply_stage_banded(
             item,
@@ -1167,7 +1176,7 @@ mod band_tests {
 
         let plan = plan_modifiers(chain);
         assert!(
-            plan_is_bandable(&plan),
+            plan_is_bandable(ImageSpec::new(w, h), &plan),
             "{label}: chain is not bandable, test would prove nothing"
         );
         let specs = infer_specs(ImageSpec::new(w, h), &plan);
@@ -1281,7 +1290,7 @@ mod band_tests {
             }))];
             let plan = plan_modifiers(&chain);
             assert!(
-                !plan_is_bandable(&plan),
+                !plan_is_bandable(ImageSpec::new(64, 64), &plan),
                 "pixel sort at {angle} deg must be rejected for banding"
             );
         }
@@ -1294,7 +1303,7 @@ mod band_tests {
         }))];
         let plan = plan_modifiers(&chain);
         assert!(
-            !plan_is_bandable(&plan),
+            !plan_is_bandable(ImageSpec::new(64, 64), &plan),
             "CA reads across the whole frame and must not be banded"
         );
     }
@@ -1617,5 +1626,112 @@ mod blur_edge_tests {
                  clamped reference (max {max})"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod resize_apron_tests {
+    use super::*;
+    use crate::modifiers::kinds::{GaussianBlur, Resize, ResizeFilter, ResizeMode};
+
+    fn resize(pct: f32, filter: ResizeFilter) -> Modifier {
+        Modifier::new(ModifierKind::Resize(Resize {
+            mode: ResizeMode::Percent,
+            width: pct,
+            height: pct,
+            filter,
+            lock_aspect: true,
+        }))
+    }
+
+    /// A resize must not force the whole-frame fallback.
+    ///
+    /// `input_request` reports `FullFrame` because it has no access to the
+    /// input size, and taking that at face value here excluded resize from
+    /// banding entirely, which is what made it export-only.
+    #[test]
+    fn a_resize_chain_can_be_banded() {
+        let chain = vec![resize(50.0, ResizeFilter::Lanczos)];
+        let plan = plan_modifiers(&chain);
+        assert!(
+            plan_is_bandable(ImageSpec::new(1179, 1159), &plan),
+            "a resize was treated as whole-frame, so it cannot stream and the \
+             preview cannot band it"
+        );
+    }
+
+    #[test]
+    fn a_resize_beside_a_blur_can_still_be_banded() {
+        let chain = vec![
+            Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 20.0 })),
+            resize(50.0, ResizeFilter::Lanczos),
+        ];
+        let plan = plan_modifiers(&chain);
+        assert!(plan_is_bandable(ImageSpec::new(1179, 1159), &plan));
+    }
+
+    /// The apron must widen with the reduction, matching the resampler.
+    ///
+    /// A tap at output row r reads source rows around r/scale +- radius/scale.
+    /// An apron of just `radius` would leave those rows outside the band and
+    /// produce a seam at every boundary.
+    #[test]
+    fn the_apron_widens_as_the_reduction_grows() {
+        let src = ImageSpec::new(1000, 1000);
+        let half = chain_apron_rows(src, &plan_modifiers(&[resize(50.0, ResizeFilter::Lanczos)]));
+        let quarter =
+            chain_apron_rows(src, &plan_modifiers(&[resize(25.0, ResizeFilter::Lanczos)]));
+        assert!(
+            quarter > half,
+            "a 4x reduction needs a wider apron than a 2x one, got {quarter} \
+             and {half}"
+        );
+        // Lanczos reaches 3 output pixels, widened by 1/scale.
+        assert_eq!(half, 6, "a 50% Lanczos resize should reach 3 / 0.5 rows");
+        assert_eq!(quarter, 12, "a 25% Lanczos resize should reach 3 / 0.25");
+    }
+
+    /// A cheaper filter reads less, and the apron should say so rather than
+    /// paying for the widest kernel regardless.
+    #[test]
+    fn the_apron_follows_the_chosen_filter() {
+        let src = ImageSpec::new(1000, 1000);
+        let near = chain_apron_rows(src, &plan_modifiers(&[resize(50.0, ResizeFilter::Nearest)]));
+        let bilin = chain_apron_rows(
+            src,
+            &plan_modifiers(&[resize(50.0, ResizeFilter::Bilinear)]),
+        );
+        let lanc = chain_apron_rows(src, &plan_modifiers(&[resize(50.0, ResizeFilter::Lanczos)]));
+        assert_eq!(near, 0);
+        assert_eq!(bilin, 2);
+        assert_eq!(lanc, 6);
+    }
+
+    /// Upscaling does not widen the kernel: each output sample still reads the
+    /// same few source pixels.
+    #[test]
+    fn an_upscale_does_not_widen_the_apron() {
+        let src = ImageSpec::new(1000, 1000);
+        let up = chain_apron_rows(
+            src,
+            &plan_modifiers(&[resize(200.0, ResizeFilter::Lanczos)]),
+        );
+        assert_eq!(up, 3, "an upscale should reach exactly the filter radius");
+    }
+
+    /// A band's source rows must include the apron, or the resample reads rows
+    /// the band does not hold.
+    #[test]
+    fn a_band_reaches_past_its_own_rows_under_a_resize() {
+        let chain = vec![resize(50.0, ResizeFilter::Lanczos)];
+        let plan = plan_modifiers(&chain);
+        let specs = infer_specs(ImageSpec::new(1000, 1000), &plan);
+        // Output rows 100..200 come from source rows 200..400, plus the apron.
+        let (lo, hi) = source_rows_for_band(&plan, &specs, 100, 200).expect("bandable");
+        assert!(
+            lo < 200 && hi > 400,
+            "band for output rows 100..200 fetched source {lo}..{hi}, which \
+             does not cover 200..400 plus the filter's reach"
+        );
     }
 }

@@ -202,7 +202,11 @@ fn process_frame(
 }
 
 fn can_stream_bands(data: &ExportData) -> bool {
-    data.rotation.is_multiple_of(2) && cpu::plan_is_bandable(&plan_modifiers(&data.modifiers))
+    data.rotation.is_multiple_of(2)
+        && cpu::plan_is_bandable(
+            ImageSpec::new(data.width, data.height),
+            &plan_modifiers(&data.modifiers),
+        )
 }
 
 pub fn render_still_rgba(data: &ExportData) -> Result<(u32, u32, Vec<u8>), String> {
