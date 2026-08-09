@@ -308,11 +308,16 @@ impl ModifierPipeline {
             }
         }
 
+        // Per-stage geometry, so a stage that changes size is described by what
+        // it actually reads rather than by the conservative FullFrame its
+        // InputRequest must report without knowing the size.
+        let specs = infer_specs(ImageSpec::new(source.full_width, source.full_height), plan);
         let classes: Vec<StepClass> = plan
             .iter()
-            .map(|p| match p {
+            .zip(&specs)
+            .map(|(p, spec)| match p {
                 PlanItem::Fused(_) => StepClass::Pointwise,
-                PlanItem::Step(_, m) => roi::step_class(&m.kind),
+                PlanItem::Step(_, m) => roi::step_class_for(&m.kind, spec.input.h, spec.output.h),
             })
             .collect();
 
@@ -512,23 +517,44 @@ impl ModifierPipeline {
 
             let n = plan.len();
             let mut out_rects = vec![[0.0f32; 4]; n];
-            let mut cur = roi::clamp_region(band_img, full_w, full_h);
+            // Walk backward through each stage's own geometry. Where a stage
+            // resizes, `unmap_region` crosses into its input space first, and
+            // the apron is then applied there -- reversed, a half-size apron
+            // would be dilated in a full-size space.
+            let out_spec = specs
+                .last()
+                .map_or(ImageSpec::new(source.full_width, source.full_height), |s| {
+                    s.output
+                });
+            let mut cur = roi::clamp_region(band_img, out_spec.w as f32, out_spec.h as f32);
             for k in (0..n).rev() {
+                let (iw, ih) = (specs[k].input.w as f32, specs[k].input.h as f32);
+                let (ow, oh) = (specs[k].output.w as f32, specs[k].output.h as f32);
                 if matches!(classes[k], StepClass::Scanline { .. }) {
                     cur = snap_region(
-                        roi::input_needed(classes[k], cur, full_w, full_h),
+                        roi::input_needed(
+                            classes[k],
+                            roi::unmap_region((ow, oh), (iw, ih), cur),
+                            iw,
+                            ih,
+                        ),
                         pitch,
-                        full_w,
-                        full_h,
+                        iw,
+                        ih,
                     );
                     out_rects[k] = cur;
                 } else {
                     out_rects[k] = cur;
                     cur = snap_region(
-                        roi::input_needed(classes[k], cur, full_w, full_h),
+                        roi::input_needed(
+                            classes[k],
+                            roi::unmap_region((ow, oh), (iw, ih), cur),
+                            iw,
+                            ih,
+                        ),
                         pitch,
-                        full_w,
-                        full_h,
+                        iw,
+                        ih,
                     );
                 }
             }
