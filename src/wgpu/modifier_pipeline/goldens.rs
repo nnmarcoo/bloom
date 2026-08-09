@@ -1211,3 +1211,67 @@ fn tiles_cover_a_resized_odd_sized_document() {
     assert_geometry_is_stable(&mut mp, &device, &queue, &source, &chain, "cover/resized");
     assert_tiles_cover_document(&mp, &source, out.w, out.h, "cover/resized");
 }
+
+/// Changing the resize while outputs exist must not reuse them.
+///
+/// `proc_px` is expressed in the output document, so an output built for one
+/// document describes a different region in another. Reusing it across a change
+/// reinterprets that region and the band copy runs off the texture, which wgpu
+/// rejects by aborting the process:
+///
+/// ```text
+/// Copy of Y 1828..1828 would end up overrunning the bounds of the
+/// Destination texture of Y size 1171
+/// ```
+///
+/// Found by dragging the resize slider, which changes the document every frame
+/// while the previous frame's outputs are still present.
+#[test]
+fn changing_the_resize_does_not_reuse_stale_outputs() {
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    // Large enough to tile and to band, which is where the copy happens.
+    let (w, h) = (1024u32, 1024u32);
+    let pixels = test_pixels(w, h);
+    let image = ImageData::new(pixels, w, h);
+    let source = make_source(&device, &queue, &image, Some(512));
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
+
+    // A drag: many sizes in a row, each prepared against the previous frame's
+    // outputs, including growing again after shrinking.
+    for pct in [90.0f32, 70.0, 55.0, 40.0, 25.0, 60.0, 95.0] {
+        let chain = vec![
+            Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 24.0 })),
+            Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: pct,
+                height: pct,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            })),
+        ];
+        converge(&mut mp, &device, &queue, &source, &chain, "drag");
+
+        let out = crate::modifiers::plan::chain_output_spec(
+            crate::modifiers::plan::ImageSpec::new(w, h),
+            &crate::modifiers::plan::plan_modifiers(&chain),
+        );
+        for (ti, _tile) in source.tiles.iter().enumerate() {
+            let Some(o) = mp.tile_outputs[ti].as_ref() else {
+                continue;
+            };
+            let px = o.proc_px.expect("outputs carry proc_px");
+            assert!(
+                px[2] <= out.w as f32 + 0.5 && px[3] <= out.h as f32 + 0.5,
+                "at {pct}%, tile {ti} claims {px:?} but the document is \
+                 {}x{}; a region from an earlier size was reused",
+                out.w,
+                out.h
+            );
+        }
+    }
+}

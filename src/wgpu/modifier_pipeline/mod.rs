@@ -111,6 +111,12 @@ struct TileOutput {
     height: u32,
     proc_px: Option<[f32; 4]>,
     quality_scale: f32,
+    /// The document this output was built for.
+    ///
+    ///  is expressed in it, so an output made for a different one
+    /// cannot be reused: its region would be reinterpreted in the new document
+    /// and the band copy would run off the texture.
+    doc: (u32, u32),
 }
 
 struct ScratchTarget {

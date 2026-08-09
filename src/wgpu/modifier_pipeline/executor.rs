@@ -186,6 +186,7 @@ impl ModifierPipeline {
                     height: pr.h,
                     proc_px: Some(pr.px),
                     quality_scale: cur_scale,
+                    doc: (source.full_width, source.full_height),
                 });
                 self.tile_display_bgs_linear[ti] = None;
                 self.tile_display_bgs_nearest[ti] = None;
@@ -379,20 +380,41 @@ impl ModifierPipeline {
                 self.tile_display_bgs_nearest[ti] = None;
                 continue;
             }
+            // proc_px lives in the document, so an output built for a different
+            // one describes a different region and cannot be reused. Dragging
+            // the resize slider changes the document every frame, which is when
+            // this fires: the stale region was reinterpreted in the new
+            // document and the band copy ran off the end of the texture.
+            let doc = (out_spec_doc.w, out_spec_doc.h);
+            // The ROI is in source pixels; compare it against a stored region
+            // in the same space the region uses.
+            let roi_doc = if chain_resizes {
+                tile_out_rect(roi, source.full_width, source.full_height, doc.0, doc.1)
+            } else {
+                roi
+            };
             let reuse = self.tile_outputs[ti].as_ref().is_some_and(|o| {
-                o.proc_px.is_some_and(|p| rect_contains(p, roi))
+                o.doc == doc
+                    && o.proc_px.is_some_and(|p| rect_contains(p, roi_doc))
                     && (o.quality_scale - scale).abs() < 1e-4
             });
             let pr = if reuse {
                 let o = self.tile_outputs[ti].as_ref().unwrap();
-                proc_rect_from_px(o.proc_px, tile, full_w, full_h, o.width, o.height)
+                proc_rect_from_px(
+                    o.proc_px,
+                    tile,
+                    doc.0 as f32,
+                    doc.1 as f32,
+                    o.width,
+                    o.height,
+                )
             } else {
                 pr_with_roi(tile, full_w, full_h, scale, downscale, roi, pitch)
             };
             // The chain leaves its result in the output document, so a tile's
             // region must be expressed there too. tile_out_rect maps the edges
             // rather than the extent, so neighbouring tiles keep meeting.
-            let pr = if chain_resizes {
+            let pr = if chain_resizes && !reuse {
                 let px = tile_out_rect(
                     pr.px,
                     source.full_width,
@@ -432,6 +454,7 @@ impl ModifierPipeline {
                     height: pr.h,
                     proc_px: Some(pr.px),
                     quality_scale: scale,
+                    doc,
                 });
                 self.tile_display_bgs_linear[ti] = None;
                 self.tile_display_bgs_nearest[ti] = None;
