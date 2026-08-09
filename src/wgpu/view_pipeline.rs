@@ -23,6 +23,7 @@ use iced::{
 
 use crate::{
     modifiers::Modifier,
+    modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers},
     wgpu::{
         error::ViewError,
         gpu,
@@ -364,19 +365,30 @@ impl ViewPipeline {
             return;
         }
 
-        // Deferring expensive work while the view moves keeps panning smooth,
-        // but `refresh_display_transforms` moves the quads without re-running
-        // the chain. Deferring a resize therefore leaves full-size textures on
-        // shrunken quads until the view settles, which reads as flicker.
+        // Deferring expensive work while the view moves keeps panning smooth:
+        // `refresh_display_transforms` moves the quads without re-running the
+        // chain.
         //
-        // Resize declares FullFrame because it reads every pixel, which is true
-        // of its ROI and wrong as a cost signal: a resample is two cheap passes.
-        let has_expensive = modifiers.iter().any(|m| {
-            m.has_visible_effect()
-                && !m.kind.effect_class().is_pointwise()
-                && m.kind.as_resize().is_none()
-        });
+        // A resize can be deferred too, but only while the document keeps the
+        // size its textures were built for. Deferring across a size change
+        // leaves full-resolution textures on shrunken quads, which reads as
+        // flicker -- that is why resize was excluded here entirely. Excluding
+        // it also meant a resize re-ran the whole chain every frame while
+        // interacting, and an upscale is not cheap: 400% of a 1000x1000 source
+        // is ~6ms per frame with no relief.
+        let doc = chain_output_spec(
+            ImageSpec::new(source.full_width, source.full_height),
+            &plan_modifiers(modifiers),
+        );
+        let doc_changed = self
+            .modifier_pipeline
+            .as_ref()
+            .is_some_and(|mp| mp.doc_size() != (doc.w, doc.h));
+        let has_expensive = modifiers
+            .iter()
+            .any(|m| m.has_visible_effect() && !m.kind.effect_class().is_pointwise());
         if has_expensive
+            && !doc_changed
             && self.interacting()
             && let Some(mp) = self.modifier_pipeline.as_mut()
         {
@@ -629,14 +641,18 @@ mod preview_gate_tests {
     /// The gate that defers work while the view is moving.
     ///
     /// `refresh_display_transforms` moves the quads without re-running the
-    /// chain, so a deferred resize leaves full-size textures on shrunken quads
-    /// until the view settles. That reads as flicker.
-    fn defers_while_interacting(modifiers: &[Modifier]) -> bool {
-        modifiers.iter().any(|m| {
-            m.has_visible_effect()
-                && !m.kind.effect_class().is_pointwise()
-                && m.kind.as_resize().is_none()
-        })
+    /// chain, which is safe only while the document keeps the size those quads
+    /// were built for. Resize used to be excluded from this gate outright, to
+    /// avoid leaving full-resolution textures on shrunken quads; the cost was
+    /// that a resize re-ran the entire chain every frame while interacting,
+    /// with no relief at all. The size check gets the deferral without the
+    /// flicker: panning and zooming a resized document defer, and only a change
+    /// to the document itself forces the work.
+    fn defers_while_interacting(modifiers: &[Modifier], doc_changed: bool) -> bool {
+        !doc_changed
+            && modifiers
+                .iter()
+                .any(|m| m.has_visible_effect() && !m.kind.effect_class().is_pointwise())
     }
 
     fn resize(pct: f32) -> Modifier {
@@ -674,26 +690,35 @@ mod preview_gate_tests {
         assert!(!needs_pipeline(&[]));
     }
 
+    /// The regression this gate caused: a resize got no deferral at all, so
+    /// every frame while interacting re-ran the whole chain. An upscale is not
+    /// cheap -- 400% of a 1000x1000 source is ~6ms per frame.
     #[test]
-    fn a_resize_is_never_deferred() {
+    fn a_resize_defers_while_the_document_holds_its_size() {
         assert!(
-            !defers_while_interacting(&[resize(25.0)]),
-            "a resize was deferred while interacting, so the viewport keeps \
-             full-size textures on shrunken quads and flickers"
+            defers_while_interacting(&[resize(25.0)], false),
+            "a resize re-ran the chain on every frame while panning or zooming,              even though the document size had not moved"
+        );
+    }
+
+    /// The flicker case the old exclusion existed to prevent. Quads built for
+    /// one document size must not be reused for another.
+    #[test]
+    fn a_resize_does_not_defer_across_a_size_change() {
+        assert!(
+            !defers_while_interacting(&[resize(25.0)], true),
+            "the document changed size but the chain was deferred, leaving              full-resolution textures on quads built for a different size"
         );
     }
 
     #[test]
     fn a_blur_is_still_deferred() {
-        assert!(defers_while_interacting(&[blur()]));
+        assert!(defers_while_interacting(&[blur()], false));
     }
 
     #[test]
     fn a_blur_with_a_resize_is_still_deferred() {
-        assert!(
-            defers_while_interacting(&[blur(), resize(50.0)]),
-            "the blur still needs deferring even though the resize does not"
-        );
+        assert!(defers_while_interacting(&[blur(), resize(50.0)], false));
     }
 
     #[test]
@@ -701,6 +726,6 @@ mod preview_gate_tests {
         let chain = vec![Modifier::new(ModifierKind::Exposure(Exposure {
             exposure: 0.4,
         }))];
-        assert!(!defers_while_interacting(&chain));
+        assert!(!defers_while_interacting(&chain, false));
     }
 }

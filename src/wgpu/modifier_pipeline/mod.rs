@@ -270,6 +270,10 @@ pub struct ModifierPipeline {
     nearest_sampler: Sampler,
     /// The document the last prepare produced, so refresh_display_transforms
     /// can place quads without the modifier list.
+    ///
+    /// Also tells the caller whether deferring is safe: the display transforms
+    /// can move quads for a document this size, but not for one that changed
+    /// underneath them.
     doc_size: (u32, u32),
     exec_band_cursor: u32,
     exec_sig: u64,
@@ -360,6 +364,11 @@ impl ModifierPipeline {
 
     pub fn reprocess_pending(&self) -> bool {
         self.reprocess_pending
+    }
+
+    /// The document size the current tile outputs were built for.
+    pub fn doc_size(&self) -> (u32, u32) {
+        self.doc_size
     }
 
     pub fn tile_display_bg(&self, i: usize, nearest: bool) -> Option<&BindGroup> {
