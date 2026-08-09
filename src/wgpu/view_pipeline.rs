@@ -22,7 +22,7 @@ use iced::{
 };
 
 use crate::{
-    modifiers::{Modifier, ModifierKind},
+    modifiers::Modifier,
     wgpu::{
         error::ViewError,
         gpu,
@@ -353,16 +353,29 @@ impl ViewPipeline {
         let dirty = dirty || self.pending_source_dirty;
         self.pending_source_dirty = false;
 
-        let previewable =
-            |m: &Modifier| m.has_visible_effect() && !matches!(m.kind, ModifierKind::Resize(_));
-        if !modifiers.iter().any(previewable) {
+        // A resize counts as previewable. Excluding it here dates from when the
+        // executor dropped resize from the plan: a resize-only stack then had
+        // nothing previewable, the pipeline was destroyed, and the view fell
+        // back to drawing the source tiles at full resolution inside a smaller
+        // quad. The image kept every pixel while claiming to be smaller, which
+        // at 1x1 showed the whole picture inside a single pixel.
+        if !modifiers.iter().any(|m| m.has_visible_effect()) {
             self.modifier_pipeline = None;
             return;
         }
 
-        let has_expensive = modifiers
-            .iter()
-            .any(|m| m.has_visible_effect() && !m.kind.effect_class().is_pointwise());
+        // Deferring expensive work while the view moves keeps panning smooth,
+        // but `refresh_display_transforms` moves the quads without re-running
+        // the chain. Deferring a resize therefore leaves full-size textures on
+        // shrunken quads until the view settles, which reads as flicker.
+        //
+        // Resize declares FullFrame because it reads every pixel, which is true
+        // of its ROI and wrong as a cost signal: a resample is two cheap passes.
+        let has_expensive = modifiers.iter().any(|m| {
+            m.has_visible_effect()
+                && !m.kind.effect_class().is_pointwise()
+                && m.kind.as_resize().is_none()
+        });
         if has_expensive
             && self.interacting()
             && let Some(mp) = self.modifier_pipeline.as_mut()
@@ -592,5 +605,102 @@ impl Pipeline for ViewPipeline {
             view_changed_at: std::time::Instant::now() - VIEW_SETTLE * 2,
             format,
         }
+    }
+}
+
+#[cfg(test)]
+mod preview_gate_tests {
+    use crate::modifiers::kinds::{Exposure, GaussianBlur, Resize, ResizeFilter, ResizeMode};
+    use crate::modifiers::{Modifier, ModifierKind};
+
+    /// The gate `prepare_modifiers` uses to decide whether a modifier pipeline
+    /// is needed at all.
+    ///
+    /// This is the layer the resize preview kept dying at. Fixes made inside
+    /// `ModifierPipeline` were never reached: a resize-only stack failed this
+    /// check, the pipeline was destroyed, and the view drew the source tiles at
+    /// full resolution inside the resized quad. The image kept every pixel
+    /// while claiming to be smaller, so a 1x1 resize showed the whole picture
+    /// inside one pixel.
+    fn needs_pipeline(modifiers: &[Modifier]) -> bool {
+        modifiers.iter().any(|m| m.has_visible_effect())
+    }
+
+    /// The gate that defers work while the view is moving.
+    ///
+    /// `refresh_display_transforms` moves the quads without re-running the
+    /// chain, so a deferred resize leaves full-size textures on shrunken quads
+    /// until the view settles. That reads as flicker.
+    fn defers_while_interacting(modifiers: &[Modifier]) -> bool {
+        modifiers.iter().any(|m| {
+            m.has_visible_effect()
+                && !m.kind.effect_class().is_pointwise()
+                && m.kind.as_resize().is_none()
+        })
+    }
+
+    fn resize(pct: f32) -> Modifier {
+        Modifier::new(ModifierKind::Resize(Resize {
+            mode: ResizeMode::Percent,
+            width: pct,
+            height: pct,
+            filter: ResizeFilter::Lanczos,
+            lock_aspect: true,
+        }))
+    }
+
+    fn blur() -> Modifier {
+        Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 8.0 }))
+    }
+
+    #[test]
+    fn a_resize_alone_needs_the_pipeline() {
+        assert!(
+            needs_pipeline(&[resize(25.0)]),
+            "a resize-only stack skipped the modifier pipeline, so the viewport \
+             draws the unresized source inside a smaller frame"
+        );
+    }
+
+    #[test]
+    fn a_disabled_resize_alone_does_not() {
+        let mut m = resize(25.0);
+        m.enabled = false;
+        assert!(!needs_pipeline(&[m]));
+    }
+
+    #[test]
+    fn an_empty_stack_does_not() {
+        assert!(!needs_pipeline(&[]));
+    }
+
+    #[test]
+    fn a_resize_is_never_deferred() {
+        assert!(
+            !defers_while_interacting(&[resize(25.0)]),
+            "a resize was deferred while interacting, so the viewport keeps \
+             full-size textures on shrunken quads and flickers"
+        );
+    }
+
+    #[test]
+    fn a_blur_is_still_deferred() {
+        assert!(defers_while_interacting(&[blur()]));
+    }
+
+    #[test]
+    fn a_blur_with_a_resize_is_still_deferred() {
+        assert!(
+            defers_while_interacting(&[blur(), resize(50.0)]),
+            "the blur still needs deferring even though the resize does not"
+        );
+    }
+
+    #[test]
+    fn a_pointwise_stack_is_not_deferred() {
+        let chain = vec![Modifier::new(ModifierKind::Exposure(Exposure {
+            exposure: 0.4,
+        }))];
+        assert!(!defers_while_interacting(&chain));
     }
 }
