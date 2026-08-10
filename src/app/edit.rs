@@ -210,9 +210,6 @@ pub fn update(
                 param,
                 ModifierParam::DrawingStrokeStart(_) | ModifierParam::DrawingStrokeExtend(_)
             );
-            // A resize changes the document's dimensions, so refit the view the
-            // way rotating does. Without it the image leaves the frame and the
-            // user has to zoom back out to see the change they just made.
             let resizes = matches!(
                 param,
                 ModifierParam::ResizeWidth(_) | ModifierParam::ResizeHeight(_)
@@ -284,11 +281,6 @@ pub fn update(
     Task::none()
 }
 
-/// Refitting the view after a resize edit.
-///
-/// The behavior matches rotation, which has always refit unconditionally: the
-/// user's current zoom cannot stay meaningful across a change to the document's
-/// dimensions.
 #[cfg(test)]
 mod fit_on_resize_tests {
     use super::*;
@@ -334,8 +326,6 @@ mod fit_on_resize_tests {
         );
     }
 
-    /// The case Marco asked for: after upscaling, the document is back in frame
-    /// without the user having to zoom out.
     #[test]
     fn an_upscale_refits_the_view() {
         let mut p = program_with_resize();
@@ -352,7 +342,6 @@ mod fit_on_resize_tests {
         );
     }
 
-    /// The other direction of the parameter, per `bloom-verify-by-breaking`.
     #[test]
     fn a_downscale_refits_the_view() {
         let mut p = program_with_resize();
@@ -369,8 +358,6 @@ mod fit_on_resize_tests {
         );
     }
 
-    /// An edit that leaves the dimensions alone must not disturb the view, so a
-    /// user comparing filters at high zoom keeps their position.
     #[test]
     fn changing_the_filter_leaves_the_view_alone() {
         let mut p = program_with_resize();

@@ -1,10 +1,23 @@
 //! Tiled GPU execution of a modifier chain.
 //!
-//! Everything here works in one coordinate space: tiles are carved from the
-//! source, proc_px is document-space throughout, and the ROI walk runs backward
-//! through a single geometry. A stage that changed dimensions mid-chain would
-//! put the stages on either side of it in different spaces, which this executor
-//! cannot express, so resize is dropped from the preview plan.
+//! Each stage carries its own input and output geometry, from infer_specs, so a
+//! stage may change dimensions mid-chain. Every rect belongs to exactly one of
+//! those spaces: UV normalizes against the stage's own output, while the
+//! backward ROI walk crosses each size change with roi::unmap_region and only
+//! then dilates by the apron, in the input's own space. Reversing that order
+//! applies a half-size apron in a full-size space.
+//!
+//! proc_px lives in the chain's output document, not the source. TileOutput.doc
+//! records which document an output was built for, because a stale one would be
+//! reinterpreted in the new document and the band copy would run off the
+//! texture. Tiles are carved with geom::tile_out_rect, which maps tile edges
+//! rather than extents so neighbors keep meeting exactly.
+//!
+//! A resample runs as two passes, horizontal then vertical, matching
+//! cpu::resample; one 2D gather would be a different filter and would not agree
+//! with the export. The ratio comes from the two documents' full lengths, and
+//! ResampleRegion says which part of the image the target and bound input
+//! stand for, so rendering a band does not shift the resize.
 //!
 //! Work is split into bands when a chain is expensive, with exec_band_cursor
 //! carrying progress across frames so the UI stays responsive.
@@ -251,7 +264,6 @@ impl ModifierPipeline {
                 &pr,
                 DocScale {
                     src: (source.full_width, source.full_height),
-                    // The pointwise path has no size-changing stage.
                     out: (source.full_width, source.full_height),
                     roi_active: true,
                 },
@@ -322,9 +334,6 @@ impl ModifierPipeline {
             }
         }
 
-        // Per-stage geometry, so a stage that changes size is described by what
-        // it actually reads rather than by the conservative FullFrame its
-        // InputRequest must report without knowing the size.
         let specs = infer_specs(ImageSpec::new(source.full_width, source.full_height), plan);
         let source_spec = ImageSpec::new(source.full_width, source.full_height);
         let out_spec_doc = specs.last().map_or(source_spec, |s| s.output);
@@ -394,14 +403,7 @@ impl ModifierPipeline {
                 self.tile_display_bgs_nearest[ti] = None;
                 continue;
             }
-            // proc_px lives in the document, so an output built for a different
-            // one describes a different region and cannot be reused. Dragging
-            // the resize slider changes the document every frame, which is when
-            // this fires: the stale region was reinterpreted in the new
-            // document and the band copy ran off the end of the texture.
             let doc = (out_spec_doc.w, out_spec_doc.h);
-            // The ROI is in source pixels; compare it against a stored region
-            // in the same space the region uses.
             let roi_doc = if chain_resizes {
                 tile_out_rect(roi, source.full_width, source.full_height, doc.0, doc.1)
             } else {
@@ -425,9 +427,6 @@ impl ModifierPipeline {
             } else {
                 pr_with_roi(tile, full_w, full_h, scale, downscale, roi, pitch)
             };
-            // The chain leaves its result in the output document, so a tile's
-            // region must be expressed there too. tile_out_rect maps the edges
-            // rather than the extent, so neighbouring tiles keep meeting.
             let pr = if chain_resizes && !reuse {
                 let px = tile_out_rect(
                     pr.px,
@@ -580,10 +579,6 @@ impl ModifierPipeline {
 
             let n = plan.len();
             let mut out_rects = vec![[0.0f32; 4]; n];
-            // Walk backward through each stage's own geometry. Where a stage
-            // resizes, `unmap_region` crosses into its input space first, and
-            // the apron is then applied there -- reversed, a half-size apron
-            // would be dilated in a full-size space.
             let out_spec = specs
                 .last()
                 .map_or(ImageSpec::new(source.full_width, source.full_height), |s| {
@@ -650,10 +645,6 @@ impl ModifierPipeline {
 
             for (k, item) in plan.iter().enumerate() {
                 let out_r = out_rects[k];
-                // Every rect for this stage is in its own output space, so UV
-                // normalizes against that. It differs from the source only when
-                // a stage resizes, which is why one pair of dimensions sufficed
-                // until now.
                 let (full_w, full_h) = (specs[k].output.w as f32, specs[k].output.h as f32);
                 match item {
                     PlanItem::Fused(seg) => {
@@ -897,42 +888,18 @@ impl ModifierPipeline {
                         }
                         prev = outs;
                     }
-                    // A resize that does not change the dimensions is a copy
-                    // through two resample passes for no result. It is the
-                    // default state of a freshly added Resize (100%), and a
-                    // slider passes through it, so leaving it in the chain
-                    // charges full price for nothing.
                     PlanItem::Step(_, m)
                         if m.kind.as_resize().is_some() && specs[k].input == specs[k].output => {}
                     PlanItem::Step(_, m) if m.kind.as_resize().is_some() => {
-                        // A resample is two passes, horizontal then vertical,
-                        // matching cpu::resample. One 2D gather over the same
-                        // radius is a different filter and would not agree with
-                        // the export.
-                        //
-                        // out_r is already in this stage's output space, from
-                        // the backward walk, so its dimensions are the target.
-                        //
-                        // The resample itself is defined by the two documents'
-                        // full lengths: that ratio is the resize the user asked
-                        // for, and it must not shift because this pass is
-                        // rendering one band. The rects say which part of the
-                        // image the target and the bound input stand for, and
-                        // that is what `ResampleRegion` carries.
                         let filter = m.kind.as_resize().unwrap().filter;
                         let (ow, oh) = rect_dims(out_r, scale);
                         let (pw, _ph) = rect_dims(prev.rect, scale);
-                        // Whole-image lengths at the working scale, so the
-                        // ratio matches what the CPU oracle computes on the
-                        // full document.
                         let in_len_x = ((specs[k].input.w as f32 * scale).round() as u32).max(1);
                         let in_len_y = ((specs[k].input.h as f32 * scale).round() as u32).max(1);
                         let out_len_x = ((specs[k].output.w as f32 * scale).round() as u32).max(1);
                         let out_len_y = ((specs[k].output.h as f32 * scale).round() as u32).max(1);
                         let base = |v: f32| (v * scale).round() as u32;
 
-                        // Intermediate: resampled horizontally, still at the
-                        // input's vertical extent.
                         let mid_r = [out_r[0], prev.rect[1], out_r[2], prev.rect[3]];
                         let (mw, mh) = rect_dims(mid_r, scale);
                         let mid = self.pooled_stage(device, &mut slab_slot, mw, mh, mid_r);

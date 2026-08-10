@@ -1,3 +1,17 @@
+//! Geometry for tiled execution: VRAM budgeting, the output grid, and the
+//! rects a tile is drawn with.
+//!
+//! grid_edge maps a source edge onto the output document from that coordinate
+//! alone, so two tiles sharing an edge in the source land on the same output
+//! edge by construction. Scaling each tile's width independently does not have
+//! that property: tiles that met exactly can round apart into a seam or round
+//! together into an overlap. The far edge needs no special case, because
+//! src_len * out_len / src_len is exactly out_len.
+//!
+//! The grid tests pin the partition at a real image's awkward dimensions
+//! (1179x1159 in 512px tiles, neither axis dividing evenly), covering
+//! downscale, upscale, and the degenerate one-pixel document.
+
 use super::*;
 
 pub(super) fn process_vram_budget(device: &Device) -> u64 {
@@ -35,22 +49,6 @@ pub(super) fn fit_process_scale(
     scale
 }
 
-/// Map a source-space edge onto the output grid.
-///
-/// Consumed by the executor once tiles are carved in output space; the geometry
-/// and its tests land first so the property is pinned before anything uses it.
-///
-/// Every boundary is computed from the source coordinate alone, so two tiles
-/// sharing an edge in the source land on the same output edge by construction.
-/// Scaling each tile's width independently does not have that property: two
-/// tiles that met exactly can round apart, leaving a seam, or round together,
-/// producing an overlap.
-///
-/// The far edge needs no special case: `src_len * out_len / src_len` is exactly
-/// `out_len`, so the last row and column reach the document edge on their own.
-/// The previous design missed it because it scaled each tile's *width* rather
-/// than its edges, and widths accumulate error where edges do not.
-#[allow(dead_code, reason = "wired into the executor next")]
 pub(super) fn grid_edge(src: f32, src_len: u32, out_len: u32) -> f32 {
     if src_len == 0 {
         return 0.0;
@@ -58,8 +56,6 @@ pub(super) fn grid_edge(src: f32, src_len: u32, out_len: u32) -> f32 {
     (src * out_len as f32 / src_len as f32).round()
 }
 
-/// A tile's region in the output document, on integer boundaries.
-#[allow(dead_code, reason = "wired into the executor next")]
 pub(super) fn tile_out_rect(
     px: [f32; 4],
     src_w: u32,
@@ -199,14 +195,11 @@ pub(super) fn tex_copy_info(
 mod grid_tests {
     use super::{grid_edge, tile_out_rect};
 
-    /// The geometry that broke the previous attempt: 1179x1159 in 512px tiles,
-    /// halved. Neither axis divides evenly and the edge tiles are partial.
     const SRC_W: u32 = 1179;
     const SRC_H: u32 = 1159;
     const OUT_W: u32 = 590;
     const OUT_H: u32 = 580;
 
-    /// Source tile boundaries for a 3-column, 3-row grid at 512px.
     fn src_edges(len: u32, tile: u32) -> Vec<f32> {
         let mut v = vec![0.0f32];
         let mut x = tile;
@@ -226,13 +219,6 @@ mod grid_tests {
         }
     }
 
-    /// The property that makes tiles meet: an edge depends only on its source
-    /// coordinate, never on which tile is asking.
-    ///
-    /// The previous design scaled each tile's width independently, so the same
-    /// boundary could come out differently for the tile on its left than for
-    /// the one on its right. Here the right edge of one tile and the left edge
-    /// of the next are the same call, so they cannot disagree.
     #[test]
     fn neighbors_agree_on_their_shared_edge() {
         let xs = src_edges(SRC_W, 512);
@@ -259,8 +245,6 @@ mod grid_tests {
         assert_eq!(grid_edge(0.0, SRC_W, OUT_W), 0.0);
     }
 
-    /// The whole grid must tile the document exactly. This is the same property
-    /// the executor golden checks, at the level where it is decided.
     #[test]
     fn the_grid_covers_the_document_without_gaps_or_overlaps() {
         let xs = src_edges(SRC_W, 512);
@@ -284,8 +268,6 @@ mod grid_tests {
         assert_eq!(overlaps, 0, "{overlaps} output pixels covered twice");
     }
 
-    /// Upscaling has the same requirement, and a naive floor would leave the
-    /// far edge short.
     #[test]
     fn the_grid_covers_an_upscaled_document() {
         let xs = src_edges(SRC_W, 512);
@@ -308,8 +290,6 @@ mod grid_tests {
         assert_eq!(covered.iter().filter(|&&c| c > 1).count(), 0);
     }
 
-    /// A resize to a single pixel is the extreme case, and it must still be a
-    /// valid partition rather than nine tiles each claiming the same pixel.
     #[test]
     fn a_one_pixel_document_is_still_a_partition() {
         let xs = src_edges(SRC_W, 512);

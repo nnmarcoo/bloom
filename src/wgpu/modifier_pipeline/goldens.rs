@@ -8,8 +8,18 @@
 //! to a centered window so a stage must actually fetch beyond what it writes,
 //! which is what makes under-fetch observable.
 //!
-//! The three resize goldens are ignored and fail by design: they define what
-//! per-stage geometry must deliver, and the executor does not do it yet.
+//! The resize goldens compare against the oracle at the chain's *output* size,
+//! via assemble_output. They cover a trailing resize, a mid-chain one, and the
+//! multi-tile case, in both directions: every resize golden written before them
+//! downscaled, so the suite proved one direction of the parameter and said
+//! nothing about the other. That is how a resample ignoring its region's origin
+//! passed everything, since at 50% the executor produces a single band starting
+//! at row 0, where treating the region as the whole image is accidentally
+//! right.
+//!
+//! An earlier test asserted that a trailing resize left the preview unchanged.
+//! That encoded the bug as the specification -- the executor dropped the resize,
+//! so of course nothing moved -- and was deleted rather than adapted.
 
 use super::*;
 use crate::modifiers::kinds::{
@@ -472,27 +482,17 @@ fn run_golden_dims(
     );
 }
 
-/// Result of a parity probe, so a missing GPU is a skip rather than a pass.
 pub(super) enum ParityOutcome {
     NoDevice,
     Checked { max_diff: u8, pct_over: f64 },
 }
 
-/// A gradient sweeping hue horizontally and luma vertically, with a full alpha
-/// ramp along the top.
-///
-/// The random `test_pixels` source is fine for chain goldens but poor for
-/// per-modifier parity: it clusters around mid-gray, so a formula that only
-/// diverges near black, white, or full saturation can pass. This sweeps those
-/// regions deliberately.
 fn gradient_pixels(w: u32, h: u32) -> Vec<u8> {
     let mut v = Vec::with_capacity((w * h * 4) as usize);
     for y in 0..h {
         let ty = y as f32 / (h - 1).max(1) as f32;
         for x in 0..w {
             let tx = x as f32 / (w - 1).max(1) as f32;
-            // Hue sweep through the six sectors, scaled by vertical luma so the
-            // top row reaches white and the bottom reaches black.
             let hue = tx * 6.0;
             let sector = hue as u32 % 6;
             let f = hue - hue.floor();
@@ -518,11 +518,6 @@ fn gradient_pixels(w: u32, h: u32) -> Vec<u8> {
     v
 }
 
-/// Render one chain on both backends over a gradient and report the difference.
-///
-/// Single-tile and full-ROI on purpose: this isolates the modifier's own math
-/// from tiling, banding, and region logic, which the chain goldens already
-/// cover.
 pub(super) fn parity_probe(modifiers: &[Modifier], tol: u8) -> ParityOutcome {
     let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some((device, queue)) = try_device() else {
@@ -804,13 +799,6 @@ fn roi_pointwise_then_blur_partial_viewport() {
     run_roi_golden("roi/pointwise+blur", &chain, 1024, 0.42, 4, 2048, 2048);
 }
 
-/// A resize-only stack must render, not fall back to the source.
-///
-/// This replaces a test that required the opposite: it asserted every display
-/// bind group was cleared, which was right while resize was dropped from the
-/// plan and wrong once it became a real stage. Clearing them makes the view
-/// draw the source tiles at full resolution, so the image keeps every pixel
-/// while claiming to be smaller.
 #[test]
 fn resize_only_stack_renders_through_the_pipeline() {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
@@ -849,13 +837,6 @@ fn resize_only_stack_renders_through_the_pipeline() {
         );
     }
 }
-
-// `golden_trailing_resize_is_dropped_from_the_preview` was deleted here. It
-// rendered a chain with and without a trailing resize and required the two to
-// be byte-identical, which encoded the bug as the specification: the executor
-// dropped the resize, so of course nothing changed. It is superseded by
-// `golden_resize_trailing_matches_the_oracle`, which compares against the CPU
-// at the chain's output size instead.
 
 fn run_resize_golden(label: &str, modifiers: &[Modifier], tile_dim: Option<u32>, tol: u8) {
     use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
@@ -922,9 +903,6 @@ fn assemble_output(
             (tile.x + tile.width) as f32,
             (tile.y + tile.height) as f32,
         ]);
-        // proc_px is already in the output document, so it is used directly.
-        // Scaling it again here double-counted the resize and placed every
-        // tile at a fraction of its true position.
         let x0 = px[0].round() as u32;
         let y0 = px[1].round() as u32;
         let data = read_texture(device, queue, &o._tex, o.width, o.height);
@@ -977,13 +955,6 @@ fn golden_resize_mid_chain_multi_tile() {
     run_resize_golden("resize/mid-chain-2x2", &chain, Some(FORCED_TILE_DIM), 4);
 }
 
-/// The upscale counterparts of the three goldens above.
-///
-/// Every resize golden written before these downscaled, so the suite proved one
-/// direction of the parameter and said nothing about the other. That is how a
-/// resample that ignored its region's origin passed everything: at 50% the
-/// executor produced a single band starting at row 0, where treating the region
-/// as the whole image happens to give the right answer.
 fn resize_double() -> Modifier {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
     Modifier::new(ModifierKind::Resize(Resize {
@@ -1030,26 +1001,6 @@ fn golden_ca_multi_tile() {
     run_golden("ca/2x2", &ca_chain(), Some(FORCED_TILE_DIM), 4);
 }
 
-/// Tile outputs must cover the document exactly: no gaps, no overlaps, and
-/// integer boundaries.
-///
-/// This is the property the post-hoc resample design broke, and none of the
-/// existing goldens could see it. They compare pixel content at 96x64 with 48px
-/// tiles, which divides evenly and produces no partial tiles, no fractional
-/// boundary, and no rounding disagreement between the last row and the interior.
-///
-/// A real image has all three. At 1179x1159 with 512px tiles there are 9 tiles,
-/// the right column is 155 wide, the bottom row is 135 tall, and halving any of
-/// those lands off an integer. The three faults reported from use were each
-/// visible here:
-///
-///   - flicker: the output size oscillated between frames
-///   - segmented: adjacent tiles stopped sharing a boundary
-///   - blacked-out bottom: the last row rounded outward past the document
-///
-/// The assertions are deliberately about geometry rather than pixels. Content
-/// goldens pass while the layout is wrong, which is exactly how this got as far
-/// as it did.
 fn assert_tiles_cover_document(
     mp: &ModifierPipeline,
     source: &TiledSource,
@@ -1057,8 +1008,6 @@ fn assert_tiles_cover_document(
     doc_h: u32,
     label: &str,
 ) {
-    // Every document pixel must be claimed exactly once. A byte per pixel is
-    // affordable at these sizes and catches gaps and overlaps in one pass.
     let mut covered = vec![0u8; (doc_w * doc_h) as usize];
 
     for (ti, tile) in source.tiles.iter().enumerate() {
@@ -1114,12 +1063,6 @@ fn assert_tiles_cover_document(
     );
 }
 
-/// The chain must produce the same tile geometry on every frame.
-///
-/// Oscillation is invisible to a single-frame test and is what the viewport
-/// showed as flicker: the output alternated between the source size and the
-/// resized size, so one frame in two was wrong.
-/// A tile's geometry as the display sees it: texture size and claimed region.
 type TileGeometry = Option<(u32, u32, Option<[f32; 4]>)>;
 
 fn assert_geometry_is_stable(
@@ -1152,12 +1095,6 @@ fn assert_geometry_is_stable(
     }
 }
 
-/// Dimensions that break even division, matching a real photo.
-///
-/// 1179x1159 with 512px tiles gives 9 tiles: a 155-wide right column and a
-/// 135-tall bottom row. Halving any of those lands off an integer, which is
-/// where the previous design produced fractional boundaries and an
-/// out-of-bounds last row.
 const REAL_W: u32 = 1179;
 const REAL_H: u32 = 1159;
 const REAL_TILE: u32 = 512;
@@ -1224,11 +1161,6 @@ fn tile_geometry_is_stable_with_a_blur() {
     );
 }
 
-/// The target for the reworked resize preview.
-///
-/// Ignored until tiles are carved in output space. When that lands, this must
-/// pass: a 50% resize of 1179x1159 is 590x580, and the tiles must cover exactly
-/// that, on integer boundaries, identically on every frame.
 #[test]
 fn tiles_cover_a_resized_odd_sized_document() {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
@@ -1254,7 +1186,6 @@ fn tiles_cover_a_resized_odd_sized_document() {
     assert_tiles_cover_document(&mp, &source, out.w, out.h, "cover/resized");
 }
 
-/// The same coverage property when the document grows rather than shrinks.
 #[test]
 fn tiles_cover_an_upscaled_odd_sized_document() {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
@@ -1280,20 +1211,6 @@ fn tiles_cover_an_upscaled_odd_sized_document() {
     assert_tiles_cover_document(&mp, &source, out.w, out.h, "cover/upscaled");
 }
 
-/// Changing the resize while outputs exist must not reuse them.
-///
-/// `proc_px` is expressed in the output document, so an output built for one
-/// document describes a different region in another. Reusing it across a change
-/// reinterprets that region and the band copy runs off the texture, which wgpu
-/// rejects by aborting the process:
-///
-/// ```text
-/// Copy of Y 1828..1828 would end up overrunning the bounds of the
-/// Destination texture of Y size 1171
-/// ```
-///
-/// Found by dragging the resize slider, which changes the document every frame
-/// while the previous frame's outputs are still present.
 #[test]
 fn changing_the_resize_does_not_reuse_stale_outputs() {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
@@ -1302,15 +1219,12 @@ fn changing_the_resize_does_not_reuse_stale_outputs() {
     let Some((device, queue)) = try_device() else {
         return;
     };
-    // Large enough to tile and to band, which is where the copy happens.
     let (w, h) = (1024u32, 1024u32);
     let pixels = test_pixels(w, h);
     let image = ImageData::new(pixels, w, h);
     let source = make_source(&device, &queue, &image, Some(512));
     let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
 
-    // A drag: many sizes in a row, each prepared against the previous frame's
-    // outputs, including growing again after shrinking.
     for pct in [90.0f32, 70.0, 55.0, 40.0, 25.0, 60.0, 95.0] {
         let chain = vec![
             Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 24.0 })),
@@ -1344,25 +1258,6 @@ fn changing_the_resize_does_not_reuse_stale_outputs() {
     }
 }
 
-/// Rows either side of a band boundary must match the CPU oracle.
-///
-/// Marco reported a horizontal seam "a bit under the middle" when upscaling
-/// D:/images/IMG_1815.png to 200%. That image is 1179x1159, which becomes
-/// 2358x2318, and `BLUR_MAX_BAND_H` is 1024, so the executor bands at output
-/// rows 1024 and 2048. The first is 44.2% down: the seam's location.
-///
-/// The geometry there is exact -- band heights sum to the document with no gap
-/// or overlap -- so a coverage check cannot see this, and the seam was only the
-/// most visible part of a divergence that covered nearly the whole image.
-///
-/// The cause was in the resample pass rather than in banding: it was given the
-/// *region's* lengths and no origin, so it treated each band's first row as the
-/// image's first row and resampled the top of the source every time. Only the
-/// band at the origin came out right, which is why a 4x4 upscale looked correct
-/// while this one did not. `ResampleRegion` carries the origin now.
-///
-/// The chain is resize-only so nothing else contributes an apron, which is what
-/// makes this specific to the resample rather than to banding in general.
 #[test]
 fn rows_across_a_band_boundary_match_the_oracle() {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
@@ -1396,8 +1291,6 @@ fn rows_across_a_band_boundary_match_the_oracle() {
         "output size disagrees with the oracle"
     );
 
-    // Walk every row and report the worst, so a seam anywhere is found rather
-    // than only at the boundary this was written for.
     let stride = out.w as usize * 4;
     let mut worst = (0u8, 0usize);
     for row in 0..out.h as usize {

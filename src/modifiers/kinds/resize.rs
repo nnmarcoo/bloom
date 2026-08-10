@@ -55,15 +55,6 @@ impl ResizeFilter {
         }
     }
 
-    /// How far, in destination pixels, one output sample reaches.
-    ///
-    /// The single definition of each filter's support. The CPU resampler, the
-    /// shader, and the band apron all need it, and a resample whose apron is
-    /// narrower than its kernel reads rows the band does not hold, producing
-    /// seams at band boundaries.
-    ///
-    /// When downscaling the kernel widens by 1/scale, so callers sizing an
-    /// apron must scale this by the same factor the resample does.
     pub fn radius(&self) -> f32 {
         match self {
             ResizeFilter::Nearest => 0.0,

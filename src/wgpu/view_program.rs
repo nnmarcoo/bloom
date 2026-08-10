@@ -5,6 +5,23 @@
 //! output size, not the source size. Anything indexing it must use the output
 //! dimensions while reporting coordinates in source pixels, since that is what
 //! the user is pointing at.
+//!
+//! effective_display_size and crop_origin are both in the resized document, and
+//! crop fractions multiply the resized size, not the source -- mixing the two
+//! put the pixel grid's transform in one space and its bounds in another.
+//! Resize is applied before crop, matching export::geom_of, or the preview and
+//! the file would disagree.
+//!
+//! Two modifier hashes, and the difference is load-bearing. hash_modifiers is
+//! exact, because the staged-render and eyedropper caches hold buffers whose
+//! dimensions come from the chain, so a collision hands back a wrong-sized
+//! buffer. hash_modifiers_for_histogram is deliberately coarser and must mirror
+//! what compute_subsampled_histogram renders: disabled modifiers skipped, and
+//! every resize measured against the source, which is the space the upscale
+//! clamp decides in. An upscale is clamped to 100% before rendering because it
+//! interpolates between pixels already present and moves the distribution
+//! little, while costing a full resample per slider tick; a downscale averages
+//! neighbors and measurably narrows the distribution, so it is kept.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -515,13 +532,6 @@ impl ViewProgram {
         (!trim.is_full()).then(|| trim.resolve(duration))
     }
 
-    /// The document's size after the modifier stack, which is what the viewport
-    /// fits, zooms against, and reports coordinates in.
-    ///
-    /// Resize is applied before crop, matching `export::geom_of`. The two must
-    /// agree or the preview shows a different document than the file. Crop's
-    /// fractions are relative to the resized image, which is why the resize is
-    /// resolved first and the crop scales whatever comes out.
     fn effective_display_size(&self) -> Vec2 {
         let resized = self.chain_output_size();
         if let Some([min_u, min_v, max_u, max_v]) = self.displayed_crop() {
@@ -531,13 +541,6 @@ impl ViewProgram {
         }
     }
 
-    /// Where the crop's top-left sits, in the same space as
-    /// [`Self::effective_display_size`].
-    ///
-    /// The crop's fractions must be multiplied by the *resized* document, not
-    /// the source. Mixing the two put the pixel grid's transform in one space
-    /// and its bounds in another, so the lines drifted away from the pixels
-    /// under a resize.
     fn crop_origin(&self) -> Vec2 {
         match self.displayed_crop() {
             Some([min_u, min_v, ..]) => {
@@ -548,10 +551,6 @@ impl ViewProgram {
         }
     }
 
-    /// `image_size` after any dimension-changing modifier in the stack.
-    ///
-    /// Falls back to the source size when the stack changes nothing, which is
-    /// every stack that contains no resize.
     fn chain_output_size(&self) -> Vec2 {
         if self.image_size == Vec2::ZERO {
             return self.image_size;
@@ -637,12 +636,6 @@ impl ViewProgram {
         let local_px = (img_ndc + 1.0) * 0.5 * vec2(eff.x, -eff.y) + vec2(0.0, eff.y);
         let doc_px = local_px + self.crop_origin();
 
-        // `eff` and `crop_origin` are both in the *resized* document, but every
-        // caller wants source pixels: `cursor_info` clamps against `image_size`
-        // and divides by it for the reported uv, `cursor_pixels` indexes the
-        // source buffer, and `staged_pixel` does its own source->output mapping.
-        // Returning document coordinates put the readout off by exactly the
-        // resize factor.
         let doc = self.chain_output_size();
         if doc == Vec2::ZERO || doc == self.image_size {
             return Some(doc_px);
@@ -1129,16 +1122,6 @@ pub(crate) fn compute_subsampled_histogram(
     height: u32,
     modifiers: &[Modifier],
 ) -> Histogram {
-    // An *upscale* is clamped to 100%; a downscale is kept.
-    //
-    // A downscale averages neighbouring pixels, which measurably narrows the
-    // distribution -- on structured content a 25% downscale moves roughly 40%
-    // of the histogram's mass, so dropping it would report a histogram the
-    // export does not produce. An upscale interpolates between pixels that are
-    // already there and moves far less, and rendering it is by far the most
-    // expensive thing here: a 400% upscale of a 1000x1000 image resamples 16
-    // megapixels on every slider tick, which stalled the UI for most of a
-    // second per tick in a debug build.
     let chain: Vec<Modifier> = modifiers
         .iter()
         .map(|m| {
@@ -1146,8 +1129,6 @@ pub(crate) fn compute_subsampled_histogram(
             if let Some(r) = m.kind.as_resize_mut() {
                 let out = r.output_for(ImageSpec::new(width, height));
                 if out.w >= width && out.h >= height {
-                    // Neutralize only the enlargement, keeping the modifier in
-                    // place so later stages still see the same order.
                     *r = Resize {
                         mode: ResizeMode::Percent,
                         width: 100.0,
@@ -1161,9 +1142,6 @@ pub(crate) fn compute_subsampled_histogram(
         })
         .collect();
 
-    // The chain's output size, which is what `rendered` is indexed by. Deriving
-    // the stride from the source instead sampled only the top-left corner of a
-    // downscaled render.
     let out = chain_output_spec(ImageSpec::new(width, height), &plan_modifiers(&chain));
 
     let pixel_count = (out.w as usize) * (out.h as usize);
@@ -1234,14 +1212,6 @@ fn smooth_bins(bins: &mut [u32; 256]) {
     *bins = out;
 }
 
-/// Identifies a modifier stack exactly.
-///
-/// Used by the staged-render and eyedropper caches, which hold buffers whose
-/// *dimensions* depend on the chain, so every field of every modifier counts.
-/// Do not make this ignore anything: a key that collides across two stacks
-/// hands back a buffer of the wrong size and the eyedropper reads the wrong
-/// pixels. The histogram's coarser key is
-/// [`hash_modifiers_for_histogram`].
 pub(crate) fn hash_modifiers(modifiers: &[Modifier]) -> u64 {
     let mut hasher = DefaultHasher::new();
     modifiers.len().hash(&mut hasher);
@@ -1252,37 +1222,26 @@ pub(crate) fn hash_modifiers(modifiers: &[Modifier]) -> u64 {
     hasher.finish()
 }
 
-/// The histogram's cache key, deliberately coarser than [`hash_modifiers`].
-///
-/// It must agree with what `compute_subsampled_histogram` actually renders, or
-/// the cache serves a histogram for a different chain. That function clamps an
-/// upscale to 100% and keeps a downscale, so an upscale keys the same as no
-/// resize at all and dragging through the upscale range reuses one histogram
-/// instead of queueing a full CPU render per tick.
 pub(crate) fn hash_modifiers_for_histogram(modifiers: &[Modifier], w: u32, h: u32) -> u64 {
+    let source = ImageSpec::new(w, h);
     let mut hasher = DefaultHasher::new();
-    let mut cur = ImageSpec::new(w, h);
     let mut counted = 0usize;
     for m in modifiers {
+        if !m.has_visible_effect() {
+            continue;
+        }
         match m.kind.as_resize() {
-            Some(r) if m.has_visible_effect() => {
-                let out = r.output_for(cur);
-                if out.w >= cur.w && out.h >= cur.h {
-                    // Clamped away before rendering, so it contributes nothing
-                    // at all -- not even to the count, or an upscale would key
-                    // differently from no resize.
-                    cur = out;
+            Some(r) => {
+                let out = r.output_for(source);
+                if out.w >= source.w && out.h >= source.h {
                     continue;
                 }
                 counted += 1;
-                m.enabled.hash(&mut hasher);
                 (out.w, out.h).hash(&mut hasher);
                 (r.filter as u8).hash(&mut hasher);
-                cur = out;
             }
-            _ => {
+            None => {
                 counted += 1;
-                m.enabled.hash(&mut hasher);
                 m.kind.hash_into(&mut hasher);
             }
         }
@@ -1445,17 +1404,6 @@ mod crop_tests {
 
 #[cfg(test)]
 mod eyedropper_resize_tests {
-    /// The cursor's screen->image conversion must land in *source* pixels.
-    ///
-    /// Every consumer treats it that way: `cursor_info` clamps against
-    /// `image_size` and divides by it for the reported uv, `cursor_pixels`
-    /// indexes the source buffer, and `staged_pixel` does its own
-    /// source->output mapping. But the conversion is built from
-    /// `effective_display_size()`, which is the *resized* document, so a resize
-    /// scaled the coordinate and the readout pointed at the wrong pixel.
-    ///
-    /// The other tests here set `cursor_image_pos` directly, so none of them
-    /// exercised the conversion.
     #[test]
     fn the_cursor_maps_to_source_pixels_under_a_resize() {
         let (w, h) = (400u32, 300u32);
@@ -1480,8 +1428,6 @@ mod eyedropper_resize_tests {
         }
     }
 
-    /// screen->uv and uv->screen must invert each other under a resize, or the
-    /// crop and text overlays drag their handles away from the pointer.
     #[test]
     fn the_screen_and_uv_conversions_round_trip_under_a_resize() {
         let (w, h) = (400u32, 300u32);
@@ -1614,12 +1560,6 @@ mod eyedropper_resize_tests {
     }
 }
 
-/// What the histogram costs when the chain upscales.
-///
-/// `compute_subsampled_histogram` subsamples its *reads*, but only after
-/// `cpu::render_full` has rendered the entire chain at full document size. With
-/// a resize in the stack that is a full CPU resample of the upscaled document,
-/// and it reruns on every slider tick because the modifier hash changes.
 #[cfg(test)]
 mod histogram_cost_tests {
     fn resize_pct_h(pct: f32) -> Modifier {
@@ -1632,12 +1572,6 @@ mod histogram_cost_tests {
         }))
     }
 
-    /// A downscale genuinely narrows the distribution, so it must be rendered.
-    ///
-    /// Measured on structured content, a 25% downscale moves roughly 40% of the
-    /// histogram's mass. An earlier version dropped every resize on the claim
-    /// that a resample "does not meaningfully change" the distribution; that is
-    /// false for downscales, and this pins it.
     #[test]
     fn a_downscale_changes_the_histogram() {
         let (w, h) = (256u32, 256u32);
@@ -1645,7 +1579,6 @@ mod histogram_cost_tests {
         for y in 0..h {
             for x in 0..w {
                 let o = ((y * w + x) * 4) as usize;
-                // Fine checker: averaging neighbours must visibly change it.
                 let on = (x / 2 + y / 2) % 2 == 0;
                 let v = if on { 255 } else { 0 };
                 pixels[o] = v;
@@ -1662,8 +1595,6 @@ mod histogram_cost_tests {
         );
     }
 
-    /// An upscale is clamped away before rendering, which is what licenses
-    /// skipping the expensive resample.
     #[test]
     fn an_upscale_does_not_change_the_histogram() {
         let (w, h) = (128u32, 128u32);
@@ -1680,8 +1611,6 @@ mod histogram_cost_tests {
         }
     }
 
-    /// The histogram key must track what is actually rendered: upscales alike,
-    /// downscales distinct.
     #[test]
     fn the_histogram_key_ignores_upscales_but_not_downscales() {
         let (w, h) = (500u32, 500u32);
@@ -1703,10 +1632,47 @@ mod histogram_cost_tests {
         );
     }
 
-    /// The general key must stay exact. The staged-render and eyedropper caches
-    /// hold buffers whose dimensions come from the chain, so a key that ignored
-    /// a resize would hand back a buffer of the wrong size and the eyedropper
-    /// would read the wrong pixels.
+    #[test]
+    fn a_disabled_resize_keys_like_no_resize() {
+        let (w, h) = (500u32, 500u32);
+        for pct in [25.0f32, 400.0] {
+            let mut m = resize_pct_h(pct);
+            m.enabled = false;
+            assert_eq!(
+                hash_modifiers_for_histogram(&[m], w, h),
+                hash_modifiers_for_histogram(&[], w, h),
+                "a disabled {pct}% resize keyed differently from no resize, but \
+                 it is dropped before rendering, so both produce the same \
+                 histogram"
+            );
+        }
+    }
+
+    #[test]
+    fn the_key_classifies_chained_resizes_like_the_renderer() {
+        let (w, h) = (400u32, 400u32);
+        let pixels: Vec<u8> = (0..(w * h * 4))
+            .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
+            .collect();
+
+        let chain = vec![resize_pct_h(200.0), resize_pct_h(25.0)];
+        let lone = vec![resize_pct_h(25.0)];
+
+        assert_eq!(
+            compute_subsampled_histogram(&pixels, w, h, &chain),
+            compute_subsampled_histogram(&pixels, w, h, &lone),
+            "the renderer clamps the upscale against the source, so these two \
+             chains render the same histogram; if this fails the premise below \
+             is wrong, not the key"
+        );
+        assert_eq!(
+            hash_modifiers_for_histogram(&chain, w, h),
+            hash_modifiers_for_histogram(&lone, w, h),
+            "the two chains render an identical histogram but keyed \
+             differently, so the cache cannot serve one for the other"
+        );
+    }
+
     #[test]
     fn the_general_key_distinguishes_every_resize() {
         let a = vec![resize_pct_h(50.0)];
@@ -1731,7 +1697,7 @@ mod histogram_cost_tests {
 
         println!(
             "
-Histogram cost — {w}x{h} source"
+Histogram cost -- {w}x{h} source"
         );
         println!("  {:<22} {:>12} {:>14}", "chain", "doc", "ms");
         println!("  {:-<50}", "");
@@ -1810,10 +1776,6 @@ mod document_size_tests {
         );
     }
 
-    /// Resize is applied before crop, matching `export::geom_of`.
-    ///
-    /// Reversing the order gives a different answer whenever both are present,
-    /// and the preview would disagree with the file.
     #[test]
     fn crop_applies_to_the_resized_document() {
         let p = program(
@@ -1821,17 +1783,9 @@ mod document_size_tests {
             800,
             600,
         );
-        // Crop's fractions come from the source-sized values the crop tool
-        // wrote, so a half-image crop of an 800x600 source is 0..0.5 in u/v.
-        // Applied to the 400x300 resized document that is 200x150.
         assert_eq!(p.effective_display_size(), vec2(200.0, 150.0));
     }
 
-    /// The grid's transform and its bounds must be in one space.
-    ///
-    /// `grid_uniforms` built the transform from the resized document but the
-    /// origin from the source image, so under a resize the lines drifted away
-    /// from the pixels they were meant to outline.
     #[test]
     fn crop_origin_is_in_the_resized_space() {
         let p = program(
@@ -1839,8 +1793,6 @@ mod document_size_tests {
             800,
             600,
         );
-        // The crop starts halfway across an 800x600 source, so u/v are 0.5.
-        // In the 400x300 resized document that is (200, 150), not (400, 300).
         assert_eq!(
             p.crop_origin(),
             vec2(200.0, 150.0),
@@ -1848,8 +1800,6 @@ mod document_size_tests {
         );
     }
 
-    /// Without a resize the two spaces coincide, which is why this went
-    /// unnoticed until one was added.
     #[test]
     fn crop_origin_without_a_resize_is_the_source_offset() {
         let p = program(vec![crop_of(400.0, 300.0, 400.0, 300.0)], 800, 600);
@@ -1864,7 +1814,6 @@ mod document_size_tests {
         assert_eq!(p.effective_display_size(), vec2(800.0, 600.0));
     }
 
-    /// The viewport must fit the document the export will produce.
     #[test]
     fn fit_scale_uses_the_resized_document() {
         let mut p = program(vec![resize_pct(50.0)], 800, 600);
@@ -1874,8 +1823,6 @@ mod document_size_tests {
             width: 400.0,
             height: 300.0,
         });
-        // A 400x300 document in 400x300 bounds fits at exactly 1.0. Without the
-        // resize being honored this would be 0.5.
         assert!(
             (p.fit_scale() - 1.0).abs() < 1e-4,
             "fit scale was {}, expected 1.0 for a 400x300 document in 400x300 \
@@ -1884,7 +1831,6 @@ mod document_size_tests {
         );
     }
 
-    /// Preview and export must agree, since disagreeing is the whole bug.
     #[test]
     fn preview_size_matches_the_export_geometry() {
         for pct in [25.0f32, 50.0, 150.0] {

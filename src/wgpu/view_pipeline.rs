@@ -7,6 +7,15 @@
 //!
 //! Per-tile ROIs are written here from viewport culling, and the modifier
 //! pipeline reads them to decide how much of each tile to process.
+//!
+//! A resize is previewable like any other modifier. Excluding it from the gate
+//! destroyed the pipeline for a resize-only stack, and the view then drew the
+//! source tiles at full resolution inside a smaller quad -- every pixel kept
+//! while claiming to be smaller, so a 1x1 resize showed the whole picture in
+//! one pixel. A resize may also defer while interacting, but only while the
+//! document holds the size its textures were built for; deferring across a size
+//! change leaves full-resolution textures on shrunken quads, which reads as
+//! flicker. That is what the doc_size comparison guards.
 
 use bytemuck::bytes_of;
 use glam::{Mat4, Vec2, vec2, vec3, vec4};
@@ -354,28 +363,11 @@ impl ViewPipeline {
         let dirty = dirty || self.pending_source_dirty;
         self.pending_source_dirty = false;
 
-        // A resize counts as previewable. Excluding it here dates from when the
-        // executor dropped resize from the plan: a resize-only stack then had
-        // nothing previewable, the pipeline was destroyed, and the view fell
-        // back to drawing the source tiles at full resolution inside a smaller
-        // quad. The image kept every pixel while claiming to be smaller, which
-        // at 1x1 showed the whole picture inside a single pixel.
         if !modifiers.iter().any(|m| m.has_visible_effect()) {
             self.modifier_pipeline = None;
             return;
         }
 
-        // Deferring expensive work while the view moves keeps panning smooth:
-        // `refresh_display_transforms` moves the quads without re-running the
-        // chain.
-        //
-        // A resize can be deferred too, but only while the document keeps the
-        // size its textures were built for. Deferring across a size change
-        // leaves full-resolution textures on shrunken quads, which reads as
-        // flicker -- that is why resize was excluded here entirely. Excluding
-        // it also meant a resize re-ran the whole chain every frame while
-        // interacting, and an upscale is not cheap: 400% of a 1000x1000 source
-        // is ~6ms per frame with no relief.
         let doc = chain_output_spec(
             ImageSpec::new(source.full_width, source.full_height),
             &plan_modifiers(modifiers),
@@ -625,29 +617,10 @@ mod preview_gate_tests {
     use crate::modifiers::kinds::{Exposure, GaussianBlur, Resize, ResizeFilter, ResizeMode};
     use crate::modifiers::{Modifier, ModifierKind};
 
-    /// The gate `prepare_modifiers` uses to decide whether a modifier pipeline
-    /// is needed at all.
-    ///
-    /// This is the layer the resize preview kept dying at. Fixes made inside
-    /// `ModifierPipeline` were never reached: a resize-only stack failed this
-    /// check, the pipeline was destroyed, and the view drew the source tiles at
-    /// full resolution inside the resized quad. The image kept every pixel
-    /// while claiming to be smaller, so a 1x1 resize showed the whole picture
-    /// inside one pixel.
     fn needs_pipeline(modifiers: &[Modifier]) -> bool {
         modifiers.iter().any(|m| m.has_visible_effect())
     }
 
-    /// The gate that defers work while the view is moving.
-    ///
-    /// `refresh_display_transforms` moves the quads without re-running the
-    /// chain, which is safe only while the document keeps the size those quads
-    /// were built for. Resize used to be excluded from this gate outright, to
-    /// avoid leaving full-resolution textures on shrunken quads; the cost was
-    /// that a resize re-ran the entire chain every frame while interacting,
-    /// with no relief at all. The size check gets the deferral without the
-    /// flicker: panning and zooming a resized document defer, and only a change
-    /// to the document itself forces the work.
     fn defers_while_interacting(modifiers: &[Modifier], doc_changed: bool) -> bool {
         !doc_changed
             && modifiers
@@ -690,9 +663,6 @@ mod preview_gate_tests {
         assert!(!needs_pipeline(&[]));
     }
 
-    /// The regression this gate caused: a resize got no deferral at all, so
-    /// every frame while interacting re-ran the whole chain. An upscale is not
-    /// cheap -- 400% of a 1000x1000 source is ~6ms per frame.
     #[test]
     fn a_resize_defers_while_the_document_holds_its_size() {
         assert!(
@@ -701,8 +671,6 @@ mod preview_gate_tests {
         );
     }
 
-    /// The flicker case the old exclusion existed to prevent. Quads built for
-    /// one document size must not be reused for another.
     #[test]
     fn a_resize_does_not_defer_across_a_size_change() {
         assert!(

@@ -4,6 +4,18 @@
 //! Preview quality is scaled down when the zoom level or the VRAM budget calls
 //! for it, so a complex stack on a large image stays interactive. VRAM size is
 //! not discoverable from wgpu, so the budget is policy rather than measurement.
+//!
+//! quality_scale_for derives that scale from physical_scale alone, rounded up
+//! to a power of two, which renders at least as many document pixels as the
+//! screen shows at any zoom and with or without a resize. It deliberately has
+//! no upscale special case: one was tried on the theory that a resized document
+//! was rendering below the source's resolution, but the arithmetic says
+//! otherwise and the floor only forced 4-8x the necessary work once zoomed out.
+//!
+//! doc_size is the document the last prepare produced. It lets display
+//! transforms move quads without the modifier list, and tells the caller
+//! whether deferring is safe: quads can be moved for a document of that size,
+//! but not for one that changed underneath them.
 
 use iced::wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindingResource, BlendState,
@@ -111,11 +123,6 @@ struct TileOutput {
     height: u32,
     proc_px: Option<[f32; 4]>,
     quality_scale: f32,
-    /// The document this output was built for.
-    ///
-    ///  is expressed in it, so an output made for a different one
-    /// cannot be reused: its region would be reinterpreted in the new document
-    /// and the band copy would run off the texture.
     doc: (u32, u32),
 }
 
@@ -181,19 +188,6 @@ impl Scheduler {
     }
 }
 
-/// The fraction of the chain's output resolution worth rendering.
-///
-/// `physical_scale` is how large the document is drawn on screen, so it already
-/// says how much of the chain's output survives to a pixel. Rounding up to the
-/// next power of two renders at least as many document pixels as the screen
-/// shows, at any zoom and with or without a resize in the chain -- a 2x upscale
-/// fitted at 0.42 renders 1179 of its 2358 columns for 990 screen pixels.
-///
-/// This deliberately has no special case for an upscale. One was tried, on the
-/// theory that a resized document was being rendered below the source's
-/// resolution; the arithmetic says otherwise, and the floor only forced 4-8x
-/// the necessary work once zoomed out. Whatever softens an upscaled preview is
-/// not decided here.
 fn quality_scale_for(physical_scale: f32) -> f32 {
     if physical_scale > 0.0 {
         physical_scale.log2().ceil().exp2().min(1.0)
@@ -214,15 +208,10 @@ const MAX_BLUR_FRAMES: u32 = 4;
 
 use crate::modifiers::gpu::UvRect;
 
-/// The source and output document sizes a display quad is placed against.
-///
-/// Carried together because they are only meaningful as a pair: a rect is
-/// mapped from one into the other.
 #[derive(Clone, Copy)]
 pub(super) struct DocScale {
     pub src: (u32, u32),
     pub out: (u32, u32),
-    /// Whether the tile has a visible sub-rect to inscribe the quad into.
     pub roi_active: bool,
 }
 
@@ -268,12 +257,6 @@ pub struct ModifierPipeline {
     trilinear_sampler: Sampler,
     linear_sampler: Sampler,
     nearest_sampler: Sampler,
-    /// The document the last prepare produced, so refresh_display_transforms
-    /// can place quads without the modifier list.
-    ///
-    /// Also tells the caller whether deferring is safe: the display transforms
-    /// can move quads for a document this size, but not for one that changed
-    /// underneath them.
     doc_size: (u32, u32),
     exec_band_cursor: u32,
     exec_sig: u64,
@@ -366,7 +349,6 @@ impl ModifierPipeline {
         self.reprocess_pending
     }
 
-    /// The document size the current tile outputs were built for.
     pub fn doc_size(&self) -> (u32, u32) {
         self.doc_size
     }
@@ -602,11 +584,6 @@ impl ModifierPipeline {
         pr: &ProcRect,
         doc: DocScale,
     ) {
-        //  places pr.px within isec, so both must be in one
-        // space. pr.px is in the output document once the chain resizes, while
-        // isec is the tile's visible rect in the source, so isec is mapped the
-        // same way. Mixing them offsets each tile's quad by a different amount,
-        // which is what shows as seams between tiles.
         let display_uniform: &iced::wgpu::Buffer = if doc.roi_active
             && let (Some(isec), Some(base)) = (tile.isec_px, tile.last_transform)
         {
@@ -664,15 +641,6 @@ impl ModifierPipeline {
     }
 }
 
-/// The rule the preview's resolution rests on: rendering at the next power of
-/// two above `physical_scale` always covers the screen.
-///
-/// Marco reported that an upscale looked blurrier the further he zoomed out,
-/// and a floor was briefly added here on the theory that a 2x document was
-/// being rendered at the source's pixel count. The arithmetic says otherwise --
-/// the plain stepped value already covers the screen at every zoom -- and the
-/// floor only bought 4-8x the work once zoomed out. It was removed. These tests
-/// exist so the same wrong fix is not attempted twice.
 #[cfg(test)]
 mod quality_scale_tests {
     use super::quality_scale_for;
@@ -686,12 +654,6 @@ mod quality_scale_tests {
         assert_eq!(quality_scale_for(4.0), 1.0, "never renders above 1:1");
     }
 
-    /// The invariant that makes a floor unnecessary.
-    ///
-    /// Whatever the zoom and whatever the resize, the rendered document must be
-    /// at least as many pixels as the screen shows it in -- otherwise the
-    /// display magnifies a proxy, which is what "blurry" means. A 2x upscale
-    /// fitted at 0.42 renders 1179 of its 2358 columns for 990 screen pixels.
     #[test]
     fn the_render_always_covers_the_screen() {
         let doc_px = 2358.0_f32;
@@ -705,7 +667,6 @@ mod quality_scale_tests {
         }
     }
 
-    /// Zooming out must keep saving work, which is the property the floor broke.
     #[test]
     fn zooming_out_keeps_reducing_the_work() {
         assert_eq!(quality_scale_for(0.2), 0.25);
@@ -717,7 +678,6 @@ mod quality_scale_tests {
         );
     }
 
-    /// A degenerate scale must not produce a NaN or a zero-sized render.
     #[test]
     fn a_nonpositive_scale_falls_back_to_full() {
         assert_eq!(quality_scale_for(0.0), 1.0);

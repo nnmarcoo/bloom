@@ -27,17 +27,8 @@ use crate::modifiers::kinds::{
 };
 use crate::modifiers::{Modifier, ModifierKind, ids};
 
-/// Channel difference allowed before a modifier is considered divergent.
-///
-/// 4/255 tolerates f32 rounding and intrinsic differences while still failing
-/// on a wrong formula, which shifts output by tens of levels.
 const TOL: u8 = 4;
 
-/// One parity case: the shader id it covers, a label, and the configured kind.
-///
-/// Parameters are chosen to exercise the effect rather than to be defaults; a
-/// modifier at its identity settings would pass no matter how wrong either
-/// implementation is.
 struct Case {
     id: u32,
     label: &'static str,
@@ -211,11 +202,6 @@ fn run(id: u32) {
     }
 }
 
-/// Adding a modifier must not silently skip parity coverage.
-///
-/// This is the reason CASES carries ids rather than being a bare list of test
-/// functions: the set can be compared against the registry, so the failure
-/// names the modifier that needs a case.
 #[test]
 fn covers_every_shared_shader_modifier() {
     let missing: Vec<&str> = ids::ALL
@@ -241,7 +227,6 @@ fn covers_every_shared_shader_modifier() {
     );
 }
 
-/// Every case must be reachable by exactly one test.
 #[test]
 fn case_ids_are_unique() {
     let mut ids: Vec<u32> = CASES.iter().map(|c| c.id).collect();
@@ -251,11 +236,6 @@ fn case_ids_are_unique() {
     assert_eq!(before, ids.len(), "CASES contains a duplicate id");
 }
 
-/// A case with no `#[test]` calling it would never run, and the coverage check
-/// above would still pass because the entry exists.
-///
-/// The tests are one-liners named `parity_<label>`, so the file itself is the
-/// evidence: each case's label must appear as a test function.
 #[test]
 fn every_case_has_a_test() {
     const SRC: &str = include_str!("parity.rs");

@@ -38,17 +38,6 @@ pub fn step_class(kind: &ModifierKind) -> StepClass {
     }
 }
 
-/// [`step_class`], refined by the geometry the stage actually runs at.
-///
-/// A resample's reach is not a property of the modifier alone: it depends on
-/// how far it is scaling. `input_request` has no access to the input size, so
-/// resize declares `FullFrame` there, which is the conservative answer and
-/// would exclude it from banding entirely.
-///
-/// Given the stage's input and output, the reach is known exactly. A downscale
-/// widens the kernel by 1/scale, matching what the resampler does, so the apron
-/// covers every row a tap can read. Without that, taps at a band's edge reach
-/// rows the band does not hold and leave seams.
 pub fn step_class_for(kind: &ModifierKind, in_h: u32, out_h: u32) -> StepClass {
     if let Some(r) = kind.as_resize() {
         let scale = if in_h == 0 {
@@ -86,10 +75,6 @@ pub fn dilate(r: RegionPx, d: f32) -> RegionPx {
     [r[0] - d, r[1] - d, r[2] + d, r[3] + d]
 }
 
-#[allow(
-    dead_code,
-    reason = "used by tests; the executor consumes it once it carries per-stage geometry"
-)]
 pub fn unmap_region(from: (f32, f32), to: (f32, f32), r: RegionPx) -> RegionPx {
     if from.0 <= 0.0 || from.1 <= 0.0 {
         return r;

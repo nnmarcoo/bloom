@@ -548,7 +548,6 @@ mod shader_id_tests {
 
     const SHADER: &str = include_str!("../wgpu/shaders/combined_modifiers.wgsl");
 
-    /// Case labels in the shader's dispatch switch, as written.
     fn shader_cases() -> BTreeSet<u32> {
         SHADER
             .lines()
@@ -561,11 +560,6 @@ mod shader_id_tests {
             .collect()
     }
 
-    /// Every id must have an arm and every arm must have an id.
-    ///
-    /// The two sides live in different languages and are coupled only by the
-    /// number. Renumbering one without the other silently renders each affected
-    /// modifier as some *other* modifier, which no other test would catch.
     #[test]
     fn every_id_has_a_shader_arm_and_the_reverse() {
         let declared: BTreeSet<u32> = ids::ALL.iter().map(|(_, v)| *v).collect();
@@ -588,7 +582,6 @@ mod shader_id_tests {
         );
     }
 
-    /// Ids must be unique, or two modifiers dispatch to the same arm.
     #[test]
     fn ids_are_unique() {
         let mut seen: Vec<(u32, &str)> = ids::ALL.iter().map(|(n, v)| (*v, *n)).collect();

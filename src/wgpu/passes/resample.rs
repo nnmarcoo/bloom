@@ -8,6 +8,15 @@
 //! shader and must land on exact texel centers; a linear sampler would blend
 //! each tap with its neighbor before weighting, which is a second filter
 //! applied underneath the first.
+//!
+//! A resize is defined by the whole image's lengths, since that ratio is what
+//! the user asked for, but the executor renders one band or tile at a time.
+//! ResampleRegion carries where the target sits and which slice of the source
+//! is bound, so the ratio does not shift per region. Without it a region's
+//! first row is treated as the image's first row, and every region except the
+//! one at the origin resamples the wrong part of the source -- which is
+//! precisely the upscale bug, invisible at 50% because that produces a single
+//! band starting at row 0.
 
 use bytemuck::{Pod, Zeroable};
 use iced::wgpu::{
@@ -27,34 +36,15 @@ struct ResampleUniforms {
     region: [f32; 4],
 }
 
-/// Which part of the image a single resample invocation is responsible for.
-///
-/// A resample is defined by the whole image's lengths -- that ratio is the
-/// resize the user asked for. But the executor renders one band or tile at a
-/// time, so the pass also has to know where the target sits and which slice of
-/// the source is actually bound. Without that the region's first row is treated
-/// as the image's first row, and every region except the one at the origin
-/// resamples the wrong part of the source.
 #[derive(Clone, Copy)]
 pub struct ResampleRegion {
-    /// First output index the render target covers, in whole-image coordinates.
     pub out_base: u32,
-    /// Length of the render target on the resampled axis.
     pub dst_len: u32,
-    /// First source index the bound input texture holds.
     pub src_base: u32,
-    /// Length of the bound input texture on the resampled axis.
     pub tex_len: u32,
 }
 
 impl ResampleRegion {
-    /// The whole image: the target is the full output and the bound texture is
-    /// the full source. This is the identity case, and the only one where
-    /// region-agnostic arithmetic happens to be correct.
-    ///
-    /// The executor always renders a region, so this is used by the tests that
-    /// resample a whole image -- `allow` rather than `expect` because whether
-    /// it is reached depends on the target configuration.
     #[allow(dead_code)]
     pub fn full(out_len: u32, src_len: u32) -> Self {
         Self {
@@ -137,13 +127,6 @@ impl ResamplePass {
         }
     }
 
-    /// Resample one axis into `target`.
-    ///
-    /// `out_len` and `src_len` are the **whole image's** lengths along the axis
-    /// being resampled -- their ratio is the resize itself, and it must not
-    /// change when only part of the image is being rendered. `region` says
-    /// which part that is. The other axis passes through unchanged, so the
-    /// caller sizes `target` accordingly.
     #[allow(clippy::too_many_arguments)]
     pub fn record(
         &self,
@@ -229,12 +212,6 @@ mod tests {
     const SRC_W: u32 = 64;
     const SRC_H: u32 = 48;
 
-    /// A source with hard edges and a full value sweep.
-    ///
-    /// Smooth gradients hide filter differences, since every reasonable kernel
-    /// agrees on a linear ramp. The checker and the borders are where Nearest,
-    /// Bilinear, and Lanczos visibly disagree, and where edge normalization
-    /// goes wrong if the per-pixel weight sum is not honored.
     fn source_pixels() -> Vec<u8> {
         let mut v = vec![0u8; (SRC_W * SRC_H * 4) as usize];
         for y in 0..SRC_H {
@@ -333,7 +310,6 @@ mod tests {
         out
     }
 
-    /// Run both axes on the GPU and return the result at `dst_w` x `dst_h`.
     fn gpu_resample(
         device: &Device,
         queue: &Queue,
@@ -368,8 +344,6 @@ mod tests {
         );
         let dst_view = dst.create_view(&Default::default());
 
-        // Separate uniform buffers per axis: one submission per pass, and the
-        // horizontal write must not be overwritten before its pass runs.
         let ub_h = pass.uniform_buffer(device);
         let mut enc = device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
             label: Some("resample-test-h"),
@@ -411,11 +385,6 @@ mod tests {
         readback(device, queue, &dst, dst_w, dst_h)
     }
 
-    /// Resample output rows `band_y0..band_y1` the way the executor does.
-    ///
-    /// The horizontal pass runs over the source rows the band needs; the
-    /// vertical pass then produces just the band. Both are given the region
-    /// they operate on, which is exactly the executor's situation.
     #[allow(clippy::too_many_arguments)]
     fn gpu_resample_band(
         device: &Device,
@@ -431,8 +400,6 @@ mod tests {
         let src_tex = texture_from(device, queue, src, SRC_W, SRC_H);
         let src_view = src_tex.create_view(&Default::default());
 
-        // Source rows this band reads, with a Lanczos-3 apron, mirroring the
-        // executor's backward walk through `input_needed`.
         let sy = SRC_H as f32 / dst_h as f32;
         let src_y0 = (((band_y0 as f32) * sy).floor() - 3.0).max(0.0) as u32;
         let src_y1 = ((((band_y1 as f32) * sy).ceil() + 3.0) as u32).min(SRC_H);
@@ -443,8 +410,6 @@ mod tests {
             | iced::wgpu::TextureUsages::COPY_SRC
             | iced::wgpu::TextureUsages::COPY_DST;
 
-        // The band's slice of the source, as its own texture: the executor's
-        // `prev` stage holds only the region the band needs.
         let sub = gpu::texture_2d(
             device,
             SRC_W,
@@ -503,8 +468,6 @@ mod tests {
         );
         let dst_view = dst.create_view(&Default::default());
 
-        // Horizontal: the full width, so this axis is the whole image and needs
-        // no offset. Only the vertical axis is banded here.
         let ub_h = pass.uniform_buffer(device);
         let mut enc = device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
             label: Some("resample-band-h"),
@@ -528,9 +491,6 @@ mod tests {
         let mut enc2 = device.create_command_encoder(&iced::wgpu::CommandEncoderDescriptor {
             label: Some("resample-band-v"),
         });
-        // The vertical axis is the banded one: the target covers output rows
-        // `band_y0..band_y1` of a `dst_h`-tall image, and the bound texture
-        // holds source rows `src_y0..src_y1` of a `SRC_H`-tall image.
         pass.record(
             device,
             queue,
@@ -609,28 +569,16 @@ mod tests {
         check(ResizeFilter::Lanczos, 128, 96, 2, "lanczos/up");
     }
 
-    /// A large reduction is where the `inv` widening matters. Without it the
-    /// kernel stays narrow, undersamples, and aliases.
     #[test]
     fn lanczos_large_reduction_matches_cpu() {
         check(ResizeFilter::Lanczos, 8, 6, 2, "lanczos/8x");
     }
 
-    /// Non-uniform scaling, so a bug that only shows when the two axes differ
-    /// cannot hide behind a square resize.
     #[test]
     fn lanczos_anisotropic_matches_cpu() {
         check(ResizeFilter::Lanczos, 96, 12, 2, "lanczos/aniso");
     }
 
-    /// Resampling a band must agree with the same rows of a whole-image resize.
-    ///
-    /// Every test above resamples the entire image, so `out_len`/`src_len` are
-    /// the image's own lengths and output index 0 is image row 0. The executor
-    /// never calls it that way once a document needs banding: it hands the pass
-    /// one band at a time. If the pass cannot express where that band sits, it
-    /// resamples every band as though it were the whole image, and only the
-    /// first band -- the one that really does start at zero -- comes out right.
     #[test]
     fn a_band_matches_the_same_rows_of_a_full_resize() {
         let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -641,9 +589,6 @@ mod tests {
         let (dst_w, dst_h) = (SRC_W * 2, SRC_H * 2);
         let want = cpu::resample(&src, SRC_W, SRC_H, dst_w, dst_h, ResizeFilter::Lanczos);
 
-        // A band in the lower half of the output, chosen so it starts well away
-        // from the origin and the taps it needs are interior rather than
-        // clamped -- a band at the edge could pass on the edge case alone.
         let (band_y0, band_y1) = (dst_h / 2, dst_h / 2 + 16);
         let got = gpu_resample_band(
             &device,

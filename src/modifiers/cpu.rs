@@ -72,12 +72,6 @@ pub(crate) fn source_rows_for_band(
     Some((lo, hi))
 }
 
-/// Rows of overlap a band needs so every stage can read what it samples.
-///
-/// Takes the source spec because a resample's reach depends on how far it
-/// scales, which only the per-stage geometry knows. A resize declares
-/// `FullFrame` from `input_request` alone, and using that here would both
-/// exclude it from banding and understate the apron.
 pub(crate) fn chain_apron_rows(source: ImageSpec, plan: &[PlanItem]) -> u32 {
     let specs = infer_specs(source, plan);
     plan.iter()
@@ -1644,11 +1638,6 @@ mod resize_apron_tests {
         }))
     }
 
-    /// A resize must not force the whole-frame fallback.
-    ///
-    /// `input_request` reports `FullFrame` because it has no access to the
-    /// input size, and taking that at face value here excluded resize from
-    /// banding entirely, which is what made it export-only.
     #[test]
     fn a_resize_chain_can_be_banded() {
         let chain = vec![resize(50.0, ResizeFilter::Lanczos)];
@@ -1670,11 +1659,6 @@ mod resize_apron_tests {
         assert!(plan_is_bandable(ImageSpec::new(1179, 1159), &plan));
     }
 
-    /// The apron must widen with the reduction, matching the resampler.
-    ///
-    /// A tap at output row r reads source rows around r/scale +- radius/scale.
-    /// An apron of just `radius` would leave those rows outside the band and
-    /// produce a seam at every boundary.
     #[test]
     fn the_apron_widens_as_the_reduction_grows() {
         let src = ImageSpec::new(1000, 1000);
@@ -1686,13 +1670,10 @@ mod resize_apron_tests {
             "a 4x reduction needs a wider apron than a 2x one, got {quarter} \
              and {half}"
         );
-        // Lanczos reaches 3 output pixels, widened by 1/scale.
         assert_eq!(half, 6, "a 50% Lanczos resize should reach 3 / 0.5 rows");
         assert_eq!(quarter, 12, "a 25% Lanczos resize should reach 3 / 0.25");
     }
 
-    /// A cheaper filter reads less, and the apron should say so rather than
-    /// paying for the widest kernel regardless.
     #[test]
     fn the_apron_follows_the_chosen_filter() {
         let src = ImageSpec::new(1000, 1000);
@@ -1707,8 +1688,6 @@ mod resize_apron_tests {
         assert_eq!(lanc, 6);
     }
 
-    /// Upscaling does not widen the kernel: each output sample still reads the
-    /// same few source pixels.
     #[test]
     fn an_upscale_does_not_widen_the_apron() {
         let src = ImageSpec::new(1000, 1000);
@@ -1719,14 +1698,11 @@ mod resize_apron_tests {
         assert_eq!(up, 3, "an upscale should reach exactly the filter radius");
     }
 
-    /// A band's source rows must include the apron, or the resample reads rows
-    /// the band does not hold.
     #[test]
     fn a_band_reaches_past_its_own_rows_under_a_resize() {
         let chain = vec![resize(50.0, ResizeFilter::Lanczos)];
         let plan = plan_modifiers(&chain);
         let specs = infer_specs(ImageSpec::new(1000, 1000), &plan);
-        // Output rows 100..200 come from source rows 200..400, plus the apron.
         let (lo, hi) = source_rows_for_band(&plan, &specs, 100, 200).expect("bandable");
         assert!(
             lo < 200 && hi > 400,

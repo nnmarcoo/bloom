@@ -144,12 +144,6 @@ mod tests {
         best
     }
 
-    /// How many `prepare` calls a chain needs before it stops asking for more.
-    ///
-    /// Wall-clock time hides this: the executor renders one band per call and
-    /// defers the rest, so a chain that converges in 40 frames feels far worse
-    /// while dragging a slider than one that converges in 2, even when the
-    /// total work is similar.
     fn frames_to_converge(
         device: &Device,
         queue: &Queue,
@@ -194,7 +188,7 @@ mod tests {
         };
 
         let limit = device.limits().max_texture_dimension_2d;
-        println!("\nScaling with source size — visible region held at ~1024x1024");
+        println!("\nScaling with source size -- visible region held at ~1024x1024");
         println!("max_texture_dimension_2d = {limit}");
         println!("{:-<74}", "");
         println!(
@@ -282,7 +276,7 @@ mod tests {
             ("400% zoom", 0.0625, 4.0),
         ];
 
-        println!("\nGPU pipeline baseline — {W}x{H}, best of {RUNS}");
+        println!("\nGPU pipeline baseline -- {W}x{H}, best of {RUNS}");
         println!("(time to converge a full render, including readback sync)");
 
         for (view_label, frac, phys) in views {
@@ -302,16 +296,6 @@ mod tests {
         println!();
     }
 
-    /// What an upscale costs as the view zooms out.
-    ///
-    /// `quality_scale` is floored at the source's resolution when the chain
-    /// upscales, because rendering below it discards the resize entirely. That
-    /// floor has a price: zooming out no longer reduces the work, so this is
-    /// the case to watch when the preview feels slow.
-    ///
-    /// The comparison that matters is the same row across zoom levels. Without
-    /// the floor the cost falls away as you zoom out (and the image degrades);
-    /// with it the cost stays flat at roughly the source's own pixel count.
     #[test]
     #[ignore = "GPU timing baseline; run with --release --ignored --nocapture"]
     fn gpu_bench_resize() {
@@ -360,9 +344,6 @@ mod tests {
             ),
         ];
 
-        // Zoom levels a user passes through after upscaling: the fit for a 2x
-        // document, then progressively further out, which is where the floor
-        // keeps the resolution up and the old code degraded it.
         let views: [(&str, f32, f32); 4] = [
             ("100% zoom", 0.25, 1.0),
             ("fit after 2x (~0.5)", 1.0, 0.5),
@@ -370,7 +351,7 @@ mod tests {
             ("far out (0.1)", 1.0, 0.1),
         ];
 
-        println!("\nGPU resize baseline — {W}x{H} source, best of {RUNS}");
+        println!("\nGPU resize baseline -- {W}x{H} source, best of {RUNS}");
         println!("(the floor means an upscale's cost no longer falls as you zoom out)");
 
         for (view_label, frac, phys) in views {
@@ -390,11 +371,6 @@ mod tests {
         println!();
     }
 
-    /// A modest image at the size Marco reports as slow.
-    ///
-    /// 1000x1000 is a single tile and a few megapixels; nothing here should be
-    /// expensive. If it is, the cost is structural rather than a quality
-    /// tradeoff, so this reports frames-to-converge alongside the time.
     #[test]
     #[ignore = "GPU timing baseline; run with --release --ignored --nocapture"]
     fn gpu_bench_small_image_resize() {
@@ -436,7 +412,7 @@ mod tests {
 
         println!(
             "
-GPU small-image baseline — {SW}x{SH} source, best of {RUNS}"
+GPU small-image baseline -- {SW}x{SH} source, best of {RUNS}"
         );
         println!("(frames = prepare() calls before the pipeline stops asking for more)");
 
@@ -465,13 +441,6 @@ GPU small-image baseline — {SW}x{SH} source, best of {RUNS}"
         println!();
     }
 
-    /// Dragging the resize slider: many edits in a row, each invalidating the
-    /// previous document.
-    ///
-    /// This is what the user actually does, and it is not what the other
-    /// benchmarks measure. Each tick changes the document size, so every tile
-    /// output is rebuilt at a new size and nothing is reused. Reported as the
-    /// mean cost of one tick.
     #[test]
     #[ignore = "GPU timing baseline; run with --release --ignored --nocapture"]
     fn gpu_bench_resize_slider_drag() {
@@ -490,7 +459,7 @@ GPU small-image baseline — {SW}x{SH} source, best of {RUNS}"
 
             println!(
                 "
-  slider drag — {sw}x{sh} source"
+  slider drag -- {sw}x{sh} source"
             );
             println!("  {:-<58}", "");
             println!(
@@ -520,11 +489,8 @@ GPU small-image baseline — {SW}x{SH} source, best of {RUNS}"
                         lock_aspect: true,
                     }))];
                     if refit {
-                        // What EditMsg::Update now does: refit, so the view zoom
-                        // tracks the document and physical_scale moves every tick.
                         source.physical_scale = (1000.0 / (sw as f32 * pct / 100.0)).min(1.0);
                     }
-                    // One prepare per tick, as the app does per frame.
                     mp.prepare(&device, &queue, &source, &chain, true);
                 }
                 let _ = device.poll(iced::wgpu::PollType::wait_indefinitely());
