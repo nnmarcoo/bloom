@@ -1116,6 +1116,22 @@ pub(crate) fn compute_subsampled_histogram(
     height: u32,
     modifiers: &[Modifier],
 ) -> Histogram {
+    // A resize is dropped before rendering. The histogram describes the
+    // distribution of colors, which a resample does not meaningfully change --
+    // and rendering it is the single most expensive thing this function could
+    // do. Keeping it meant a 400% upscale of a 1000x1000 image ran a full CPU
+    // resample to 16 megapixels on every slider tick, which stalled the UI for
+    // most of a second per tick in a debug build.
+    //
+    // Dropping it also fixes a sampling bug: `stride` is derived from the
+    // source dimensions but indexes the rendered buffer, so an upscaled render
+    // was sampled only across its top-left corner.
+    let chain: Vec<Modifier> = modifiers
+        .iter()
+        .filter(|m| m.kind.as_resize().is_none())
+        .cloned()
+        .collect();
+
     let pixel_count = (width as usize) * (height as usize);
     let stride = if pixel_count > HISTOGRAM_TARGET_SAMPLES {
         ((pixel_count as f64 / HISTOGRAM_TARGET_SAMPLES as f64)
@@ -1129,20 +1145,13 @@ pub(crate) fn compute_subsampled_histogram(
     let height_u = height as usize;
     let row_indices: Vec<usize> = (0..height_u).step_by(stride).collect();
 
-    let text_layers = crate::modifiers::text_raster::build_layers(modifiers, width, height);
-    let drawing_rasters = crate::modifiers::drawing_raster::build_layers(modifiers, width, height);
+    let text_layers = crate::modifiers::text_raster::build_layers(&chain, width, height);
+    let drawing_rasters = crate::modifiers::drawing_raster::build_layers(&chain, width, height);
     let drawing_layers: Vec<Option<LayerView<'_>>> = drawing_rasters
         .iter()
         .map(|l| l.as_ref().map(|r| r.view()))
         .collect();
-    let rendered = cpu::render_full(
-        modifiers,
-        &text_layers,
-        &drawing_layers,
-        pixels,
-        width,
-        height,
-    );
+    let rendered = cpu::render_full(&chain, &text_layers, &drawing_layers, pixels, width, height);
 
     let (mut r, mut g, mut b) = row_indices
         .par_iter()
@@ -1191,10 +1200,19 @@ fn smooth_bins(bins: &mut [u32; 256]) {
     *bins = out;
 }
 
+/// The histogram's cache key.
+///
+/// Resize is excluded because `compute_subsampled_histogram` drops it before
+/// rendering, so including it here would invalidate a still-correct histogram
+/// on every tick of the resize slider and queue a full CPU render per tick.
 pub(crate) fn hash_modifiers(modifiers: &[Modifier]) -> u64 {
     let mut hasher = DefaultHasher::new();
-    modifiers.len().hash(&mut hasher);
-    for m in modifiers {
+    let considered: Vec<&Modifier> = modifiers
+        .iter()
+        .filter(|m| m.kind.as_resize().is_none())
+        .collect();
+    considered.len().hash(&mut hasher);
+    for m in considered {
         m.enabled.hash(&mut hasher);
         m.kind.hash_into(&mut hasher);
     }
@@ -1456,6 +1474,108 @@ mod eyedropper_resize_tests {
             px.chunks_exact(4).any(|p| p[3] == 255),
             "the grid near the far corner came back entirely empty"
         );
+    }
+}
+
+/// What the histogram costs when the chain upscales.
+///
+/// `compute_subsampled_histogram` subsamples its *reads*, but only after
+/// `cpu::render_full` has rendered the entire chain at full document size. With
+/// a resize in the stack that is a full CPU resample of the upscaled document,
+/// and it reruns on every slider tick because the modifier hash changes.
+#[cfg(test)]
+mod histogram_cost_tests {
+    use super::*;
+    use crate::modifiers::ModifierKind;
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+    use std::time::Instant;
+
+    /// A resize must not change the histogram, because the histogram describes
+    /// the distribution of colors and a resample does not meaningfully alter
+    /// it. This is what licenses dropping the resize before rendering, which is
+    /// the whole saving.
+    #[test]
+    fn a_resize_does_not_change_the_histogram() {
+        let (w, h) = (128u32, 128u32);
+        let pixels: Vec<u8> = (0..(w * h * 4))
+            .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
+            .collect();
+
+        let none = compute_subsampled_histogram(&pixels, w, h, &[]);
+        for pct in [50.0f32, 200.0, 400.0] {
+            let chain = vec![Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: pct,
+                height: pct,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            }))];
+            let got = compute_subsampled_histogram(&pixels, w, h, &chain);
+            assert_eq!(
+                got, none,
+                "a {pct}% resize changed the histogram; it is dropped before                  rendering, so this must hold"
+            );
+        }
+    }
+
+    /// The cache key must ignore resize too, or every slider tick invalidates a
+    /// still-correct histogram and queues another full CPU render.
+    #[test]
+    fn the_cache_key_ignores_a_resize() {
+        let base = vec![Modifier::new(ModifierKind::Exposure(
+            crate::modifiers::kinds::Exposure { exposure: 0.3 },
+        ))];
+        let mut with_resize = base.clone();
+        with_resize.push(Modifier::new(ModifierKind::Resize(Resize {
+            mode: ResizeMode::Percent,
+            width: 250.0,
+            height: 250.0,
+            filter: ResizeFilter::Lanczos,
+            lock_aspect: true,
+        })));
+
+        assert_eq!(
+            hash_modifiers(&base),
+            hash_modifiers(&with_resize),
+            "adding a resize changed the histogram cache key"
+        );
+    }
+
+    #[test]
+    #[ignore = "timing baseline; run with --release --ignored --nocapture"]
+    fn histogram_cost_scales_with_the_resized_document() {
+        let (w, h) = (1000u32, 1000u32);
+        let pixels: Vec<u8> = (0..(w * h * 4))
+            .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
+            .collect();
+
+        println!(
+            "
+Histogram cost — {w}x{h} source"
+        );
+        println!("  {:<22} {:>12} {:>14}", "chain", "doc", "ms");
+        println!("  {:-<50}", "");
+
+        for pct in [100.0f32, 200.0, 300.0, 400.0] {
+            let chain = vec![Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: pct,
+                height: pct,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            }))];
+            let t = Instant::now();
+            let _ = compute_subsampled_histogram(&pixels, w, h, &chain);
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            let d = (w as f32 * pct / 100.0) as u32;
+            println!(
+                "  {:<22} {:>12} {:>14.1}",
+                format!("resize {pct}%"),
+                format!("{d}x{d}"),
+                ms
+            );
+        }
+        println!("  {:-<50}", "");
     }
 }
 
