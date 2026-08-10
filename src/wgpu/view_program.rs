@@ -25,6 +25,7 @@ use crate::{
     modifiers::{
         Modifier, cpu,
         drawing_raster::{DrawingLayerCache, LayerView},
+        kinds::{Resize, ResizeMode},
         plan::{ImageSpec, chain_output_spec, plan_modifiers},
         text_raster::TextRaster,
     },
@@ -634,7 +635,19 @@ impl ViewProgram {
         .truncate();
         let eff = self.effective_display_size();
         let local_px = (img_ndc + 1.0) * 0.5 * vec2(eff.x, -eff.y) + vec2(0.0, eff.y);
-        Some(local_px + self.crop_origin())
+        let doc_px = local_px + self.crop_origin();
+
+        // `eff` and `crop_origin` are both in the *resized* document, but every
+        // caller wants source pixels: `cursor_info` clamps against `image_size`
+        // and divides by it for the reported uv, `cursor_pixels` indexes the
+        // source buffer, and `staged_pixel` does its own source->output mapping.
+        // Returning document coordinates put the readout off by exactly the
+        // resize factor.
+        let doc = self.chain_output_size();
+        if doc == Vec2::ZERO || doc == self.image_size {
+            return Some(doc_px);
+        }
+        Some(doc_px * self.image_size / doc)
     }
 
     fn with_rasters<R>(
@@ -1116,23 +1129,44 @@ pub(crate) fn compute_subsampled_histogram(
     height: u32,
     modifiers: &[Modifier],
 ) -> Histogram {
-    // A resize is dropped before rendering. The histogram describes the
-    // distribution of colors, which a resample does not meaningfully change --
-    // and rendering it is the single most expensive thing this function could
-    // do. Keeping it meant a 400% upscale of a 1000x1000 image ran a full CPU
-    // resample to 16 megapixels on every slider tick, which stalled the UI for
-    // most of a second per tick in a debug build.
+    // An *upscale* is clamped to 100%; a downscale is kept.
     //
-    // Dropping it also fixes a sampling bug: `stride` is derived from the
-    // source dimensions but indexes the rendered buffer, so an upscaled render
-    // was sampled only across its top-left corner.
+    // A downscale averages neighbouring pixels, which measurably narrows the
+    // distribution -- on structured content a 25% downscale moves roughly 40%
+    // of the histogram's mass, so dropping it would report a histogram the
+    // export does not produce. An upscale interpolates between pixels that are
+    // already there and moves far less, and rendering it is by far the most
+    // expensive thing here: a 400% upscale of a 1000x1000 image resamples 16
+    // megapixels on every slider tick, which stalled the UI for most of a
+    // second per tick in a debug build.
     let chain: Vec<Modifier> = modifiers
         .iter()
-        .filter(|m| m.kind.as_resize().is_none())
-        .cloned()
+        .map(|m| {
+            let mut m = m.clone();
+            if let Some(r) = m.kind.as_resize_mut() {
+                let out = r.output_for(ImageSpec::new(width, height));
+                if out.w >= width && out.h >= height {
+                    // Neutralize only the enlargement, keeping the modifier in
+                    // place so later stages still see the same order.
+                    *r = Resize {
+                        mode: ResizeMode::Percent,
+                        width: 100.0,
+                        height: 100.0,
+                        filter: r.filter,
+                        lock_aspect: true,
+                    };
+                }
+            }
+            m
+        })
         .collect();
 
-    let pixel_count = (width as usize) * (height as usize);
+    // The chain's output size, which is what `rendered` is indexed by. Deriving
+    // the stride from the source instead sampled only the top-left corner of a
+    // downscaled render.
+    let out = chain_output_spec(ImageSpec::new(width, height), &plan_modifiers(&chain));
+
+    let pixel_count = (out.w as usize) * (out.h as usize);
     let stride = if pixel_count > HISTOGRAM_TARGET_SAMPLES {
         ((pixel_count as f64 / HISTOGRAM_TARGET_SAMPLES as f64)
             .sqrt()
@@ -1141,8 +1175,8 @@ pub(crate) fn compute_subsampled_histogram(
     } else {
         1
     };
-    let width_u = width as usize;
-    let height_u = height as usize;
+    let width_u = out.w as usize;
+    let height_u = out.h as usize;
     let row_indices: Vec<usize> = (0..height_u).step_by(stride).collect();
 
     let text_layers = crate::modifiers::text_raster::build_layers(&chain, width, height);
@@ -1200,22 +1234,60 @@ fn smooth_bins(bins: &mut [u32; 256]) {
     *bins = out;
 }
 
-/// The histogram's cache key.
+/// Identifies a modifier stack exactly.
 ///
-/// Resize is excluded because `compute_subsampled_histogram` drops it before
-/// rendering, so including it here would invalidate a still-correct histogram
-/// on every tick of the resize slider and queue a full CPU render per tick.
+/// Used by the staged-render and eyedropper caches, which hold buffers whose
+/// *dimensions* depend on the chain, so every field of every modifier counts.
+/// Do not make this ignore anything: a key that collides across two stacks
+/// hands back a buffer of the wrong size and the eyedropper reads the wrong
+/// pixels. The histogram's coarser key is
+/// [`hash_modifiers_for_histogram`].
 pub(crate) fn hash_modifiers(modifiers: &[Modifier]) -> u64 {
     let mut hasher = DefaultHasher::new();
-    let considered: Vec<&Modifier> = modifiers
-        .iter()
-        .filter(|m| m.kind.as_resize().is_none())
-        .collect();
-    considered.len().hash(&mut hasher);
-    for m in considered {
+    modifiers.len().hash(&mut hasher);
+    for m in modifiers {
         m.enabled.hash(&mut hasher);
         m.kind.hash_into(&mut hasher);
     }
+    hasher.finish()
+}
+
+/// The histogram's cache key, deliberately coarser than [`hash_modifiers`].
+///
+/// It must agree with what `compute_subsampled_histogram` actually renders, or
+/// the cache serves a histogram for a different chain. That function clamps an
+/// upscale to 100% and keeps a downscale, so an upscale keys the same as no
+/// resize at all and dragging through the upscale range reuses one histogram
+/// instead of queueing a full CPU render per tick.
+pub(crate) fn hash_modifiers_for_histogram(modifiers: &[Modifier], w: u32, h: u32) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    let mut cur = ImageSpec::new(w, h);
+    let mut counted = 0usize;
+    for m in modifiers {
+        match m.kind.as_resize() {
+            Some(r) if m.has_visible_effect() => {
+                let out = r.output_for(cur);
+                if out.w >= cur.w && out.h >= cur.h {
+                    // Clamped away before rendering, so it contributes nothing
+                    // at all -- not even to the count, or an upscale would key
+                    // differently from no resize.
+                    cur = out;
+                    continue;
+                }
+                counted += 1;
+                m.enabled.hash(&mut hasher);
+                (out.w, out.h).hash(&mut hasher);
+                (r.filter as u8).hash(&mut hasher);
+                cur = out;
+            }
+            _ => {
+                counted += 1;
+                m.enabled.hash(&mut hasher);
+                m.kind.hash_into(&mut hasher);
+            }
+        }
+    }
+    counted.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -1373,6 +1445,71 @@ mod crop_tests {
 
 #[cfg(test)]
 mod eyedropper_resize_tests {
+    /// The cursor's screen->image conversion must land in *source* pixels.
+    ///
+    /// Every consumer treats it that way: `cursor_info` clamps against
+    /// `image_size` and divides by it for the reported uv, `cursor_pixels`
+    /// indexes the source buffer, and `staged_pixel` does its own
+    /// source->output mapping. But the conversion is built from
+    /// `effective_display_size()`, which is the *resized* document, so a resize
+    /// scaled the coordinate and the readout pointed at the wrong pixel.
+    ///
+    /// The other tests here set `cursor_image_pos` directly, so none of them
+    /// exercised the conversion.
+    #[test]
+    fn the_cursor_maps_to_source_pixels_under_a_resize() {
+        let (w, h) = (400u32, 300u32);
+        for pct in [50.0f32, 200.0] {
+            let mut program = program_with(vec![resize_pct(pct)], w, h);
+            program.set_bounds(Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: 800.0,
+                height: 600.0,
+            });
+            program.fit();
+
+            let centre = program
+                .screen_to_image_coords(vec2(400.0, 300.0))
+                .expect("the viewport centre is over the image");
+            assert!(
+                (centre.x - w as f32 / 2.0).abs() <= 1.5
+                    && (centre.y - h as f32 / 2.0).abs() <= 1.5,
+                "at {pct}% the viewport centre mapped to {centre:?}, not the                  middle of the {w}x{h} source"
+            );
+        }
+    }
+
+    /// screen->uv and uv->screen must invert each other under a resize, or the
+    /// crop and text overlays drag their handles away from the pointer.
+    #[test]
+    fn the_screen_and_uv_conversions_round_trip_under_a_resize() {
+        let (w, h) = (400u32, 300u32);
+        for pct in [50.0f32, 200.0] {
+            let mut program = program_with(vec![resize_pct(pct)], w, h);
+            program.set_bounds(Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: 800.0,
+                height: 600.0,
+            });
+            program.fit();
+
+            for probe in [vec2(400.0, 300.0), vec2(300.0, 250.0), vec2(500.0, 380.0)] {
+                let Some(uv) = program.screen_to_image_uv(probe) else {
+                    continue;
+                };
+                let back = program
+                    .image_uv_to_screen(uv)
+                    .expect("uv maps back to the screen");
+                assert!(
+                    (back - probe).length() <= 1.0,
+                    "at {pct}% screen {probe:?} -> uv {uv:?} -> screen {back:?}"
+                );
+            }
+        }
+    }
+
     use super::*;
     use crate::modifiers::ModifierKind;
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
@@ -1485,61 +1622,104 @@ mod eyedropper_resize_tests {
 /// and it reruns on every slider tick because the modifier hash changes.
 #[cfg(test)]
 mod histogram_cost_tests {
-    use super::*;
-    use crate::modifiers::ModifierKind;
-    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
-    use std::time::Instant;
+    fn resize_pct_h(pct: f32) -> Modifier {
+        Modifier::new(ModifierKind::Resize(Resize {
+            mode: ResizeMode::Percent,
+            width: pct,
+            height: pct,
+            filter: ResizeFilter::Lanczos,
+            lock_aspect: true,
+        }))
+    }
 
-    /// A resize must not change the histogram, because the histogram describes
-    /// the distribution of colors and a resample does not meaningfully alter
-    /// it. This is what licenses dropping the resize before rendering, which is
-    /// the whole saving.
+    /// A downscale genuinely narrows the distribution, so it must be rendered.
+    ///
+    /// Measured on structured content, a 25% downscale moves roughly 40% of the
+    /// histogram's mass. An earlier version dropped every resize on the claim
+    /// that a resample "does not meaningfully change" the distribution; that is
+    /// false for downscales, and this pins it.
     #[test]
-    fn a_resize_does_not_change_the_histogram() {
+    fn a_downscale_changes_the_histogram() {
+        let (w, h) = (256u32, 256u32);
+        let mut pixels = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let o = ((y * w + x) * 4) as usize;
+                // Fine checker: averaging neighbours must visibly change it.
+                let on = (x / 2 + y / 2) % 2 == 0;
+                let v = if on { 255 } else { 0 };
+                pixels[o] = v;
+                pixels[o + 1] = v;
+                pixels[o + 2] = v;
+                pixels[o + 3] = 255;
+            }
+        }
+        let none = compute_subsampled_histogram(&pixels, w, h, &[]);
+        let down = compute_subsampled_histogram(&pixels, w, h, &[resize_pct_h(25.0)]);
+        assert_ne!(
+            none, down,
+            "a 25% downscale left the histogram unchanged; it averages pixels,              so the panel would disagree with the export"
+        );
+    }
+
+    /// An upscale is clamped away before rendering, which is what licenses
+    /// skipping the expensive resample.
+    #[test]
+    fn an_upscale_does_not_change_the_histogram() {
         let (w, h) = (128u32, 128u32);
         let pixels: Vec<u8> = (0..(w * h * 4))
             .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
             .collect();
-
         let none = compute_subsampled_histogram(&pixels, w, h, &[]);
-        for pct in [50.0f32, 200.0, 400.0] {
-            let chain = vec![Modifier::new(ModifierKind::Resize(Resize {
-                mode: ResizeMode::Percent,
-                width: pct,
-                height: pct,
-                filter: ResizeFilter::Lanczos,
-                lock_aspect: true,
-            }))];
-            let got = compute_subsampled_histogram(&pixels, w, h, &chain);
+        for pct in [200.0f32, 400.0] {
             assert_eq!(
-                got, none,
-                "a {pct}% resize changed the histogram; it is dropped before                  rendering, so this must hold"
+                compute_subsampled_histogram(&pixels, w, h, &[resize_pct_h(pct)]),
+                none,
+                "a {pct}% upscale changed the histogram, but it is clamped to                  100% before rendering"
             );
         }
     }
 
-    /// The cache key must ignore resize too, or every slider tick invalidates a
-    /// still-correct histogram and queues another full CPU render.
+    /// The histogram key must track what is actually rendered: upscales alike,
+    /// downscales distinct.
     #[test]
-    fn the_cache_key_ignores_a_resize() {
-        let base = vec![Modifier::new(ModifierKind::Exposure(
-            crate::modifiers::kinds::Exposure { exposure: 0.3 },
-        ))];
-        let mut with_resize = base.clone();
-        with_resize.push(Modifier::new(ModifierKind::Resize(Resize {
-            mode: ResizeMode::Percent,
-            width: 250.0,
-            height: 250.0,
-            filter: ResizeFilter::Lanczos,
-            lock_aspect: true,
-        })));
-
+    fn the_histogram_key_ignores_upscales_but_not_downscales() {
+        let (w, h) = (500u32, 500u32);
+        let none = hash_modifiers_for_histogram(&[], w, h);
         assert_eq!(
-            hash_modifiers(&base),
-            hash_modifiers(&with_resize),
-            "adding a resize changed the histogram cache key"
+            hash_modifiers_for_histogram(&[resize_pct_h(200.0)], w, h),
+            none,
+            "an upscale changed the key, so every slider tick queues another              full CPU render"
+        );
+        assert_eq!(
+            hash_modifiers_for_histogram(&[resize_pct_h(400.0)], w, h),
+            none,
+            "two upscales must share a key; neither is rendered"
+        );
+        assert_ne!(
+            hash_modifiers_for_histogram(&[resize_pct_h(50.0)], w, h),
+            none,
+            "a downscale must invalidate: it is rendered and it changes the              histogram"
         );
     }
+
+    /// The general key must stay exact. The staged-render and eyedropper caches
+    /// hold buffers whose dimensions come from the chain, so a key that ignored
+    /// a resize would hand back a buffer of the wrong size and the eyedropper
+    /// would read the wrong pixels.
+    #[test]
+    fn the_general_key_distinguishes_every_resize() {
+        let a = vec![resize_pct_h(50.0)];
+        let b = vec![resize_pct_h(200.0)];
+        assert_ne!(hash_modifiers(&a), hash_modifiers(&b));
+        assert_ne!(hash_modifiers(&a), hash_modifiers(&[]));
+        assert_ne!(hash_modifiers(&b), hash_modifiers(&[]));
+    }
+
+    use super::*;
+    use crate::modifiers::ModifierKind;
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+    use std::time::Instant;
 
     #[test]
     #[ignore = "timing baseline; run with --release --ignored --nocapture"]
