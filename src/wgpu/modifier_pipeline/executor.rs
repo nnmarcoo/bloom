@@ -19,6 +19,13 @@
 //! ResampleRegion says which part of the image the target and bound input
 //! stand for, so rendering a band does not shift the resize.
 //!
+//! doc_size is recorded from the plan *before* any culling, and never after.
+//! It answers "which document are the quads built for?", which is a property of
+//! the chain, not of what happened to be on screen. Setting it after the
+//! all-tiles-culled early return left it stale, view_pipeline then compared it
+//! and concluded deferring was safe, and the view kept quads placed for the old
+//! document -- which reads as the fit being broken after a resize.
+//!
 //! Work is split into bands when a chain is expensive, with exec_band_cursor
 //! carrying progress across frames so the UI stays responsive.
 
@@ -289,6 +296,12 @@ impl ModifierPipeline {
         let full_w = source.full_width as f32;
         let full_h = source.full_height as f32;
 
+        let source_spec_doc = ImageSpec::new(source.full_width, source.full_height);
+        let doc_spec = infer_specs(source_spec_doc, plan)
+            .last()
+            .map_or(source_spec_doc, |s| s.output);
+        self.doc_size = (doc_spec.w, doc_spec.h);
+
         let n_tiles = source.tiles.len();
         let mut visible: Vec<usize> = Vec::new();
         for ti in 0..n_tiles {
@@ -334,11 +347,9 @@ impl ModifierPipeline {
             }
         }
 
-        let specs = infer_specs(ImageSpec::new(source.full_width, source.full_height), plan);
-        let source_spec = ImageSpec::new(source.full_width, source.full_height);
-        let out_spec_doc = specs.last().map_or(source_spec, |s| s.output);
-        let chain_resizes = out_spec_doc != source_spec;
-        self.doc_size = (out_spec_doc.w, out_spec_doc.h);
+        let specs = infer_specs(source_spec_doc, plan);
+        let out_spec_doc = doc_spec;
+        let chain_resizes = out_spec_doc != source_spec_doc;
         let classes: Vec<StepClass> = plan
             .iter()
             .zip(&specs)
@@ -435,7 +446,7 @@ impl ModifierPipeline {
                     out_spec_doc.w,
                     out_spec_doc.h,
                 );
-                let (w, h) = rect_dims(px, scale);
+                let (w, h) = device_dims(px, scale);
                 ProcRect {
                     px,
                     proc: uv_of(px, out_spec_doc.w as f32, out_spec_doc.h as f32),

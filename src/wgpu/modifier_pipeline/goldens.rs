@@ -799,6 +799,161 @@ fn roi_pointwise_then_blur_partial_viewport() {
     run_roi_golden("roi/pointwise+blur", &chain, 1024, 0.42, 4, 2048, 2048);
 }
 
+fn run_resize_roi_golden(
+    label: &str,
+    modifiers: &[Modifier],
+    tile_dim: u32,
+    frac: f32,
+    tol: u8,
+    w: u32,
+    h: u32,
+) {
+    use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let pixels = test_pixels(w, h);
+    let image = ImageData::new(pixels.clone(), w, h);
+    let mut source = make_source(&device, &queue, &image, Some(tile_dim));
+    set_partial_roi(&mut source, frac);
+
+    let partial = source
+        .tiles
+        .iter()
+        .filter(|t| {
+            t.proc_rect_px.is_some_and(|r| {
+                r[0] > t.x as f32
+                    || r[1] > t.y as f32
+                    || r[2] < (t.x + t.width) as f32
+                    || r[3] < (t.y + t.height) as f32
+            })
+        })
+        .count();
+    assert!(
+        partial > 0,
+        "{label}: no tile got a strictly-partial ROI, so this proves nothing \
+         the full-bounds resize goldens do not already cover"
+    );
+
+    let out = chain_output_spec(ImageSpec::new(w, h), &plan_modifiers(modifiers));
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
+    converge(&mut mp, &device, &queue, &source, modifiers, label);
+
+    let cpu_full = crate::modifiers::cpu::render_full(modifiers, &[], &[], &pixels, w, h);
+
+    let mut max_d = 0u8;
+    let mut over = 0usize;
+    let mut compared = 0usize;
+    for ti in 0..source.tiles.len() {
+        let Some(o) = mp.tile_outputs[ti].as_ref() else {
+            continue;
+        };
+        let Some(px) = o.proc_px else { continue };
+        let data = read_texture(&device, &queue, &o._tex, o.width, o.height);
+        let x0 = px[0].round() as u32;
+        let y0 = px[1].round() as u32;
+        for r in 0..o.height {
+            let oy = y0 + r;
+            if oy >= out.h {
+                break;
+            }
+            for c in 0..o.width {
+                let ox = x0 + c;
+                if ox >= out.w {
+                    break;
+                }
+                let s = ((r * o.width + c) * 4) as usize;
+                let d = ((oy * out.w + ox) * 4) as usize;
+                for ch in 0..3 {
+                    let a = data[s + ch];
+                    let b = cpu_full[d + ch];
+                    let diff = a.abs_diff(b);
+                    max_d = max_d.max(diff);
+                    compared += 1;
+                    if diff > tol {
+                        over += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        compared > 0,
+        "{label}: compared no pixels; the ROI collapsed and the test proved nothing"
+    );
+    assert!(
+        max_d <= tol,
+        "{label}: GPU diverges from the oracle inside a partial ROI: max channel \
+         diff {max_d} > tol {tol} ({:.3}% of {compared} channels over). A resize \
+         under a partial viewport is reading or placing input the ROI did not \
+         account for.",
+        over as f64 * 100.0 / compared.max(1) as f64
+    );
+}
+
+#[test]
+fn roi_resize_trailing_partial_viewport() {
+    let mut chain = blur_chain();
+    chain.push(resize_half());
+    run_resize_roi_golden("roi/resize-trailing", &chain, 1024, 0.42, 4, 2048, 2048);
+}
+
+#[test]
+fn roi_resize_mid_chain_partial_viewport() {
+    let chain = vec![
+        resize_half(),
+        Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 4.0 })),
+    ];
+    run_resize_roi_golden("roi/resize-mid-chain", &chain, 1024, 0.42, 4, 2048, 2048);
+}
+
+#[test]
+fn roi_upscale_trailing_partial_viewport() {
+    let mut chain = blur_chain();
+    chain.push(resize_double());
+    run_resize_roi_golden("roi/upscale-trailing", &chain, 1024, 0.42, 4, 2048, 2048);
+}
+
+#[test]
+fn doc_size_is_reported_even_when_every_tile_is_culled() {
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let pixels = test_pixels(GOLDEN_W, GOLDEN_H);
+    let image = ImageData::new(pixels, GOLDEN_W, GOLDEN_H);
+    let mut source = make_source(&device, &queue, &image, None);
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, GOLDEN_W, GOLDEN_H);
+
+    let resize = vec![Modifier::new(ModifierKind::Resize(Resize {
+        mode: ResizeMode::Percent,
+        width: 25.0,
+        height: 25.0,
+        filter: ResizeFilter::Lanczos,
+        lock_aspect: true,
+    }))];
+
+    for t in &mut source.tiles {
+        t.last_ndc_rect = Some((glam::vec2(50.0, 50.0), glam::vec2(60.0, 60.0)));
+    }
+    mp.prepare(&device, &queue, &source, &resize, true);
+
+    let want = (GOLDEN_W / 4, GOLDEN_H / 4);
+    assert_eq!(
+        mp.doc_size(),
+        want,
+        "every tile culled, so the executor returned before recording the \
+         document it planned. view_pipeline compares doc_size to decide whether \
+         deferring is safe, so a stale value leaves quads placed for the old \
+         document and the view never refits."
+    );
+}
+
 #[test]
 fn resize_only_stack_renders_through_the_pipeline() {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};

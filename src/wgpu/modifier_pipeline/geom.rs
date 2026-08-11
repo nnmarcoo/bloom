@@ -11,6 +11,13 @@
 //! The grid tests pin the partition at a real image's awkward dimensions
 //! (1179x1159 in 512px tiles, neither axis dividing evenly), covering
 //! downscale, upscale, and the degenerate one-pixel document.
+//!
+//! device_dims exists for the same reason grid_edge does, one level down. A
+//! tile's texture must be sized from its scaled *edges*, never from its span:
+//! round(span * scale) and round(r * scale) - round(l * scale) differ by a
+//! pixel for most scales, and since the quad is placed from the edges, sizing
+//! from the span leaves a gap or an overlap at every seam. That is the dark
+//! line visible between tiles on a large upscaled document.
 
 use super::*;
 
@@ -69,6 +76,14 @@ pub(super) fn tile_out_rect(
         grid_edge(px[2], src_w, out_w),
         grid_edge(px[3], src_h, out_h),
     ]
+}
+
+pub(super) fn device_dims(r: [f32; 4], scale: f32) -> (u32, u32) {
+    let x0 = (r[0] * scale).round() as i64;
+    let y0 = (r[1] * scale).round() as i64;
+    let x1 = (r[2] * scale).round() as i64;
+    let y1 = (r[3] * scale).round() as i64;
+    (((x1 - x0).max(1)) as u32, ((y1 - y0).max(1)) as u32)
 }
 
 pub(super) fn tile_proc_rect(
@@ -209,6 +224,35 @@ mod grid_tests {
         }
         v.push(len as f32);
         v
+    }
+
+    #[test]
+    fn a_tiles_texture_is_exactly_what_its_device_footprint_needs() {
+        const SRC: u32 = 30000;
+        let edges = [0u32, 8192, 16384, 24576, SRC];
+
+        for doc in [300u32, 600, 1500, 45000, 60000] {
+            for scale in [1.0f32, 0.5, 0.25, 0.125, 0.0625] {
+                for i in 0..4 {
+                    let l = grid_edge(edges[i] as f32, SRC, doc);
+                    let r = grid_edge(edges[i + 1] as f32, SRC, doc);
+
+                    let tex_w = super::device_dims([l, 0.0, r, 1.0], scale).0 as i64;
+                    let dev_l = (l * scale).round() as i64;
+                    let dev_r = (r * scale).round() as i64;
+                    let footprint = (dev_r - dev_l).max(1);
+
+                    assert_eq!(
+                        tex_w, footprint,
+                        "doc={doc} scale={scale} tile={i}: the tile's texture is \
+                         {tex_w} device px wide but it is drawn across \
+                         {footprint}. Sizing from the span while placing from the \
+                         edges leaves a gap or an overlap at the seam, which \
+                         shows as a dark line between tiles."
+                    );
+                }
+            }
+        }
     }
 
     #[test]
