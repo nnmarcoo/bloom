@@ -12,6 +12,15 @@
 //! was rendering below the source's resolution, but the arithmetic says
 //! otherwise and the floor only forced 4-8x the necessary work once zoomed out.
 //!
+//! The VRAM budget is measured in the space the chain actually allocates, not
+//! in the source's. A tile is 8192px of source, but a 1% resize means no stage
+//! is ever that large, so budgeting against the source shrank quality to
+//! protect memory that was never going to be used -- a 300px document rendered
+//! at 75px and magnified back up, which is what a blurry preview at an extreme
+//! downscale actually was. The tile is scaled by the *widest* stage rather than
+//! the final output, so an upscale is still budgeted against the biggest
+//! allocation it makes.
+//!
 //! doc_size is the document the last prepare produced. It lets display
 //! transforms move quads without the modifier list, and tells the caller
 //! whether deferring is safe: quads can be moved for a document of that size,
@@ -517,6 +526,18 @@ impl ModifierPipeline {
                 th = th.max(t.height);
             }
         }
+        let src_spec = ImageSpec::new(source.full_width, source.full_height);
+        let stage_specs = infer_specs(src_spec, &plan_vec);
+        let widest = stage_specs
+            .iter()
+            .flat_map(|s| [s.input, s.output])
+            .fold(src_spec, |acc, s| {
+                ImageSpec::new(acc.w.max(s.w), acc.h.max(s.h))
+            });
+        if widest != src_spec {
+            tw = ((tw as u64 * widest.w as u64) / src_spec.w.max(1) as u64).max(1) as u32;
+            th = ((th as u64 * widest.h as u64) / src_spec.h.max(1) as u64).max(1) as u32;
+        }
         let fit = fit_process_scale(
             tw,
             th,
@@ -664,6 +685,68 @@ mod quality_scale_tests {
                 rendered >= on_screen,
                 "at zoom {phys} the document rendered {rendered:.0}px for                  {on_screen:.0}px of screen; the display would be magnifying a proxy"
             );
+        }
+    }
+
+    #[test]
+    fn the_vram_budget_measures_what_the_chain_allocates() {
+        use super::{PROCESS_VRAM_BUDGET_MIN, fit_process_scale};
+        use crate::modifiers::plan::ImageSpec;
+
+        let src = ImageSpec::new(30000, 30000);
+        let (tile_w, tile_h) = (8192u32, 8192u32);
+        let n_tiles = 16u64;
+
+        let budget_for = |widest: ImageSpec| -> f32 {
+            let tw = ((tile_w as u64 * widest.w as u64) / src.w as u64).max(1) as u32;
+            let th = ((tile_h as u64 * widest.h as u64) / src.h as u64).max(1) as u32;
+            fit_process_scale(tw, th, n_tiles, 1, PROCESS_VRAM_BUDGET_MIN, 1.0)
+        };
+
+        assert_eq!(
+            budget_for(src),
+            0.25,
+            "sanity: with no resize the source tiles really do exceed the budget"
+        );
+
+        assert_eq!(
+            budget_for(ImageSpec::new(300, 300)),
+            1.0,
+            "a 1% resize gives a 300px document, so the chain's stages are tiny \
+             and fit the budget many times over. Budgeting against the 8192px \
+             *source* tile shrinks quality to protect memory the chain never \
+             allocates, and the preview then renders a proxy far below what is \
+             displayed."
+        );
+
+        assert!(
+            budget_for(ImageSpec::new(60000, 60000)) <= 0.25,
+            "an upscale must still be budgeted against the larger space it \
+             actually allocates, not relaxed along with the downscale case"
+        );
+    }
+
+    #[test]
+    fn a_resized_document_is_never_rendered_below_the_screen() {
+        let src_px = 30000.0_f32;
+
+        for &pct in &[0.01_f32, 0.05, 0.5] {
+            let doc_px = src_px * pct;
+            for &phys in &[4.0_f32, 2.0, 1.0, 0.5, 0.25] {
+                let qs = quality_scale_for(phys);
+                let rendered = doc_px * qs;
+                let on_screen = doc_px * phys;
+
+                assert!(
+                    rendered >= on_screen.min(doc_px) - 0.5,
+                    "a {}% resize of {src_px:.0}px gives a {doc_px:.0}px document; \
+                     at zoom {phys} it renders {rendered:.1}px for {on_screen:.1}px \
+                     of screen. The resize already shrank the document, so scaling \
+                     it again renders a proxy far below what is displayed, which \
+                     reads as a blurry mess.",
+                    pct * 100.0
+                );
+            }
         }
     }
 
