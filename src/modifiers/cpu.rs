@@ -25,6 +25,13 @@
 //! the document. This mirrors the GPU's ResampleRegion, and the two must keep
 //! agreeing or preview and export diverge.
 //!
+//! Text and drawing rasters are built once, at the source's dimensions, and
+//! their sample() maps document coordinates into the raster's own grid. A stage
+//! running at a different size must therefore map its buffer coordinates back
+//! to the source before sampling, which is what raster_to_doc gives it. Passing
+//! post-resize coordinates straight through sampled only the top-left corner of
+//! the raster, so a drawing under a resize was missing from the export.
+//!
 //! Resize alone happened to work under the old code, because its band origin is
 //! always aligned and its apron is its whole reach -- which is why the bug
 //! survived until a chain put a blur next to a resize.
@@ -169,6 +176,7 @@ pub(crate) fn render_band(
             spec.input.h,
             text_layers,
             drawing_layers,
+            raster_to_doc(ImageSpec::new(img_w, img_h), spec.input),
         );
         if spec.input != spec.output {
             let num = spec.output.h as u64;
@@ -194,6 +202,16 @@ pub(crate) fn render_band(
     out
 }
 
+fn raster_to_doc(src: ImageSpec, stage_in: ImageSpec) -> (f32, f32) {
+    if stage_in.w == src.w && stage_in.h == src.h {
+        return (1.0, 1.0);
+    }
+    (
+        src.w as f32 / stage_in.w.max(1) as f32,
+        src.h as f32 / stage_in.h.max(1) as f32,
+    )
+}
+
 pub(crate) fn render_full(
     modifiers: &[Modifier],
     text_layers: &[Option<TextRaster>],
@@ -208,9 +226,11 @@ pub(crate) fn render_full(
     cur[..copy].copy_from_slice(&pixels[..copy]);
 
     let plan = plan_modifiers(modifiers);
-    let specs = infer_specs(ImageSpec::new(img_w, img_h), &plan);
+    let src_spec = ImageSpec::new(img_w, img_h);
+    let specs = infer_specs(src_spec, &plan);
 
     for (item, spec) in plan.iter().zip(&specs) {
+        let to_doc = raster_to_doc(src_spec, spec.input);
         let ImageSpec { w: img_w, h: img_h } = spec.input;
         let w = img_w as usize;
         let h = img_h as usize;
@@ -234,12 +254,12 @@ pub(crate) fn render_full(
                 }
                 ModifierKind::Text(_) => {
                     if let Some(Some(raster)) = text_layers.get(*i) {
-                        text_full(&mut cur, img_w, img_h, raster);
+                        text_full(&mut cur, img_w, img_h, raster, to_doc);
                     }
                 }
                 ModifierKind::Drawing(_) => {
                     if let Some(Some(raster)) = drawing_layers.get(*i) {
-                        drawing_full(&mut cur, img_w, raster);
+                        drawing_full(&mut cur, img_w, raster, to_doc);
                     }
                 }
                 ModifierKind::PixelSort(ps) => {
@@ -284,6 +304,7 @@ fn apply_stage_banded(
     full_h: u32,
     text_layers: &[Option<TextRaster>],
     drawing_layers: &[Option<LayerView<'_>>],
+    to_doc: (f32, f32),
 ) -> Vec<u8> {
     let _ = class;
     let (wu, hu) = (w as usize, h as usize);
@@ -301,12 +322,12 @@ fn apply_stage_banded(
             }
             ModifierKind::Text(_) => {
                 if let Some(Some(raster)) = text_layers.get(*i) {
-                    text_band(&mut cur, w, h, y_off, raster);
+                    text_band(&mut cur, w, h, y_off, raster, to_doc);
                 }
             }
             ModifierKind::Drawing(_) => {
                 if let Some(Some(raster)) = drawing_layers.get(*i) {
-                    drawing_band(&mut cur, w, h, y_off, raster);
+                    drawing_band(&mut cur, w, h, y_off, raster, to_doc);
                 }
             }
             ModifierKind::PixelSort(ps) => {
@@ -594,12 +615,12 @@ fn sample_bilinear(pixels: &[u8], w: u32, h: u32, fx: f32, fy: f32) -> [f32; 4] 
     o
 }
 
-fn drawing_full(buf: &mut [u8], img_w: u32, raster: &LayerView<'_>) {
+fn drawing_full(buf: &mut [u8], img_w: u32, raster: &LayerView<'_>, to_doc: (f32, f32)) {
     let w = img_w as usize;
     buf.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
-        let fy = y as f32 + 0.5;
+        let fy = (y as f32 + 0.5) * to_doc.1;
         for x in 0..w {
-            if let Some(src) = raster.sample(x as f32 + 0.5, fy) {
+            if let Some(src) = raster.sample((x as f32 + 0.5) * to_doc.0, fy) {
                 let o = x * 4;
                 let dst = pixel_to_f32(&row[o..o + 4]);
                 row[o..o + 4].copy_from_slice(&f32_to_pixel(blend_over(dst, src)));
@@ -608,12 +629,19 @@ fn drawing_full(buf: &mut [u8], img_w: u32, raster: &LayerView<'_>) {
     });
 }
 
-fn drawing_band(buf: &mut [u8], img_w: u32, _h: u32, y_off: u32, raster: &LayerView<'_>) {
+fn drawing_band(
+    buf: &mut [u8],
+    img_w: u32,
+    _h: u32,
+    y_off: u32,
+    raster: &LayerView<'_>,
+    to_doc: (f32, f32),
+) {
     let w = img_w as usize;
     buf.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
-        let fy = (y_off + y as u32) as f32 + 0.5;
+        let fy = ((y_off + y as u32) as f32 + 0.5) * to_doc.1;
         for x in 0..w {
-            if let Some(src) = raster.sample(x as f32 + 0.5, fy) {
+            if let Some(src) = raster.sample((x as f32 + 0.5) * to_doc.0, fy) {
                 let o = x * 4;
                 let dst = pixel_to_f32(&row[o..o + 4]);
                 row[o..o + 4].copy_from_slice(&f32_to_pixel(blend_over(dst, src)));
@@ -622,12 +650,19 @@ fn drawing_band(buf: &mut [u8], img_w: u32, _h: u32, y_off: u32, raster: &LayerV
     });
 }
 
-fn text_band(buf: &mut [u8], img_w: u32, _h: u32, y_off: u32, raster: &TextRaster) {
+fn text_band(
+    buf: &mut [u8],
+    img_w: u32,
+    _h: u32,
+    y_off: u32,
+    raster: &TextRaster,
+    to_doc: (f32, f32),
+) {
     let w = img_w as usize;
     buf.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
-        let fy = (y_off + y as u32) as f32 + 0.5;
+        let fy = ((y_off + y as u32) as f32 + 0.5) * to_doc.1;
         for x in 0..w {
-            if let Some(src) = raster.sample(x as f32 + 0.5, fy) {
+            if let Some(src) = raster.sample((x as f32 + 0.5) * to_doc.0, fy) {
                 let o = x * 4;
                 let dst = pixel_to_f32(&row[o..o + 4]);
                 row[o..o + 4].copy_from_slice(&f32_to_pixel(blend_over(dst, src)));
@@ -636,13 +671,13 @@ fn text_band(buf: &mut [u8], img_w: u32, _h: u32, y_off: u32, raster: &TextRaste
     });
 }
 
-fn text_full(buf: &mut [u8], img_w: u32, img_h: u32, raster: &TextRaster) {
+fn text_full(buf: &mut [u8], img_w: u32, img_h: u32, raster: &TextRaster, to_doc: (f32, f32)) {
     let w = img_w as usize;
     let _ = img_h;
     buf.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
-        let fy = y as f32 + 0.5;
+        let fy = (y as f32 + 0.5) * to_doc.1;
         for x in 0..w {
-            if let Some(src) = raster.sample(x as f32 + 0.5, fy) {
+            if let Some(src) = raster.sample((x as f32 + 0.5) * to_doc.0, fy) {
                 let o = x * 4;
                 let dst = pixel_to_f32(&row[o..o + 4]);
                 row[o..o + 4].copy_from_slice(&f32_to_pixel(blend_over(dst, src)));
@@ -1779,6 +1814,118 @@ mod resize_apron_tests {
             filter,
             lock_aspect: true,
         }))
+    }
+
+    #[test]
+    fn a_drawing_covers_the_document_after_a_resize() {
+        use crate::modifiers::drawing_raster;
+        use crate::modifiers::kinds::{Drawing, Stroke};
+
+        const W: u32 = 400;
+        const H: u32 = 400;
+
+        let drawing = || {
+            Modifier::new(ModifierKind::Drawing(Drawing {
+                strokes: vec![Stroke {
+                    points: (0..=20).map(|i| [i as f32 / 20.0, 0.5]).collect(),
+                    size: 40.0,
+                    hardness: 1.0,
+                    opacity: 1.0,
+                    color: [1.0, 0.0, 0.0],
+                }],
+                ..Default::default()
+            }))
+        };
+
+        let render = |chain: &[Modifier], ow: usize, oh: usize| -> Vec<u8> {
+            let src = vec![0u8; (W * H * 4) as usize];
+            let rasters = drawing_raster::build_layers(chain, W, H);
+            let views: Vec<Option<LayerView<'_>>> = rasters
+                .iter()
+                .map(|l| l.as_ref().map(|r| r.view()))
+                .collect();
+            let out = render_full(chain, &[], &views, &src, W, H);
+            assert_eq!(out.len(), ow * oh * 4, "output is not the resized document");
+            out
+        };
+
+        let painted = |out: &[u8], ow: usize, row: usize, x: usize| -> bool {
+            let o = (row * ow + x) * 4;
+            out[o] > 40
+        };
+
+        let plain = render(&[drawing()], W as usize, H as usize);
+        assert!(
+            painted(&plain, W as usize, H as usize / 2, W as usize / 2)
+                && painted(&plain, W as usize, H as usize / 2, W as usize - 4),
+            "premise: without a resize the stroke spans the document"
+        );
+
+        let (ow, oh) = ((W / 2) as usize, (H / 2) as usize);
+        let resized = render(&[resize(50.0, ResizeFilter::Bilinear), drawing()], ow, oh);
+        assert!(
+            painted(&resized, ow, oh / 2, ow / 2),
+            "the stroke is missing from the middle of the resized document"
+        );
+        assert!(
+            painted(&resized, ow, oh / 2, ow - 4),
+            "the stroke stops short of the right edge after a resize. The raster \
+             is built in source space, so a stage running at a different size \
+             must map its coordinates back before sampling."
+        );
+    }
+
+    #[test]
+    fn a_banded_drawing_matches_the_full_render_after_a_resize() {
+        use crate::modifiers::drawing_raster;
+        use crate::modifiers::kinds::{Drawing, Stroke};
+
+        const W: u32 = 400;
+        const H: u32 = 400;
+
+        let chain = vec![
+            resize(50.0, ResizeFilter::Bilinear),
+            Modifier::new(ModifierKind::Drawing(Drawing {
+                strokes: vec![Stroke {
+                    points: (0..=20).map(|i| [i as f32 / 20.0, 0.5]).collect(),
+                    size: 40.0,
+                    hardness: 1.0,
+                    opacity: 1.0,
+                    color: [1.0, 0.0, 0.0],
+                }],
+                ..Default::default()
+            })),
+        ];
+
+        let src = vec![0u8; (W * H * 4) as usize];
+        let rasters = drawing_raster::build_layers(&chain, W, H);
+        let views: Vec<Option<LayerView<'_>>> = rasters
+            .iter()
+            .map(|l| l.as_ref().map(|r| r.view()))
+            .collect();
+
+        let plan = plan_modifiers(&chain);
+        assert!(
+            plan_is_bandable(ImageSpec::new(W, H), &plan),
+            "premise: this chain streams, so export takes the banded path"
+        );
+
+        let full = render_full(&chain, &[], &views, &src, W, H);
+        let (ow, oh) = (W / 2, H / 2);
+        let row_bytes = ow as usize * 4;
+
+        let mut y = 0;
+        while y < oh {
+            let y1 = (y + 8).min(oh);
+            let band = render_band(&chain, &[], &views, &src, W, H, y, y1);
+            let want = &full[y as usize * row_bytes..y1 as usize * row_bytes];
+            assert_eq!(
+                band, want,
+                "banded drawing differs from the full render at rows {y}..{y1}, \
+                 so a streamed export paints the drawing somewhere else"
+            );
+            y = y1;
+        }
     }
 
     #[test]
