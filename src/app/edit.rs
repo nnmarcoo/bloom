@@ -317,6 +317,95 @@ mod fit_on_resize_tests {
         p
     }
 
+    #[test]
+    fn a_huge_image_refits_across_the_whole_slider_range() {
+        const HUGE: u32 = 30000;
+        let mut p = ViewProgram::default();
+        p.set_image(ImageData::new(Vec::new(), HUGE, HUGE));
+        p.set_bounds(Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: 1600.0,
+            height: 900.0,
+        });
+        p.modifiers_mut()
+            .push(Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: 100.0,
+                height: 100.0,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            })));
+        p.fit();
+
+        for pct in [400.0f32, 200.0, 100.0, 50.0, 10.0, 1.0, 0.1] {
+            edit(&mut p, ModifierParam::ResizeWidth(pct));
+
+            let spec = crate::modifiers::plan::chain_output_spec(
+                crate::modifiers::plan::ImageSpec::new(HUGE, HUGE),
+                &crate::modifiers::plan::plan_modifiers(&p.modifiers),
+            );
+            let doc = Vec2::new(spec.w as f32, spec.h as f32);
+            let on_screen = doc * p.scale();
+
+            assert!(
+                p.scale().is_finite() && p.scale() > 0.0,
+                "{pct}%: scale is {}",
+                p.scale()
+            );
+            assert!(
+                on_screen.x <= 1601.0 && on_screen.y <= 901.0,
+                "{pct}%: doc {doc:?} renders {on_screen:?}, overflowing the \
+                 1600x900 viewport"
+            );
+            assert!(
+                on_screen.x >= 1599.0 || on_screen.y >= 899.0,
+                "{pct}%: doc {doc:?} renders {on_screen:?}, touching neither \
+                 edge of the 1600x900 viewport"
+            );
+        }
+    }
+
+    #[test]
+    fn every_edit_that_changes_the_document_refits() {
+        let cases: Vec<(&str, ModifierParam)> = vec![
+            ("width", ModifierParam::ResizeWidth(37.0)),
+            ("height", ModifierParam::ResizeHeight(37.0)),
+            ("mode", ModifierParam::ResizeMode(ResizeMode::Pixels)),
+            ("lock-aspect", ModifierParam::ResizeLockAspect(false)),
+        ];
+
+        let doc_of = |p: &ViewProgram| -> Vec2 {
+            let spec = crate::modifiers::plan::chain_output_spec(
+                crate::modifiers::plan::ImageSpec::new(SRC_W, SRC_H),
+                &crate::modifiers::plan::plan_modifiers(&p.modifiers),
+            );
+            Vec2::new(spec.w as f32, spec.h as f32)
+        };
+
+        for (label, param) in cases {
+            let mut p = program_with_resize();
+            let before_doc = doc_of(&p);
+            let before_scale = p.scale();
+
+            edit(&mut p, param);
+
+            let after_doc = doc_of(&p);
+            if after_doc == before_doc {
+                continue;
+            }
+
+            let on_screen = after_doc * p.scale();
+            assert!(
+                on_screen.x <= 1000.0 + 1.0 && on_screen.y <= 800.0 + 1.0,
+                "{label}: the document changed from {before_doc:?} to \
+                 {after_doc:?} but the view was not refitted (scale stayed \
+                 {before_scale}), so it now renders {on_screen:?} inside the \
+                 1000x800 viewport"
+            );
+        }
+    }
+
     fn edit(p: &mut ViewProgram, param: ModifierParam) {
         let _ = update(
             &mut EditState::default(),

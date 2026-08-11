@@ -4,6 +4,7 @@ pub mod view_program;
 mod error;
 mod gpu;
 #[cfg(test)]
+mod histogram_scale_probe;
 mod large_image_probe;
 pub mod modifier_pipeline;
 pub mod passes;
