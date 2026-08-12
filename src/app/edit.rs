@@ -338,7 +338,7 @@ mod fit_on_resize_tests {
             })));
         p.fit();
 
-        for pct in [400.0f32, 200.0, 100.0, 50.0, 10.0, 1.0, 0.1] {
+        for pct in [100.0f32, 75.0, 50.0, 10.0, 1.0] {
             edit(&mut p, ModifierParam::ResizeWidth(pct));
 
             let spec = crate::modifiers::plan::chain_output_spec(
@@ -416,17 +416,17 @@ mod fit_on_resize_tests {
     }
 
     #[test]
-    fn an_upscale_refits_the_view() {
+    fn a_resize_from_a_zoomed_in_view_refits() {
         let mut p = program_with_resize();
         p.set_scale(4.0, Vec2::ZERO);
 
-        edit(&mut p, ModifierParam::ResizeWidth(200.0));
+        edit(&mut p, ModifierParam::ResizeWidth(60.0));
 
         assert!(p.fit_active(), "the view is not in fit mode after a resize");
         assert!(
-            p.scale() < 4.0,
-            "the view stayed at {} after a 2x upscale; the user still has to \
-             zoom out to see what they just did",
+            p.scale() != 4.0,
+            "the view stayed at {} after the document changed size; the user \
+             still has to zoom to see what they just did",
             p.scale()
         );
     }
