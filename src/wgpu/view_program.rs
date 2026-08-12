@@ -12,6 +12,12 @@
 //! Resize is applied before crop, matching export::geom_of, or the preview and
 //! the file would disagree.
 //!
+//! Crop itself stores source pixels, so crop() divides by the source to get a
+//! fraction. The fraction carries no scale, which is what lets the display path
+//! resolve it against source-space tiles while the size math resolves it
+//! against the document. Dividing by the document there would exceed 1.0 under
+//! a downscale and sample past the tile.
+//!
 //! The histogram renders on a *bounded* source, not the document. Rendering
 //! the whole document costs time proportional to its area and is paid on every
 //! modifier change: 431 ms at 12000px, ~2.7 s at 30000px, felt directly as lag
@@ -2243,7 +2249,30 @@ mod document_size_tests {
             800,
             600,
         );
-        assert_eq!(p.effective_display_size(), vec2(200.0, 150.0));
+        assert_eq!(
+            p.effective_display_size(),
+            vec2(200.0, 150.0),
+            "the crop selects half the source, which is half the resized \
+             document: 200x150 of 400x300"
+        );
+    }
+
+    #[test]
+    fn a_crop_is_the_same_fraction_at_every_resize() {
+        for pct in [25.0f32, 50.0, 100.0, 200.0] {
+            let p = program(
+                vec![resize_pct(pct), crop_of(0.0, 0.0, 400.0, 300.0)],
+                800,
+                600,
+            );
+            let doc = vec2(800.0 * pct / 100.0, 600.0 * pct / 100.0);
+            assert_eq!(
+                p.effective_display_size(),
+                vec2(doc.x * 0.5, doc.y * 0.5),
+                "at {pct}% a half-the-source crop must stay half the document; \
+                 crop stores source pixels, so its fraction is scale-free"
+            );
+        }
     }
 
     #[test]
@@ -2256,7 +2285,7 @@ mod document_size_tests {
         assert_eq!(
             p.crop_origin(),
             vec2(200.0, 150.0),
-            "the crop origin is in source pixels while the extent is in              resized pixels, so the grid and the image disagree"
+            "the origin is placed in the document the extent is measured in"
         );
     }
 
