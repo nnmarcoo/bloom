@@ -7,6 +7,15 @@
 //!
 //! Per-tile ROIs are written here from viewport culling, and the modifier
 //! pipeline reads them to decide how much of each tile to process.
+//!
+//! A resize is previewable like any other modifier. Excluding it from the gate
+//! destroyed the pipeline for a resize-only stack, and the view then drew the
+//! source tiles at full resolution inside a smaller quad -- every pixel kept
+//! while claiming to be smaller, so a 1x1 resize showed the whole picture in
+//! one pixel. A resize may also defer while interacting, but only while the
+//! document holds the size its textures were built for; deferring across a size
+//! change leaves full-resolution textures on shrunken quads, which reads as
+//! flicker. That is what the doc_size comparison guards.
 
 use bytemuck::bytes_of;
 use glam::{Mat4, Vec2, vec2, vec3, vec4};
@@ -22,7 +31,8 @@ use iced::{
 };
 
 use crate::{
-    modifiers::{Modifier, ModifierKind},
+    modifiers::Modifier,
+    modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers},
     wgpu::{
         error::ViewError,
         gpu,
@@ -353,17 +363,24 @@ impl ViewPipeline {
         let dirty = dirty || self.pending_source_dirty;
         self.pending_source_dirty = false;
 
-        let previewable =
-            |m: &Modifier| m.has_visible_effect() && !matches!(m.kind, ModifierKind::Resize(_));
-        if !modifiers.iter().any(previewable) {
+        if !modifiers.iter().any(|m| m.has_visible_effect()) {
             self.modifier_pipeline = None;
             return;
         }
 
+        let doc = chain_output_spec(
+            ImageSpec::new(source.full_width, source.full_height),
+            &plan_modifiers(modifiers),
+        );
+        let doc_changed = self
+            .modifier_pipeline
+            .as_ref()
+            .is_some_and(|mp| mp.doc_size() != (doc.w, doc.h));
         let has_expensive = modifiers
             .iter()
             .any(|m| m.has_visible_effect() && !m.kind.effect_class().is_pointwise());
         if has_expensive
+            && !doc_changed
             && self.interacting()
             && let Some(mp) = self.modifier_pipeline.as_mut()
         {
@@ -592,5 +609,91 @@ impl Pipeline for ViewPipeline {
             view_changed_at: std::time::Instant::now() - VIEW_SETTLE * 2,
             format,
         }
+    }
+}
+
+#[cfg(test)]
+mod preview_gate_tests {
+    use crate::modifiers::kinds::{Exposure, GaussianBlur, Resize, ResizeFilter, ResizeMode};
+    use crate::modifiers::{Modifier, ModifierKind};
+
+    fn needs_pipeline(modifiers: &[Modifier]) -> bool {
+        modifiers.iter().any(|m| m.has_visible_effect())
+    }
+
+    fn defers_while_interacting(modifiers: &[Modifier], doc_changed: bool) -> bool {
+        !doc_changed
+            && modifiers
+                .iter()
+                .any(|m| m.has_visible_effect() && !m.kind.effect_class().is_pointwise())
+    }
+
+    fn resize(pct: f32) -> Modifier {
+        Modifier::new(ModifierKind::Resize(Resize {
+            mode: ResizeMode::Percent,
+            width: pct,
+            height: pct,
+            filter: ResizeFilter::Lanczos,
+            lock_aspect: true,
+        }))
+    }
+
+    fn blur() -> Modifier {
+        Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 8.0 }))
+    }
+
+    #[test]
+    fn a_resize_alone_needs_the_pipeline() {
+        assert!(
+            needs_pipeline(&[resize(25.0)]),
+            "a resize-only stack skipped the modifier pipeline, so the viewport \
+             draws the unresized source inside a smaller frame"
+        );
+    }
+
+    #[test]
+    fn a_disabled_resize_alone_does_not() {
+        let mut m = resize(25.0);
+        m.enabled = false;
+        assert!(!needs_pipeline(&[m]));
+    }
+
+    #[test]
+    fn an_empty_stack_does_not() {
+        assert!(!needs_pipeline(&[]));
+    }
+
+    #[test]
+    fn a_resize_defers_while_the_document_holds_its_size() {
+        assert!(
+            defers_while_interacting(&[resize(25.0)], false),
+            "a resize re-ran the chain on every frame while panning or zooming,              even though the document size had not moved"
+        );
+    }
+
+    #[test]
+    fn a_resize_does_not_defer_across_a_size_change() {
+        assert!(
+            !defers_while_interacting(&[resize(25.0)], true),
+            "the document changed size but the chain was deferred, leaving              full-resolution textures on quads built for a different size"
+        );
+    }
+
+    #[test]
+    fn a_blur_is_still_deferred() {
+        assert!(defers_while_interacting(&[blur()], false));
+    }
+
+    #[test]
+    fn a_blur_with_a_resize_is_still_deferred() {
+        assert!(defers_while_interacting(&[blur(), resize(50.0)], false));
+    }
+
+    #[test]
+    fn a_pointwise_stack_is_not_deferred() {
+        let chain = vec![Modifier::new(ModifierKind::Exposure(Exposure {
+            exposure: 0.4,
+        }))];
+        assert!(!defers_while_interacting(&chain, false));
     }
 }

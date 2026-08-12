@@ -5,6 +5,39 @@
 //! output size, not the source size. Anything indexing it must use the output
 //! dimensions while reporting coordinates in source pixels, since that is what
 //! the user is pointing at.
+//!
+//! effective_display_size and crop_origin are both in the resized document, and
+//! crop fractions multiply the resized size, not the source -- mixing the two
+//! put the pixel grid's transform in one space and its bounds in another.
+//! Resize is applied before crop, matching export::geom_of, or the preview and
+//! the file would disagree.
+//!
+//! The histogram renders on a *bounded* source, not the document. Rendering
+//! the whole document costs time proportional to its area and is paid on every
+//! modifier change: 431 ms at 12000px, ~2.7 s at 30000px, felt directly as lag
+//! while dragging a resize slider. The source is strided down to
+//! HISTOGRAM_PRERENDER_PIXELS first, which keeps a wide margin over the sample
+//! target so a downscale still has real neighbors to average and fine detail is
+//! not aliased into a different distribution than the export produces.
+//!
+//! Shrinking the source changes what a stage means, so the chain is adjusted to
+//! match: kernel parameters in absolute pixels are scaled by the same factor
+//! (the identity the reduced-scale blur path already relies on), and a resize
+//! in Pixels mode is rewritten as the equivalent percentage so it follows the
+//! smaller source. Text, Drawing, and PixelSort are not expressible that way --
+//! their rasters and scanlines are built from the document's own size -- so a
+//! chain containing them renders at full size instead.
+//!
+//! Two modifier hashes, and the difference is load-bearing. hash_modifiers is
+//! exact, because the staged-render and eyedropper caches hold buffers whose
+//! dimensions come from the chain, so a collision hands back a wrong-sized
+//! buffer. hash_modifiers_for_histogram is deliberately coarser and must mirror
+//! what compute_subsampled_histogram renders: disabled modifiers skipped, and
+//! every resize measured against the source, which is the space the upscale
+//! clamp decides in. An upscale is clamped to 100% before rendering because it
+//! interpolates between pixels already present and moves the distribution
+//! little, while costing a full resample per slider tick; a downscale averages
+//! neighbors and measurably narrows the distribution, so it is kept.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -25,6 +58,7 @@ use crate::{
     modifiers::{
         Modifier, cpu,
         drawing_raster::{DrawingLayerCache, LayerView},
+        kinds::{Resize, ResizeMode},
         plan::{ImageSpec, chain_output_spec, plan_modifiers},
         text_raster::TextRaster,
     },
@@ -324,11 +358,7 @@ impl ViewProgram {
             return None;
         }
         let eff = self.effective_display_size();
-        let origin = if let Some([min_u, min_v, ..]) = self.displayed_crop() {
-            vec2(min_u * self.image_size.x, min_v * self.image_size.y)
-        } else {
-            Vec2::ZERO
-        };
+        let origin = self.crop_origin();
         let to_pixels =
             Mat4::from_translation(vec3(0.5 * eff.x + origin.x, 0.5 * eff.y + origin.y, 0.0))
                 * Mat4::from_scale(vec3(0.5 * eff.x, -0.5 * eff.y, 1.0));
@@ -519,14 +549,33 @@ impl ViewProgram {
     }
 
     fn effective_display_size(&self) -> Vec2 {
+        let resized = self.chain_output_size();
         if let Some([min_u, min_v, max_u, max_v]) = self.displayed_crop() {
-            vec2(
-                (max_u - min_u) * self.image_size.x,
-                (max_v - min_v) * self.image_size.y,
-            )
+            vec2((max_u - min_u) * resized.x, (max_v - min_v) * resized.y)
         } else {
-            self.image_size
+            resized
         }
+    }
+
+    fn crop_origin(&self) -> Vec2 {
+        match self.displayed_crop() {
+            Some([min_u, min_v, ..]) => {
+                let doc = self.chain_output_size();
+                vec2(min_u * doc.x, min_v * doc.y)
+            }
+            None => Vec2::ZERO,
+        }
+    }
+
+    fn chain_output_size(&self) -> Vec2 {
+        if self.image_size == Vec2::ZERO {
+            return self.image_size;
+        }
+        let out = chain_output_spec(
+            ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32),
+            &plan_modifiers(&self.modifiers),
+        );
+        vec2(out.w as f32, out.h as f32)
     }
 
     pub fn animation_info(&self) -> Option<(usize, usize)> {
@@ -601,12 +650,13 @@ impl ViewProgram {
         .truncate();
         let eff = self.effective_display_size();
         let local_px = (img_ndc + 1.0) * 0.5 * vec2(eff.x, -eff.y) + vec2(0.0, eff.y);
-        let origin = if let Some([min_u, min_v, ..]) = self.displayed_crop() {
-            vec2(min_u * self.image_size.x, min_v * self.image_size.y)
-        } else {
-            Vec2::ZERO
-        };
-        Some(local_px + origin)
+        let doc_px = local_px + self.crop_origin();
+
+        let doc = self.chain_output_size();
+        if doc == Vec2::ZERO || doc == self.image_size {
+            return Some(doc_px);
+        }
+        Some(doc_px * self.image_size / doc)
     }
 
     fn with_rasters<R>(
@@ -677,6 +727,39 @@ impl ViewProgram {
         self.staged_pixel(text_layers, drawing_layers, image, px, py)
     }
 
+    fn staged_rows(
+        &self,
+        text_layers: &[Option<TextRaster>],
+        drawing_layers: &[Option<LayerView<'_>>],
+        image: &ImageData,
+        y0: u32,
+        y1: u32,
+    ) -> Option<(Vec<u8>, u32, u32)> {
+        let (w, h) = (image.width, image.height);
+        let plan = plan_modifiers(&self.modifiers);
+        if !cpu::plan_is_bandable(ImageSpec::new(w, h), &plan) {
+            return None;
+        }
+        let out = chain_output_spec(ImageSpec::new(w, h), &plan);
+        let y0 = y0.min(out.h.saturating_sub(1));
+        let y1 = y1.clamp(y0 + 1, out.h.max(1));
+        let pixels = image.pixels_snapshot();
+        if pixels.len() < image.size_bytes() {
+            return None;
+        }
+        let band = cpu::render_band(
+            &self.modifiers,
+            text_layers,
+            drawing_layers,
+            &pixels,
+            w,
+            h,
+            y0,
+            y1,
+        );
+        Some((band, out.w, y0))
+    }
+
     fn with_staged<R>(
         &self,
         text_layers: &[Option<TextRaster>],
@@ -721,7 +804,11 @@ impl ViewProgram {
         py: u32,
     ) -> Option<[u8; 4]> {
         let (src_w, src_h) = (image.width.max(1), image.height.max(1));
-        self.with_staged(text_layers, drawing_layers, image, |staged, w, h| {
+        let out = chain_output_spec(
+            ImageSpec::new(image.width, image.height),
+            &plan_modifiers(&self.modifiers),
+        );
+        let map = |w: u32, h: u32| -> (u32, u32) {
             let sx = if w == src_w {
                 px
             } else {
@@ -732,7 +819,23 @@ impl ViewProgram {
             } else {
                 (py as u64 * h as u64 / src_h as u64) as u32
             };
-            let (sx, sy) = (sx.min(w.saturating_sub(1)), sy.min(h.saturating_sub(1)));
+            (sx.min(w.saturating_sub(1)), sy.min(h.saturating_sub(1)))
+        };
+
+        let (_, sy) = map(out.w, out.h);
+        if let Some((band, bw, row_offset)) =
+            self.staged_rows(text_layers, drawing_layers, image, sy, sy + 1)
+        {
+            let (sx, _) = map(bw, out.h);
+            let local = sy.saturating_sub(row_offset);
+            let idx = (local as usize * bw as usize + sx as usize) * 4;
+            if let Some(p) = band.get(idx..idx + 4) {
+                return Some([p[0], p[1], p[2], p[3]]);
+            }
+        }
+
+        self.with_staged(text_layers, drawing_layers, image, |staged, w, h| {
+            let (sx, sy) = map(w, h);
             let idx = (sy as usize * w as usize + sx as usize) * 4;
             staged.get(idx..idx + 4).map(|p| [p[0], p[1], p[2], p[3]])
         })?
@@ -926,16 +1029,116 @@ impl ViewProgram {
             return Some(pixels);
         }
 
-        self.with_rasters(image.width, image.height, |text_layers, drawing_layers| {
-            self.with_staged(text_layers, drawing_layers, image, |staged, sw, sh| {
+        let out = chain_output_spec(
+            ImageSpec::new(image.width, image.height),
+            &plan_modifiers(&self.modifiers),
+        );
+        let (ow, oh) = (out.w as i64, out.h as i64);
+        let ocx = if ow == w { cx } else { cx * ow / w.max(1) };
+        let ocy = if oh == h { cy } else { cy * oh / h.max(1) };
+
+        let ocoord = |row: i64, col: i64| -> (i64, i64) {
+            match self.rotation {
+                0 => (ocx - half + col, ocy - half + row),
+                1 => (ocx - half + row, ocy + half - col),
+                2 => (ocx + half - col, ocy + half - row),
+                3 => (ocx + half - row, ocy - half + col),
+                _ => unreachable!(),
+            }
+        };
+
+        let (y0, y1) = {
+            let mut lo = i64::MAX;
+            let mut hi = i64::MIN;
+            for row in 0..size as i64 {
+                for col in 0..size as i64 {
+                    let (_, sy) = ocoord(row, col);
+                    if sy < 0 || sy >= oh {
+                        continue;
+                    }
+                    lo = lo.min(sy);
+                    hi = hi.max(sy);
+                }
+            }
+            if lo > hi {
+                return None;
+            }
+            (lo.max(0) as u32, (hi + 1).max(0) as u32)
+        };
+
+        let banded = self.with_rasters(image.width, image.height, |text, drawing| {
+            self.staged_rows(text, drawing, image, y0, y1)
+        });
+
+        let plot = |pixels: &mut [u8], staged: &[u8], sw: u32, sh: u32, row_offset: u32| {
+            for row in 0..size as i64 {
+                for col in 0..size as i64 {
+                    let (sx, sy) = ocoord(row, col);
+                    let sy = sy - row_offset as i64;
+                    if sx < 0 || sy < 0 || sx >= sw as i64 || sy >= sh as i64 {
+                        continue;
+                    }
+                    let src = (sy as usize * sw as usize + sx as usize) * 4;
+                    let Some(p) = staged.get(src..src + 4) else {
+                        continue;
+                    };
+                    let dst = ((row * size as i64 + col) * 4) as usize;
+                    pixels[dst..dst + 4].copy_from_slice(p);
+                }
+            }
+        };
+
+        match banded {
+            Some((band, sw, row_offset)) => {
+                let rows = if sw == 0 {
+                    0
+                } else {
+                    (band.len() / (sw as usize * 4)) as u32
+                };
+                plot(&mut pixels, &band, sw, rows, row_offset);
+            }
+            None => {
+                self.with_rasters(image.width, image.height, |text, drawing| {
+                    self.with_staged(text, drawing, image, |staged, sw, sh| {
+                        plot(&mut pixels, staged, sw, sh, 0);
+                    })
+                })?;
+            }
+        }
+        self.store_cursor_pixels(key, size, &pixels);
+        Some(pixels)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cursor_pixels_via_full_render(&self, size: u32) -> Option<Vec<u8>> {
+        let img = self.cursor_image_pos?;
+        let (cx, cy) = (img.x as i64, img.y as i64);
+        let half = (size / 2) as i64;
+        let image = self.image.as_ref()?;
+        let (w, h) = (image.width as i64, image.height as i64);
+
+        let mut pixels = vec![0u8; (size * size * 4) as usize];
+        self.with_rasters(image.width, image.height, |text, drawing| {
+            self.with_staged(text, drawing, image, |staged, sw, sh| {
+                let ocx = if sw as i64 == w {
+                    cx
+                } else {
+                    cx * sw as i64 / w.max(1)
+                };
+                let ocy = if sh as i64 == h {
+                    cy
+                } else {
+                    cy * sh as i64 / h.max(1)
+                };
                 for row in 0..size as i64 {
                     for col in 0..size as i64 {
-                        let (x, y) = coord(row, col);
-                        if x < 0 || y < 0 || x >= w || y >= h {
-                            continue;
-                        }
-                        let sx = if sw as i64 == w { x } else { x * sw as i64 / w };
-                        let sy = if sh as i64 == h { y } else { y * sh as i64 / h };
+                        let (sx, sy) = match self.rotation {
+                            0 => (ocx - half + col, ocy - half + row),
+                            1 => (ocx - half + row, ocy + half - col),
+                            2 => (ocx + half - col, ocy + half - row),
+                            3 => (ocx + half - row, ocy - half + col),
+                            _ => unreachable!(),
+                        };
                         if sx < 0 || sy < 0 || sx >= sw as i64 || sy >= sh as i64 {
                             continue;
                         }
@@ -949,7 +1152,6 @@ impl ViewProgram {
                 }
             })
         })?;
-        self.store_cursor_pixels(key, size, &pixels);
         Some(pixels)
     }
 
@@ -1082,13 +1284,106 @@ impl Program<Message> for ViewProgram {
     }
 }
 
+const HISTOGRAM_PRERENDER_PIXELS: usize = HISTOGRAM_TARGET_SAMPLES * 16;
+
+fn chain_survives_prescale(modifiers: &[Modifier]) -> bool {
+    use crate::modifiers::ModifierKind;
+    !modifiers.iter().any(|m| {
+        m.has_visible_effect()
+            && matches!(
+                m.kind,
+                ModifierKind::Text(_) | ModifierKind::Drawing(_) | ModifierKind::PixelSort(_)
+            )
+    })
+}
+
+fn subsample_source(pixels: &[u8], width: u32, height: u32, stride: usize) -> (Vec<u8>, u32, u32) {
+    let sw = (width as usize).div_ceil(stride).max(1);
+    let sh = (height as usize).div_ceil(stride).max(1);
+    let mut out = vec![0u8; sw * sh * 4];
+    for y in 0..sh {
+        let sy = y * stride;
+        for x in 0..sw {
+            let sx = x * stride;
+            let s = (sy * width as usize + sx) * 4;
+            let d = (y * sw + x) * 4;
+            if let Some(p) = pixels.get(s..s + 4) {
+                out[d..d + 4].copy_from_slice(p);
+            }
+        }
+    }
+    (out, sw as u32, sh as u32)
+}
+
+fn scale_chain_params(chain: &mut [Modifier], k: f32) {
+    use crate::modifiers::ModifierKind;
+    for m in chain.iter_mut() {
+        match &mut m.kind {
+            ModifierKind::GaussianBlur(b) => b.radius *= k,
+            ModifierKind::MotionBlur(mb) => mb.distance *= k,
+            _ => {}
+        }
+    }
+}
+
 pub(crate) fn compute_subsampled_histogram(
     pixels: &[u8],
     width: u32,
     height: u32,
     modifiers: &[Modifier],
 ) -> Histogram {
-    let pixel_count = (width as usize) * (height as usize);
+    let mut chain: Vec<Modifier> = modifiers
+        .iter()
+        .map(|m| {
+            let mut m = m.clone();
+            if let Some(r) = m.kind.as_resize_mut() {
+                let out = r.output_for(ImageSpec::new(width, height));
+                if out.w >= width && out.h >= height {
+                    *r = Resize {
+                        mode: ResizeMode::Percent,
+                        width: 100.0,
+                        height: 100.0,
+                        filter: r.filter,
+                        lock_aspect: true,
+                    };
+                }
+            }
+            m
+        })
+        .collect();
+
+    let src_pixels = width as usize * height as usize;
+    let mut shrunk: Option<Vec<u8>> = None;
+    let (mut width, mut height) = (width, height);
+    if src_pixels > HISTOGRAM_PRERENDER_PIXELS && chain_survives_prescale(&chain) {
+        let stride = (src_pixels as f64 / HISTOGRAM_PRERENDER_PIXELS as f64)
+            .sqrt()
+            .ceil()
+            .max(2.0) as usize;
+        for m in chain.iter_mut() {
+            if let Some(r) = m.kind.as_resize_mut()
+                && r.mode == ResizeMode::Pixels
+            {
+                let out = r.output_for(ImageSpec::new(width, height));
+                *r = Resize {
+                    mode: ResizeMode::Percent,
+                    width: out.w as f32 * 100.0 / width.max(1) as f32,
+                    height: out.h as f32 * 100.0 / height.max(1) as f32,
+                    filter: r.filter,
+                    lock_aspect: false,
+                };
+            }
+        }
+        let (small, sw, sh) = subsample_source(pixels, width, height, stride);
+        scale_chain_params(&mut chain, sw as f32 / width.max(1) as f32);
+        shrunk = Some(small);
+        (width, height) = (sw, sh);
+    }
+    let pixels: &[u8] = shrunk.as_deref().unwrap_or(pixels);
+
+    let out = chain_output_spec(ImageSpec::new(width, height), &plan_modifiers(&chain));
+
+    let pixel_count = (out.w as usize) * (out.h as usize);
     let stride = if pixel_count > HISTOGRAM_TARGET_SAMPLES {
         ((pixel_count as f64 / HISTOGRAM_TARGET_SAMPLES as f64)
             .sqrt()
@@ -1097,24 +1392,17 @@ pub(crate) fn compute_subsampled_histogram(
     } else {
         1
     };
-    let width_u = width as usize;
-    let height_u = height as usize;
+    let width_u = out.w as usize;
+    let height_u = out.h as usize;
     let row_indices: Vec<usize> = (0..height_u).step_by(stride).collect();
 
-    let text_layers = crate::modifiers::text_raster::build_layers(modifiers, width, height);
-    let drawing_rasters = crate::modifiers::drawing_raster::build_layers(modifiers, width, height);
+    let text_layers = crate::modifiers::text_raster::build_layers(&chain, width, height);
+    let drawing_rasters = crate::modifiers::drawing_raster::build_layers(&chain, width, height);
     let drawing_layers: Vec<Option<LayerView<'_>>> = drawing_rasters
         .iter()
         .map(|l| l.as_ref().map(|r| r.view()))
         .collect();
-    let rendered = cpu::render_full(
-        modifiers,
-        &text_layers,
-        &drawing_layers,
-        pixels,
-        width,
-        height,
-    );
+    let rendered = cpu::render_full(&chain, &text_layers, &drawing_layers, pixels, width, height);
 
     let (mut r, mut g, mut b) = row_indices
         .par_iter()
@@ -1170,6 +1458,34 @@ pub(crate) fn hash_modifiers(modifiers: &[Modifier]) -> u64 {
         m.enabled.hash(&mut hasher);
         m.kind.hash_into(&mut hasher);
     }
+    hasher.finish()
+}
+
+pub(crate) fn hash_modifiers_for_histogram(modifiers: &[Modifier], w: u32, h: u32) -> u64 {
+    let source = ImageSpec::new(w, h);
+    let mut hasher = DefaultHasher::new();
+    let mut counted = 0usize;
+    for m in modifiers {
+        if !m.has_visible_effect() {
+            continue;
+        }
+        match m.kind.as_resize() {
+            Some(r) => {
+                let out = r.output_for(source);
+                if out.w >= source.w && out.h >= source.h {
+                    continue;
+                }
+                counted += 1;
+                (out.w, out.h).hash(&mut hasher);
+                (r.filter as u8).hash(&mut hasher);
+            }
+            None => {
+                counted += 1;
+                m.kind.hash_into(&mut hasher);
+            }
+        }
+    }
+    counted.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -1327,6 +1643,58 @@ mod crop_tests {
 
 #[cfg(test)]
 mod eyedropper_resize_tests {
+    #[test]
+    fn the_cursor_maps_to_source_pixels_under_a_resize() {
+        let (w, h) = (400u32, 300u32);
+        for pct in [50.0f32, 200.0] {
+            let mut program = program_with(vec![resize_pct(pct)], w, h);
+            program.set_bounds(Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: 800.0,
+                height: 600.0,
+            });
+            program.fit();
+
+            let centre = program
+                .screen_to_image_coords(vec2(400.0, 300.0))
+                .expect("the viewport centre is over the image");
+            assert!(
+                (centre.x - w as f32 / 2.0).abs() <= 1.5
+                    && (centre.y - h as f32 / 2.0).abs() <= 1.5,
+                "at {pct}% the viewport centre mapped to {centre:?}, not the                  middle of the {w}x{h} source"
+            );
+        }
+    }
+
+    #[test]
+    fn the_screen_and_uv_conversions_round_trip_under_a_resize() {
+        let (w, h) = (400u32, 300u32);
+        for pct in [50.0f32, 200.0] {
+            let mut program = program_with(vec![resize_pct(pct)], w, h);
+            program.set_bounds(Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: 800.0,
+                height: 600.0,
+            });
+            program.fit();
+
+            for probe in [vec2(400.0, 300.0), vec2(300.0, 250.0), vec2(500.0, 380.0)] {
+                let Some(uv) = program.screen_to_image_uv(probe) else {
+                    continue;
+                };
+                let back = program
+                    .image_uv_to_screen(uv)
+                    .expect("uv maps back to the screen");
+                assert!(
+                    (back - probe).length() <= 1.0,
+                    "at {pct}% screen {probe:?} -> uv {uv:?} -> screen {back:?}"
+                );
+            }
+        }
+    }
+
     use super::*;
     use crate::modifiers::ModifierKind;
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
@@ -1352,6 +1720,118 @@ mod eyedropper_resize_tests {
             program.modifiers_mut().push(m);
         }
         program
+    }
+
+    #[test]
+    fn the_cursor_preview_steps_one_output_pixel_per_cell() {
+        let (w, h) = (600u32, 600u32);
+        for pct in [50.0f32, 10.0] {
+            let mut program = program_with(vec![resize_pct(pct)], w, h);
+            program.cursor_image_pos = Some(vec2(w as f32 * 0.5, h as f32 * 0.5));
+            let px = program.cursor_pixels(9).expect("grid");
+
+            let distinct: std::collections::HashSet<[u8; 4]> = px
+                .chunks_exact(4)
+                .map(|c| [c[0], c[1], c[2], c[3]])
+                .collect();
+
+            assert!(
+                distinct.len() >= 9,
+                "at {pct}% the 9x9 loupe shows only {} distinct colors. Adjacent \
+                 source pixels collapse onto the same output pixel under a \
+                 downscale, so the grid must step one *output* pixel per cell, \
+                 not one source pixel.",
+                distinct.len()
+            );
+        }
+    }
+
+    #[test]
+    fn the_banded_eyedropper_matches_the_full_render() {
+        use crate::modifiers::kinds::GaussianBlur;
+
+        let (w, h) = (300u32, 220u32);
+        let chains: Vec<(&str, Vec<Modifier>)> = vec![
+            ("resize-down", vec![resize_pct(50.0)]),
+            ("resize-up", vec![resize_pct(200.0)]),
+            (
+                "blur-then-resize",
+                vec![
+                    Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 5.0 })),
+                    resize_pct(50.0),
+                ],
+            ),
+            (
+                "resize-then-blur",
+                vec![
+                    resize_pct(50.0),
+                    Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 5.0 })),
+                ],
+            ),
+        ];
+
+        for (label, chain) in chains {
+            for pos in [
+                vec2(4.5, 3.5),
+                vec2(w as f32 * 0.5, h as f32 * 0.5),
+                vec2(w as f32 - 5.5, h as f32 - 4.5),
+            ] {
+                let mut banded = program_with(chain.clone(), w, h);
+                banded.cursor_image_pos = Some(pos);
+                let got = banded.cursor_pixels(9).expect("banded grid");
+
+                let mut full = program_with(chain.clone(), w, h);
+                full.cursor_image_pos = Some(pos);
+                let want = full
+                    .cursor_pixels_via_full_render(9)
+                    .expect("full-render grid");
+
+                assert_eq!(
+                    got, want,
+                    "{label} at {pos:?}: the banded eyedropper disagrees with the \
+                     full render, so the readout depends on how much was rendered"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "diagnostic; allocates aggressively; run with --release --ignored --nocapture"]
+    fn eyedropper_scale_probe() {
+        use std::time::Instant;
+
+        println!("\nEyedropper cost vs source size (runs on the UI thread, in view())");
+        println!("{:-<66}", "");
+        println!(
+            "  {:<12} {:>8} {:>12} {:>12} {:>14}",
+            "source", "GB", "first ms", "cached ms", "per slider tick"
+        );
+        println!("{:-<66}", "");
+
+        for dim in [2048u32, 4096, 8192, 12000] {
+            let gb = (dim as f64 * dim as f64 * 4.0) / 1e9;
+            let mut program = program_with(vec![resize_pct(50.0)], dim, dim);
+            program.cursor_image_pos = Some(vec2(dim as f32 * 0.5, dim as f32 * 0.5));
+
+            let t = Instant::now();
+            let _ = program.cursor_pixels(9);
+            let first = t.elapsed().as_secs_f64() * 1000.0;
+
+            let t = Instant::now();
+            let _ = program.cursor_pixels(9);
+            let cached = t.elapsed().as_secs_f64() * 1000.0;
+
+            if let Some(r) = program.modifiers_mut()[0].kind.as_resize_mut() {
+                r.width = 49.0;
+                r.height = 49.0;
+            }
+            let t = Instant::now();
+            let _ = program.cursor_pixels(9);
+            let tick = t.elapsed().as_secs_f64() * 1000.0;
+
+            println!("  {dim:<12} {gb:>8.2} {first:>12.1} {cached:>12.1} {tick:>14.1}");
+        }
+        println!("{:-<66}", "");
     }
 
     fn resize_pct(pct: f32) -> Modifier {
@@ -1428,5 +1908,399 @@ mod eyedropper_resize_tests {
             px.chunks_exact(4).any(|p| p[3] == 255),
             "the grid near the far corner came back entirely empty"
         );
+    }
+}
+
+#[cfg(test)]
+mod histogram_cost_tests {
+    fn resize_pct_h(pct: f32) -> Modifier {
+        Modifier::new(ModifierKind::Resize(Resize {
+            mode: ResizeMode::Percent,
+            width: pct,
+            height: pct,
+            filter: ResizeFilter::Lanczos,
+            lock_aspect: true,
+        }))
+    }
+
+    #[test]
+    fn the_histogram_cost_does_not_grow_with_the_source() {
+        use std::time::Instant;
+
+        let render = |dim: u32| {
+            let n = dim as usize * dim as usize * 4;
+            let pixels: Vec<u8> = (0..n)
+                .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
+                .collect();
+            let t = Instant::now();
+            let _ = compute_subsampled_histogram(&pixels, dim, dim, &[resize_pct_h(50.0)]);
+            t.elapsed().as_secs_f64()
+        };
+
+        let _ = render(512);
+
+        let small = render(1024);
+        let large = render(4096);
+
+        assert!(
+            large <= small.max(0.001) * 6.0,
+            "histogram cost grew {:.1}x for 16x the pixels ({:.1} ms -> {:.1} ms), \
+             so it is still proportional to the document area rather than to the \
+             number of samples it needs",
+            large / small.max(1e-9),
+            small * 1000.0,
+            large * 1000.0
+        );
+    }
+
+    #[test]
+    fn sampling_preserves_the_distribution() {
+        let (w, h) = (1024u32, 1024u32);
+        let mut pixels = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let o = ((y * w + x) * 4) as usize;
+                let v = if y < h / 4 {
+                    64u8
+                } else {
+                    (x * 255 / w.max(1)) as u8
+                };
+                pixels[o] = v;
+                pixels[o + 1] = v.wrapping_add(40);
+                pixels[o + 2] = 255 - v;
+                pixels[o + 3] = 255;
+            }
+        }
+
+        for chain in [vec![], vec![resize_pct_h(50.0)]] {
+            let (r, g, b) = compute_subsampled_histogram(&pixels, w, h, &chain);
+            for (label, bins) in [("r", r), ("g", g), ("b", b)] {
+                let total: u64 = bins.iter().map(|&c| c as u64).sum();
+                assert!(
+                    total > 0,
+                    "{label}: the histogram is empty, so nothing was sampled"
+                );
+                let occupied = bins.iter().filter(|&&c| c > 0).count();
+                assert!(
+                    occupied > 32,
+                    "{label}: only {occupied} bins occupied; the distribution \
+                     collapsed, which means sampling aliased the content away"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_downscale_changes_the_histogram() {
+        let (w, h) = (256u32, 256u32);
+        let mut pixels = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let o = ((y * w + x) * 4) as usize;
+                let on = (x / 2 + y / 2) % 2 == 0;
+                let v = if on { 255 } else { 0 };
+                pixels[o] = v;
+                pixels[o + 1] = v;
+                pixels[o + 2] = v;
+                pixels[o + 3] = 255;
+            }
+        }
+        let none = compute_subsampled_histogram(&pixels, w, h, &[]);
+        let down = compute_subsampled_histogram(&pixels, w, h, &[resize_pct_h(25.0)]);
+        assert_ne!(
+            none, down,
+            "a 25% downscale left the histogram unchanged; it averages pixels,              so the panel would disagree with the export"
+        );
+    }
+
+    #[test]
+    fn an_upscale_does_not_change_the_histogram() {
+        let (w, h) = (128u32, 128u32);
+        let pixels: Vec<u8> = (0..(w * h * 4))
+            .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
+            .collect();
+        let none = compute_subsampled_histogram(&pixels, w, h, &[]);
+        for pct in [200.0f32, 400.0] {
+            assert_eq!(
+                compute_subsampled_histogram(&pixels, w, h, &[resize_pct_h(pct)]),
+                none,
+                "a {pct}% upscale changed the histogram, but it is clamped to                  100% before rendering"
+            );
+        }
+    }
+
+    #[test]
+    fn the_histogram_key_ignores_upscales_but_not_downscales() {
+        let (w, h) = (500u32, 500u32);
+        let none = hash_modifiers_for_histogram(&[], w, h);
+        assert_eq!(
+            hash_modifiers_for_histogram(&[resize_pct_h(200.0)], w, h),
+            none,
+            "an upscale changed the key, so every slider tick queues another              full CPU render"
+        );
+        assert_eq!(
+            hash_modifiers_for_histogram(&[resize_pct_h(400.0)], w, h),
+            none,
+            "two upscales must share a key; neither is rendered"
+        );
+        assert_ne!(
+            hash_modifiers_for_histogram(&[resize_pct_h(50.0)], w, h),
+            none,
+            "a downscale must invalidate: it is rendered and it changes the              histogram"
+        );
+    }
+
+    #[test]
+    fn a_disabled_resize_keys_like_no_resize() {
+        let (w, h) = (500u32, 500u32);
+        for pct in [25.0f32, 400.0] {
+            let mut m = resize_pct_h(pct);
+            m.enabled = false;
+            assert_eq!(
+                hash_modifiers_for_histogram(&[m], w, h),
+                hash_modifiers_for_histogram(&[], w, h),
+                "a disabled {pct}% resize keyed differently from no resize, but \
+                 it is dropped before rendering, so both produce the same \
+                 histogram"
+            );
+        }
+    }
+
+    #[test]
+    fn the_key_classifies_chained_resizes_like_the_renderer() {
+        let (w, h) = (400u32, 400u32);
+        let pixels: Vec<u8> = (0..(w * h * 4))
+            .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
+            .collect();
+
+        let chain = vec![resize_pct_h(200.0), resize_pct_h(25.0)];
+        let lone = vec![resize_pct_h(25.0)];
+
+        assert_eq!(
+            compute_subsampled_histogram(&pixels, w, h, &chain),
+            compute_subsampled_histogram(&pixels, w, h, &lone),
+            "the renderer clamps the upscale against the source, so these two \
+             chains render the same histogram; if this fails the premise below \
+             is wrong, not the key"
+        );
+        assert_eq!(
+            hash_modifiers_for_histogram(&chain, w, h),
+            hash_modifiers_for_histogram(&lone, w, h),
+            "the two chains render an identical histogram but keyed \
+             differently, so the cache cannot serve one for the other"
+        );
+    }
+
+    #[test]
+    fn the_general_key_distinguishes_every_resize() {
+        let a = vec![resize_pct_h(50.0)];
+        let b = vec![resize_pct_h(200.0)];
+        assert_ne!(hash_modifiers(&a), hash_modifiers(&b));
+        assert_ne!(hash_modifiers(&a), hash_modifiers(&[]));
+        assert_ne!(hash_modifiers(&b), hash_modifiers(&[]));
+    }
+
+    use super::*;
+    use crate::modifiers::ModifierKind;
+    use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+    use std::time::Instant;
+
+    #[test]
+    #[ignore = "timing baseline; run with --release --ignored --nocapture"]
+    fn histogram_cost_scales_with_the_resized_document() {
+        let (w, h) = (1000u32, 1000u32);
+        let pixels: Vec<u8> = (0..(w * h * 4))
+            .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
+            .collect();
+
+        println!(
+            "
+Histogram cost -- {w}x{h} source"
+        );
+        println!("  {:<22} {:>12} {:>14}", "chain", "doc", "ms");
+        println!("  {:-<50}", "");
+
+        for pct in [100.0f32, 200.0, 300.0, 400.0] {
+            let chain = vec![Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: pct,
+                height: pct,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            }))];
+            let t = Instant::now();
+            let _ = compute_subsampled_histogram(&pixels, w, h, &chain);
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            let d = (w as f32 * pct / 100.0) as u32;
+            println!(
+                "  {:<22} {:>12} {:>14.1}",
+                format!("resize {pct}%"),
+                format!("{d}x{d}"),
+                ms
+            );
+        }
+        println!("  {:-<50}", "");
+    }
+}
+
+#[cfg(test)]
+mod document_size_tests {
+    use super::*;
+    use crate::modifiers::ModifierKind;
+    use crate::modifiers::kinds::{Crop, Resize, ResizeFilter, ResizeMode};
+
+    fn program(modifiers: Vec<Modifier>, w: u32, h: u32) -> ViewProgram {
+        let mut p = ViewProgram::default();
+        p.set_image(ImageData::new(vec![255u8; (w * h * 4) as usize], w, h));
+        for m in modifiers {
+            p.modifiers_mut().push(m);
+        }
+        p
+    }
+
+    fn resize_pct(pct: f32) -> Modifier {
+        Modifier::new(ModifierKind::Resize(Resize {
+            mode: ResizeMode::Percent,
+            width: pct,
+            height: pct,
+            filter: ResizeFilter::Bilinear,
+            lock_aspect: true,
+        }))
+    }
+
+    fn crop_of(x: f32, y: f32, w: f32, h: f32) -> Modifier {
+        Modifier::new(ModifierKind::Crop(Crop {
+            x,
+            y,
+            width: w,
+            height: h,
+        }))
+    }
+
+    #[test]
+    fn no_modifiers_leaves_the_source_size() {
+        let p = program(Vec::new(), 800, 600);
+        assert_eq!(p.effective_display_size(), vec2(800.0, 600.0));
+    }
+
+    #[test]
+    fn fit_tracks_the_resized_document_on_a_huge_image() {
+        const SRC: u32 = 30000;
+        let bounds = Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: 1600.0,
+            height: 900.0,
+        };
+
+        for pct in [1.0f32, 10.0, 50.0, 100.0, 200.0, 400.0] {
+            let mut p = ViewProgram::default();
+            p.set_image(ImageData::new(Vec::new(), SRC, SRC));
+            p.modifiers_mut().push(resize_pct(pct));
+            p.set_bounds(bounds);
+            p.fit();
+
+            let doc = p.effective_display_size();
+            let s = p.scale();
+            let on_screen = doc * s;
+
+            assert!(
+                s.is_finite() && s > 0.0,
+                "{pct}%: fit produced a scale of {s}"
+            );
+            assert!(
+                on_screen.x <= bounds.width + 1.0 && on_screen.y <= bounds.height + 1.0,
+                "{pct}%: the fitted document is {on_screen:?} on screen, larger \
+                 than the {}x{} viewport",
+                bounds.width,
+                bounds.height
+            );
+            assert!(
+                on_screen.x >= bounds.width - 1.0 || on_screen.y >= bounds.height - 1.0,
+                "{pct}%: the fitted document is {on_screen:?}, touching neither \
+                 edge of the {}x{} viewport, so it is not filling it",
+                bounds.width,
+                bounds.height
+            );
+        }
+    }
+
+    #[test]
+    fn a_resize_changes_the_document_size() {
+        let p = program(vec![resize_pct(50.0)], 800, 600);
+        assert_eq!(
+            p.effective_display_size(),
+            vec2(400.0, 300.0),
+            "the viewport still reports the source size, so it would fit and \
+             zoom against a document the export does not produce"
+        );
+    }
+
+    #[test]
+    fn crop_applies_to_the_resized_document() {
+        let p = program(
+            vec![resize_pct(50.0), crop_of(0.0, 0.0, 400.0, 300.0)],
+            800,
+            600,
+        );
+        assert_eq!(p.effective_display_size(), vec2(200.0, 150.0));
+    }
+
+    #[test]
+    fn crop_origin_is_in_the_resized_space() {
+        let p = program(
+            vec![resize_pct(50.0), crop_of(400.0, 300.0, 400.0, 300.0)],
+            800,
+            600,
+        );
+        assert_eq!(
+            p.crop_origin(),
+            vec2(200.0, 150.0),
+            "the crop origin is in source pixels while the extent is in              resized pixels, so the grid and the image disagree"
+        );
+    }
+
+    #[test]
+    fn crop_origin_without_a_resize_is_the_source_offset() {
+        let p = program(vec![crop_of(400.0, 300.0, 400.0, 300.0)], 800, 600);
+        assert_eq!(p.crop_origin(), vec2(400.0, 300.0));
+    }
+
+    #[test]
+    fn a_disabled_resize_does_not_change_the_document() {
+        let mut m = resize_pct(50.0);
+        m.enabled = false;
+        let p = program(vec![m], 800, 600);
+        assert_eq!(p.effective_display_size(), vec2(800.0, 600.0));
+    }
+
+    #[test]
+    fn fit_scale_uses_the_resized_document() {
+        let mut p = program(vec![resize_pct(50.0)], 800, 600);
+        p.set_bounds(Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: 400.0,
+            height: 300.0,
+        });
+        assert!(
+            (p.fit_scale() - 1.0).abs() < 1e-4,
+            "fit scale was {}, expected 1.0 for a 400x300 document in 400x300 \
+             bounds",
+            p.fit_scale()
+        );
+    }
+
+    #[test]
+    fn preview_size_matches_the_export_geometry() {
+        for pct in [25.0f32, 50.0, 150.0] {
+            let p = program(vec![resize_pct(pct)], 800, 600);
+            let out = chain_output_spec(ImageSpec::new(800, 600), &plan_modifiers(&p.modifiers));
+            assert_eq!(
+                p.effective_display_size(),
+                vec2(out.w as f32, out.h as f32),
+                "at {pct}% the viewport and the export planner disagree"
+            );
+        }
     }
 }

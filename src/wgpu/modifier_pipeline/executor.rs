@@ -1,10 +1,30 @@
 //! Tiled GPU execution of a modifier chain.
 //!
-//! Everything here works in one coordinate space: tiles are carved from the
-//! source, proc_px is document-space throughout, and the ROI walk runs backward
-//! through a single geometry. A stage that changed dimensions mid-chain would
-//! put the stages on either side of it in different spaces, which this executor
-//! cannot express, so resize is dropped from the preview plan.
+//! Each stage carries its own input and output geometry, from infer_specs, so a
+//! stage may change dimensions mid-chain. Every rect belongs to exactly one of
+//! those spaces: UV normalizes against the stage's own output, while the
+//! backward ROI walk crosses each size change with roi::unmap_region and only
+//! then dilates by the apron, in the input's own space. Reversing that order
+//! applies a half-size apron in a full-size space.
+//!
+//! proc_px lives in the chain's output document, not the source. TileOutput.doc
+//! records which document an output was built for, because a stale one would be
+//! reinterpreted in the new document and the band copy would run off the
+//! texture. Tiles are carved with geom::tile_out_rect, which maps tile edges
+//! rather than extents so neighbors keep meeting exactly.
+//!
+//! A resample runs as two passes, horizontal then vertical, matching
+//! cpu::resample; one 2D gather would be a different filter and would not agree
+//! with the export. The ratio comes from the two documents' full lengths, and
+//! ResampleRegion says which part of the image the target and bound input
+//! stand for, so rendering a band does not shift the resize.
+//!
+//! doc_size is recorded from the plan *before* any culling, and never after.
+//! It answers "which document are the quads built for?", which is a property of
+//! the chain, not of what happened to be on screen. Setting it after the
+//! all-tiles-culled early return left it stale, view_pipeline then compared it
+//! and concluded deferring was safe, and the view kept quads placed for the old
+//! document -- which reads as the fit being broken after a resize.
 //!
 //! Work is split into bands when a chain is expensive, with exec_band_cursor
 //! carrying progress across frames so the UI stays responsive.
@@ -12,6 +32,7 @@
 use super::*;
 use crate::modifiers::pixel_sort::SortMode as ExecSortMode;
 use crate::modifiers::roi::{self, RegionPx, StepClass};
+use crate::wgpu::passes::resample::ResampleRegion;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 
@@ -186,6 +207,7 @@ impl ModifierPipeline {
                     height: pr.h,
                     proc_px: Some(pr.px),
                     quality_scale: cur_scale,
+                    doc: (source.full_width, source.full_height),
                 });
                 self.tile_display_bgs_linear[ti] = None;
                 self.tile_display_bgs_nearest[ti] = None;
@@ -241,7 +263,18 @@ impl ModifierPipeline {
                 self.tile_outputs[ti].as_mut().unwrap().valid = true;
             }
 
-            self.build_roi_display_bgs(device, queue, ti, tile, &pr, true);
+            self.build_roi_display_bgs(
+                device,
+                queue,
+                ti,
+                tile,
+                &pr,
+                DocScale {
+                    src: (source.full_width, source.full_height),
+                    out: (source.full_width, source.full_height),
+                    roi_active: true,
+                },
+            );
         }
 
         self.reprocess_pending |= scheduler.pending();
@@ -262,6 +295,12 @@ impl ModifierPipeline {
     ) {
         let full_w = source.full_width as f32;
         let full_h = source.full_height as f32;
+
+        let source_spec_doc = ImageSpec::new(source.full_width, source.full_height);
+        let doc_spec = infer_specs(source_spec_doc, plan)
+            .last()
+            .map_or(source_spec_doc, |s| s.output);
+        self.doc_size = (doc_spec.w, doc_spec.h);
 
         let n_tiles = source.tiles.len();
         let mut visible: Vec<usize> = Vec::new();
@@ -308,11 +347,15 @@ impl ModifierPipeline {
             }
         }
 
+        let specs = infer_specs(source_spec_doc, plan);
+        let out_spec_doc = doc_spec;
+        let chain_resizes = out_spec_doc != source_spec_doc;
         let classes: Vec<StepClass> = plan
             .iter()
-            .map(|p| match p {
+            .zip(&specs)
+            .map(|(p, spec)| match p {
                 PlanItem::Fused(_) => StepClass::Pointwise,
-                PlanItem::Step(_, m) => roi::step_class(&m.kind),
+                PlanItem::Step(_, m) => roi::step_class_for(&m.kind, spec.input.h, spec.output.h),
             })
             .collect();
 
@@ -371,15 +414,48 @@ impl ModifierPipeline {
                 self.tile_display_bgs_nearest[ti] = None;
                 continue;
             }
+            let doc = (out_spec_doc.w, out_spec_doc.h);
+            let roi_doc = if chain_resizes {
+                tile_out_rect(roi, source.full_width, source.full_height, doc.0, doc.1)
+            } else {
+                roi
+            };
             let reuse = self.tile_outputs[ti].as_ref().is_some_and(|o| {
-                o.proc_px.is_some_and(|p| rect_contains(p, roi))
+                o.doc == doc
+                    && o.proc_px.is_some_and(|p| rect_contains(p, roi_doc))
                     && (o.quality_scale - scale).abs() < 1e-4
             });
             let pr = if reuse {
                 let o = self.tile_outputs[ti].as_ref().unwrap();
-                proc_rect_from_px(o.proc_px, tile, full_w, full_h, o.width, o.height)
+                proc_rect_from_px(
+                    o.proc_px,
+                    tile,
+                    doc.0 as f32,
+                    doc.1 as f32,
+                    o.width,
+                    o.height,
+                )
             } else {
                 pr_with_roi(tile, full_w, full_h, scale, downscale, roi, pitch)
+            };
+            let pr = if chain_resizes && !reuse {
+                let px = tile_out_rect(
+                    pr.px,
+                    source.full_width,
+                    source.full_height,
+                    out_spec_doc.w,
+                    out_spec_doc.h,
+                );
+                let (w, h) = device_dims(px, scale);
+                ProcRect {
+                    px,
+                    proc: uv_of(px, out_spec_doc.w as f32, out_spec_doc.h as f32),
+                    src: pr.src,
+                    w,
+                    h,
+                }
+            } else {
+                pr
             };
             if !reuse {
                 let tex = gpu::texture_2d(
@@ -402,6 +478,7 @@ impl ModifierPipeline {
                     height: pr.h,
                     proc_px: Some(pr.px),
                     quality_scale: scale,
+                    doc,
                 });
                 self.tile_display_bgs_linear[ti] = None;
                 self.tile_display_bgs_nearest[ti] = None;
@@ -428,7 +505,8 @@ impl ModifierPipeline {
                 u_px[3].max(p[3]),
             ];
         }
-        let u_px = snap_region(u_px, pitch, full_w, full_h);
+        let (doc_w, doc_h) = (out_spec_doc.w as f32, out_spec_doc.h as f32);
+        let u_px = snap_region(u_px, pitch, doc_w, doc_h);
 
         let single_band = classes
             .iter()
@@ -512,23 +590,40 @@ impl ModifierPipeline {
 
             let n = plan.len();
             let mut out_rects = vec![[0.0f32; 4]; n];
-            let mut cur = roi::clamp_region(band_img, full_w, full_h);
+            let out_spec = specs
+                .last()
+                .map_or(ImageSpec::new(source.full_width, source.full_height), |s| {
+                    s.output
+                });
+            let mut cur = roi::clamp_region(band_img, out_spec.w as f32, out_spec.h as f32);
             for k in (0..n).rev() {
+                let (iw, ih) = (specs[k].input.w as f32, specs[k].input.h as f32);
+                let (ow, oh) = (specs[k].output.w as f32, specs[k].output.h as f32);
                 if matches!(classes[k], StepClass::Scanline { .. }) {
                     cur = snap_region(
-                        roi::input_needed(classes[k], cur, full_w, full_h),
+                        roi::input_needed(
+                            classes[k],
+                            roi::unmap_region((ow, oh), (iw, ih), cur),
+                            iw,
+                            ih,
+                        ),
                         pitch,
-                        full_w,
-                        full_h,
+                        iw,
+                        ih,
                     );
                     out_rects[k] = cur;
                 } else {
                     out_rects[k] = cur;
                     cur = snap_region(
-                        roi::input_needed(classes[k], cur, full_w, full_h),
+                        roi::input_needed(
+                            classes[k],
+                            roi::unmap_region((ow, oh), (iw, ih), cur),
+                            iw,
+                            ih,
+                        ),
                         pitch,
-                        full_w,
-                        full_h,
+                        iw,
+                        ih,
                     );
                 }
             }
@@ -561,6 +656,7 @@ impl ModifierPipeline {
 
             for (k, item) in plan.iter().enumerate() {
                 let out_r = out_rects[k];
+                let (full_w, full_h) = (specs[k].output.w as f32, specs[k].output.h as f32);
                 match item {
                     PlanItem::Fused(seg) => {
                         let (w, h) = rect_dims(out_r, scale);
@@ -803,6 +899,70 @@ impl ModifierPipeline {
                         }
                         prev = outs;
                     }
+                    PlanItem::Step(_, m)
+                        if m.kind.as_resize().is_some() && specs[k].input == specs[k].output => {}
+                    PlanItem::Step(_, m) if m.kind.as_resize().is_some() => {
+                        let filter = m.kind.as_resize().unwrap().filter;
+                        let (ow, oh) = rect_dims(out_r, scale);
+                        let (pw, _ph) = rect_dims(prev.rect, scale);
+                        let in_len_x = ((specs[k].input.w as f32 * scale).round() as u32).max(1);
+                        let in_len_y = ((specs[k].input.h as f32 * scale).round() as u32).max(1);
+                        let out_len_x = ((specs[k].output.w as f32 * scale).round() as u32).max(1);
+                        let out_len_y = ((specs[k].output.h as f32 * scale).round() as u32).max(1);
+                        let base = |v: f32| (v * scale).round() as u32;
+
+                        let mid_r = [out_r[0], prev.rect[1], out_r[2], prev.rect[3]];
+                        let (mw, mh) = rect_dims(mid_r, scale);
+                        let mid = self.pooled_stage(device, &mut slab_slot, mw, mh, mid_r);
+                        while self.resample_uniforms.len() < (pool_used + 1) * 2 {
+                            self.resample_uniforms
+                                .push(self.resample.uniform_buffer(device));
+                        }
+                        let (ub_h, ub_v) = {
+                            let base = pool_used * 2;
+                            (base, base + 1)
+                        };
+                        self.resample.record(
+                            device,
+                            queue,
+                            &mut encoder,
+                            &self.resample_uniforms[ub_h],
+                            &prev.view,
+                            &mid.view,
+                            out_len_x,
+                            in_len_x,
+                            false,
+                            filter,
+                            ResampleRegion {
+                                out_base: base(out_r[0]),
+                                dst_len: mw,
+                                src_base: base(prev.rect[0]),
+                                tex_len: pw,
+                            },
+                        );
+
+                        let outs = self.pooled_stage(device, &mut slab_slot, ow, oh, out_r);
+                        self.resample.record(
+                            device,
+                            queue,
+                            &mut encoder,
+                            &self.resample_uniforms[ub_v],
+                            &mid.view,
+                            &outs.view,
+                            out_len_y,
+                            in_len_y,
+                            true,
+                            filter,
+                            ResampleRegion {
+                                out_base: base(out_r[1]),
+                                dst_len: oh,
+                                src_base: base(mid_r[1]),
+                                tex_len: mh,
+                            },
+                        );
+                        pool_used += 1;
+                        prev = outs;
+                    }
                     PlanItem::Step(_, m) => {
                         let radius = m.kind.effect_class().separable_apron().unwrap_or(0.0);
                         let apron_img = radius.ceil();
@@ -948,7 +1108,18 @@ impl ModifierPipeline {
 
         for &ti in &procs {
             let pr = prs[ti].take().unwrap();
-            self.build_roi_display_bgs(device, queue, ti, &source.tiles[ti], &pr, true);
+            self.build_roi_display_bgs(
+                device,
+                queue,
+                ti,
+                &source.tiles[ti],
+                &pr,
+                DocScale {
+                    src: (source.full_width, source.full_height),
+                    out: (out_spec_doc.w, out_spec_doc.h),
+                    roi_active: true,
+                },
+            );
         }
     }
 

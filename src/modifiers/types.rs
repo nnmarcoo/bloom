@@ -309,6 +309,20 @@ impl ModifierKind {
         }
     }
 
+    pub fn as_resize(&self) -> Option<&Resize> {
+        match self {
+            ModifierKind::Resize(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    pub fn as_resize_mut(&mut self) -> Option<&mut Resize> {
+        match self {
+            ModifierKind::Resize(r) => Some(r),
+            _ => None,
+        }
+    }
+
     pub fn as_crop_mut(&mut self) -> Option<&mut Crop> {
         match self {
             ModifierKind::Crop(c) => Some(c),
@@ -496,22 +510,88 @@ mod effect_class_tests {
     }
 }
 
-pub mod ids {
-    pub const EXPOSURE: u32 = 1;
-    pub const LEVELS: u32 = 2;
-    pub const BRIGHTNESS_CONTRAST: u32 = 3;
-    pub const HUE_SATURATION: u32 = 4;
-    pub const VIGNETTE: u32 = 5;
-    pub const POSTERIZE: u32 = 6;
-    pub const THRESHOLD: u32 = 7;
-    pub const VIBRANCE: u32 = 8;
-    pub const COLOR_BALANCE: u32 = 9;
-    pub const GRAIN: u32 = 10;
-    pub const INVERT: u32 = 11;
-    pub const GRAYSCALE: u32 = 12;
-    pub const TEMPERATURE: u32 = 13;
-    pub const SEPIA: u32 = 14;
-    pub const SOLARIZE: u32 = 15;
-    pub const HALFTONE: u32 = 16;
-    pub const DUOTONE: u32 = 17;
+macro_rules! shader_ids {
+    ($($name:ident = $value:expr),+ $(,)?) => {
+        pub mod ids {
+            $(pub const $name: u32 = $value;)+
+
+            #[allow(dead_code, reason = "drives the id/shader-arm parity tests")]
+            pub const ALL: &[(&str, u32)] = &[$((stringify!($name), $value)),+];
+        }
+    };
+}
+
+shader_ids! {
+    EXPOSURE = 1,
+    LEVELS = 2,
+    BRIGHTNESS_CONTRAST = 3,
+    HUE_SATURATION = 4,
+    VIGNETTE = 5,
+    POSTERIZE = 6,
+    THRESHOLD = 7,
+    VIBRANCE = 8,
+    COLOR_BALANCE = 9,
+    GRAIN = 10,
+    INVERT = 11,
+    GRAYSCALE = 12,
+    TEMPERATURE = 13,
+    SEPIA = 14,
+    SOLARIZE = 15,
+    HALFTONE = 16,
+    DUOTONE = 17,
+}
+
+#[cfg(test)]
+mod shader_id_tests {
+    use super::ids;
+    use std::collections::BTreeSet;
+
+    const SHADER: &str = include_str!("../wgpu/shaders/combined_modifiers.wgsl");
+
+    fn shader_cases() -> BTreeSet<u32> {
+        SHADER
+            .lines()
+            .filter_map(|l| {
+                let l = l.trim();
+                let rest = l.strip_prefix("case ")?;
+                let num = rest.strip_suffix("u: {")?;
+                num.parse().ok()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_id_has_a_shader_arm_and_the_reverse() {
+        let declared: BTreeSet<u32> = ids::ALL.iter().map(|(_, v)| *v).collect();
+        let implemented = shader_cases();
+
+        let missing: Vec<_> = declared.difference(&implemented).collect();
+        assert!(
+            missing.is_empty(),
+            "ids with no `case Nu:` in combined_modifiers.wgsl: {missing:?}. \
+             These modifiers would fall through to the default arm and render \
+             as a passthrough."
+        );
+
+        let orphaned: Vec<_> = implemented.difference(&declared).collect();
+        assert!(
+            orphaned.is_empty(),
+            "shader arms with no id constant: {orphaned:?}. Either an id was \
+             deleted without its arm, or an arm was added without registering \
+             the id."
+        );
+    }
+
+    #[test]
+    fn ids_are_unique() {
+        let mut seen: Vec<(u32, &str)> = ids::ALL.iter().map(|(n, v)| (*v, *n)).collect();
+        seen.sort_unstable();
+        for pair in seen.windows(2) {
+            assert_ne!(
+                pair[0].0, pair[1].0,
+                "{} and {} share id {}, so one renders as the other",
+                pair[0].1, pair[1].1, pair[0].0
+            );
+        }
+    }
 }

@@ -9,8 +9,10 @@
 //! direction: a lo-fi upscale wants Nearest precisely because it is blocky,
 //! and that intent cannot be recovered from the numbers.
 //!
-//! Export honors a resize at any position in the chain. The GPU preview drops
-//! it, so the viewport shows the source size.
+//! Both backends honor a resize at any position in the chain. The GPU preview
+//! renders it as a stage like any other, so the viewport shows the resized
+//! document rather than the source size, and the view refits when an edit
+//! changes those dimensions.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hash;
@@ -50,6 +52,14 @@ impl ResizeFilter {
             ResizeFilter::Nearest => "Nearest",
             ResizeFilter::Bilinear => "Bilinear",
             ResizeFilter::Lanczos => "Lanczos",
+        }
+    }
+
+    pub fn radius(&self) -> f32 {
+        match self {
+            ResizeFilter::Nearest => 0.0,
+            ResizeFilter::Bilinear => 1.0,
+            ResizeFilter::Lanczos => 3.0,
         }
     }
 }
@@ -94,6 +104,20 @@ impl Resize {
         ImageSpec::new(w, h)
     }
 
+    pub fn max_width(&self, img_size: Option<(u32, u32)>) -> f32 {
+        match self.mode {
+            ResizeMode::Percent => 100.0,
+            ResizeMode::Pixels => img_size.map_or(f32::MAX, |(iw, _)| (iw as f32).max(1.0)),
+        }
+    }
+
+    pub fn max_height(&self, img_size: Option<(u32, u32)>) -> f32 {
+        match self.mode {
+            ResizeMode::Percent => 100.0,
+            ResizeMode::Pixels => img_size.map_or(f32::MAX, |(_, ih)| (ih as f32).max(1.0)),
+        }
+    }
+
     fn aspect_ratio(&self, img_size: Option<(u32, u32)>) -> f32 {
         match self.mode {
             ResizeMode::Percent => 1.0,
@@ -126,7 +150,7 @@ impl ModifierImpl for Resize {
     fn apply_param(&mut self, param: ModifierParam, _img_size: Option<(u32, u32)>) {
         match param {
             ModifierParam::ResizeWidth(v) => {
-                let v = v.max(1.0);
+                let v = v.clamp(1.0, self.max_width(_img_size));
                 if self.lock_aspect {
                     let ratio = self.aspect_ratio(_img_size);
                     self.height = (v * ratio).max(1.0);
@@ -134,7 +158,7 @@ impl ModifierImpl for Resize {
                 self.width = v;
             }
             ModifierParam::ResizeHeight(v) => {
-                let v = v.max(1.0);
+                let v = v.clamp(1.0, self.max_height(_img_size));
                 if self.lock_aspect {
                     let ratio = self.aspect_ratio(_img_size);
                     if ratio > 0.0 {
@@ -177,13 +201,8 @@ impl ModifierImpl for Resize {
     }
 
     fn view(&self, index: usize, ctx: ViewCtx) -> Element<'_, Message> {
-        let (max_w, max_h) = match self.mode {
-            ResizeMode::Pixels => {
-                let (iw, ih) = ctx.image_size.unwrap_or((8192, 8192));
-                ((iw as f32 * 4.0).max(1.0), (ih as f32 * 4.0).max(1.0))
-            }
-            ResizeMode::Percent => (400.0, 400.0),
-        };
+        let size = ctx.image_size.or(Some((8192, 8192)));
+        let (max_w, max_h) = (self.max_width(size), self.max_height(size));
         let fmt = match self.mode {
             ResizeMode::Pixels => Fmt::num(0),
             ResizeMode::Percent => Fmt::num(1),
@@ -248,6 +267,34 @@ mod tests {
             filter: ResizeFilter::Lanczos,
             lock_aspect: lock,
         }
+    }
+
+    #[test]
+    fn a_resize_never_enlarges() {
+        let img = Some((800u32, 600u32));
+
+        let mut r = pct(50.0, 50.0, false);
+        r.apply_param(ModifierParam::ResizeWidth(400.0), img);
+        assert_eq!(r.width, 100.0, "percent width was allowed above 100");
+        r.apply_param(ModifierParam::ResizeHeight(250.0), img);
+        assert_eq!(r.height, 100.0, "percent height was allowed above 100");
+
+        let mut r = Resize {
+            mode: ResizeMode::Pixels,
+            width: 400.0,
+            height: 300.0,
+            filter: ResizeFilter::Lanczos,
+            lock_aspect: false,
+        };
+        r.apply_param(ModifierParam::ResizeWidth(4000.0), img);
+        assert_eq!(r.width, 800.0, "pixel width was allowed past the source");
+        r.apply_param(ModifierParam::ResizeHeight(4000.0), img);
+        assert_eq!(r.height, 600.0, "pixel height was allowed past the source");
+
+        assert!(
+            r.output_for(ImageSpec::new(800, 600)).w <= 800,
+            "the resolved output is larger than the source"
+        );
     }
 
     #[test]

@@ -4,6 +4,27 @@
 //! Preview quality is scaled down when the zoom level or the VRAM budget calls
 //! for it, so a complex stack on a large image stays interactive. VRAM size is
 //! not discoverable from wgpu, so the budget is policy rather than measurement.
+//!
+//! quality_scale_for derives that scale from physical_scale alone, rounded up
+//! to a power of two, which renders at least as many document pixels as the
+//! screen shows at any zoom and with or without a resize. It deliberately has
+//! no upscale special case: one was tried on the theory that a resized document
+//! was rendering below the source's resolution, but the arithmetic says
+//! otherwise and the floor only forced 4-8x the necessary work once zoomed out.
+//!
+//! The VRAM budget is measured in the space the chain actually allocates, not
+//! in the source's. A tile is 8192px of source, but a 1% resize means no stage
+//! is ever that large, so budgeting against the source shrank quality to
+//! protect memory that was never going to be used -- a 300px document rendered
+//! at 75px and magnified back up, which is what a blurry preview at an extreme
+//! downscale actually was. The tile is scaled by the *widest* stage rather than
+//! the final output, so an upscale is still budgeted against the biggest
+//! allocation it makes.
+//!
+//! doc_size is the document the last prepare produced. It lets display
+//! transforms move quads without the modifier list, and tells the caller
+//! whether deferring is safe: quads can be moved for a document of that size,
+//! but not for one that changed underneath them.
 
 use iced::wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindingResource, BlendState,
@@ -38,6 +59,8 @@ mod geom;
 mod goldens;
 #[cfg(test)]
 mod gpu_bench;
+#[cfg(test)]
+mod parity;
 
 use geom::*;
 
@@ -109,6 +132,7 @@ struct TileOutput {
     height: u32,
     proc_px: Option<[f32; 4]>,
     quality_scale: f32,
+    doc: (u32, u32),
 }
 
 struct ScratchTarget {
@@ -181,10 +205,6 @@ fn quality_scale_for(physical_scale: f32) -> f32 {
     }
 }
 
-fn is_resize(kind: &ModifierKind) -> bool {
-    matches!(kind, ModifierKind::Resize(_))
-}
-
 const ROI_MARGIN_PX: f32 = 256.0;
 
 const PROCESS_VRAM_BUDGET_MIN: u64 = 512 * 1024 * 1024;
@@ -196,6 +216,13 @@ const BLUR_MAX_BAND_H: u32 = 1024;
 const MAX_BLUR_FRAMES: u32 = 4;
 
 use crate::modifiers::gpu::UvRect;
+
+#[derive(Clone, Copy)]
+pub(super) struct DocScale {
+    pub src: (u32, u32),
+    pub out: (u32, u32),
+    pub roi_active: bool,
+}
 
 pub(super) struct ProcRect {
     px: [f32; 4],
@@ -233,10 +260,13 @@ pub struct ModifierPipeline {
     pixel_sort: PixelSortCompute,
     text: TextPass,
     drawing: DrawingPass,
+    resample: crate::wgpu::passes::resample::ResamplePass,
+    resample_uniforms: Vec<iced::wgpu::Buffer>,
     display_bgl: BindGroupLayout,
     trilinear_sampler: Sampler,
     linear_sampler: Sampler,
     nearest_sampler: Sampler,
+    doc_size: (u32, u32),
     exec_band_cursor: u32,
     exec_sig: u64,
     exec_slab_pool: Vec<Option<ScratchTarget>>,
@@ -308,10 +338,13 @@ impl ModifierPipeline {
             pixel_sort: PixelSortCompute::new(device),
             text: TextPass::new(device, format),
             drawing: DrawingPass::new(device, format),
+            resample: crate::wgpu::passes::resample::ResamplePass::new(device, format),
+            resample_uniforms: Vec::new(),
             display_bgl,
             trilinear_sampler,
             linear_sampler,
             nearest_sampler,
+            doc_size: (width, height),
             exec_band_cursor: 0,
             exec_sig: 0,
             exec_slab_pool: Vec::new(),
@@ -323,6 +356,10 @@ impl ModifierPipeline {
 
     pub fn reprocess_pending(&self) -> bool {
         self.reprocess_pending
+    }
+
+    pub fn doc_size(&self) -> (u32, u32) {
+        self.doc_size
     }
 
     pub fn tile_display_bg(&self, i: usize, nearest: bool) -> Option<&BindGroup> {
@@ -465,9 +502,7 @@ impl ModifierPipeline {
             }
         }
 
-        let mut plan_vec = plan_modifiers(modifiers);
-
-        plan_vec.retain(|item| !matches!(item, PlanItem::Step(_, m) if is_resize(&m.kind)));
+        let plan_vec = plan_modifiers(modifiers);
 
         if plan_vec.is_empty() {
             for o in self.tile_outputs.iter_mut() {
@@ -482,15 +517,6 @@ impl ModifierPipeline {
             return;
         }
 
-        let source_spec = ImageSpec::new(source.full_width, source.full_height);
-        debug_assert!(
-            infer_specs(source_spec, &plan_vec)
-                .iter()
-                .all(|s| s.is_passthrough()),
-            "a modifier changes dimensions, but the GPU executor still sizes \
-             every stage from the source"
-        );
-
         let mut n_proc = 0u64;
         let (mut tw, mut th) = (1u32, 1u32);
         for t in &source.tiles {
@@ -499,6 +525,18 @@ impl ModifierPipeline {
                 tw = tw.max(t.width);
                 th = th.max(t.height);
             }
+        }
+        let src_spec = ImageSpec::new(source.full_width, source.full_height);
+        let stage_specs = infer_specs(src_spec, &plan_vec);
+        let widest = stage_specs
+            .iter()
+            .flat_map(|s| [s.input, s.output])
+            .fold(src_spec, |acc, s| {
+                ImageSpec::new(acc.w.max(s.w), acc.h.max(s.h))
+            });
+        if widest != src_spec {
+            tw = ((tw as u64 * widest.w as u64) / src_spec.w.max(1) as u64).max(1) as u32;
+            th = ((th as u64 * widest.h as u64) / src_spec.h.max(1) as u64).max(1) as u32;
         }
         let fit = fit_process_scale(
             tw,
@@ -543,7 +581,18 @@ impl ModifierPipeline {
             let (proc_px, w, h) = (o.proc_px, o.width, o.height);
             let pr = proc_rect_from_px(proc_px, tile, full_w, full_h, w, h);
             let roi_active = proc_px.is_some() && tile.isec_px.is_some();
-            self.build_roi_display_bgs(device, queue, ti, tile, &pr, roi_active);
+            self.build_roi_display_bgs(
+                device,
+                queue,
+                ti,
+                tile,
+                &pr,
+                DocScale {
+                    src: (source.full_width, source.full_height),
+                    out: self.doc_size,
+                    roi_active,
+                },
+            );
         }
     }
 
@@ -554,11 +603,12 @@ impl ModifierPipeline {
         ti: usize,
         tile: &crate::wgpu::tiled_source::Tile,
         pr: &ProcRect,
-        roi_active: bool,
+        doc: DocScale,
     ) {
-        let display_uniform: &iced::wgpu::Buffer = if roi_active
+        let display_uniform: &iced::wgpu::Buffer = if doc.roi_active
             && let (Some(isec), Some(base)) = (tile.isec_px, tile.last_transform)
         {
+            let isec = tile_out_rect(isec, doc.src.0, doc.src.1, doc.out.0, doc.out.1);
             let t = inscribe_transform(base, isec, pr.px);
             if self.roi_display_uniforms[ti].is_none() {
                 self.roi_display_uniforms[ti] =
@@ -609,5 +659,111 @@ impl ModifierPipeline {
             &self.nearest_sampler,
             &format!("modifier-tile{ti}-display-nearest"),
         ));
+    }
+}
+
+#[cfg(test)]
+mod quality_scale_tests {
+    use super::quality_scale_for;
+
+    #[test]
+    fn zoom_rounds_up_to_a_power_of_two() {
+        assert_eq!(quality_scale_for(0.42), 0.5);
+        assert_eq!(quality_scale_for(0.3), 0.5);
+        assert_eq!(quality_scale_for(0.25), 0.25);
+        assert_eq!(quality_scale_for(1.0), 1.0);
+        assert_eq!(quality_scale_for(4.0), 1.0, "never renders above 1:1");
+    }
+
+    #[test]
+    fn the_render_always_covers_the_screen() {
+        let doc_px = 2358.0_f32;
+        for &phys in &[1.0, 0.5, 0.42, 0.25, 0.2, 0.1, 0.05, 0.01] {
+            let rendered = doc_px * quality_scale_for(phys);
+            let on_screen = doc_px * phys;
+            assert!(
+                rendered >= on_screen,
+                "at zoom {phys} the document rendered {rendered:.0}px for                  {on_screen:.0}px of screen; the display would be magnifying a proxy"
+            );
+        }
+    }
+
+    #[test]
+    fn the_vram_budget_measures_what_the_chain_allocates() {
+        use super::{PROCESS_VRAM_BUDGET_MIN, fit_process_scale};
+        use crate::modifiers::plan::ImageSpec;
+
+        let src = ImageSpec::new(30000, 30000);
+        let (tile_w, tile_h) = (8192u32, 8192u32);
+        let n_tiles = 16u64;
+
+        let budget_for = |widest: ImageSpec| -> f32 {
+            let tw = ((tile_w as u64 * widest.w as u64) / src.w as u64).max(1) as u32;
+            let th = ((tile_h as u64 * widest.h as u64) / src.h as u64).max(1) as u32;
+            fit_process_scale(tw, th, n_tiles, 1, PROCESS_VRAM_BUDGET_MIN, 1.0)
+        };
+
+        assert_eq!(
+            budget_for(src),
+            0.25,
+            "sanity: with no resize the source tiles really do exceed the budget"
+        );
+
+        assert_eq!(
+            budget_for(ImageSpec::new(300, 300)),
+            1.0,
+            "a 1% resize gives a 300px document, so the chain's stages are tiny \
+             and fit the budget many times over. Budgeting against the 8192px \
+             *source* tile shrinks quality to protect memory the chain never \
+             allocates, and the preview then renders a proxy far below what is \
+             displayed."
+        );
+
+        assert!(
+            budget_for(ImageSpec::new(60000, 60000)) <= 0.25,
+            "an upscale must still be budgeted against the larger space it \
+             actually allocates, not relaxed along with the downscale case"
+        );
+    }
+
+    #[test]
+    fn a_resized_document_is_never_rendered_below_the_screen() {
+        let src_px = 30000.0_f32;
+
+        for &pct in &[0.01_f32, 0.05, 0.5] {
+            let doc_px = src_px * pct;
+            for &phys in &[4.0_f32, 2.0, 1.0, 0.5, 0.25] {
+                let qs = quality_scale_for(phys);
+                let rendered = doc_px * qs;
+                let on_screen = doc_px * phys;
+
+                assert!(
+                    rendered >= on_screen.min(doc_px) - 0.5,
+                    "a {}% resize of {src_px:.0}px gives a {doc_px:.0}px document; \
+                     at zoom {phys} it renders {rendered:.1}px for {on_screen:.1}px \
+                     of screen. The resize already shrank the document, so scaling \
+                     it again renders a proxy far below what is displayed, which \
+                     reads as a blurry mess.",
+                    pct * 100.0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn zooming_out_keeps_reducing_the_work() {
+        assert_eq!(quality_scale_for(0.2), 0.25);
+        assert_eq!(quality_scale_for(0.1), 0.125);
+        assert_eq!(quality_scale_for(0.05), 0.0625);
+        assert!(
+            quality_scale_for(0.05) < quality_scale_for(0.2),
+            "further out must not cost more"
+        );
+    }
+
+    #[test]
+    fn a_nonpositive_scale_falls_back_to_full() {
+        assert_eq!(quality_scale_for(0.0), 1.0);
+        assert_eq!(quality_scale_for(-1.0), 1.0);
     }
 }

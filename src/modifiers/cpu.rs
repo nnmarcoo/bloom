@@ -15,13 +15,33 @@
 //!
 //! MAX_DIRECT_RADIUS is the single definition of that cap; the GPU executor
 //! aliases it so preview and export cannot pick different scales.
+//!
+//! A banded resize goes through resample_band, not resample. A pass that takes
+//! only lengths cannot be banded: resampling a band as though it were a
+//! standalone image clamps taps at the band's edges instead of the document's,
+//! and shifts the sample phase whenever the band's origin is not aligned to the
+//! resize ratio. VBand carries the band's out_base and src_base plus the
+//! whole-image lengths, so the ratio and the tap positions stay properties of
+//! the document. This mirrors the GPU's ResampleRegion, and the two must keep
+//! agreeing or preview and export diverge.
+//!
+//! Text and drawing rasters are built once, at the source's dimensions, and
+//! their sample() maps document coordinates into the raster's own grid. A stage
+//! running at a different size must therefore map its buffer coordinates back
+//! to the source before sampling, which is what raster_to_doc gives it. Passing
+//! post-resize coordinates straight through sampled only the top-left corner of
+//! the raster, so a drawing under a resize was missing from the export.
+//!
+//! Resize alone happened to work under the old code, because its band origin is
+//! always aligned and its apron is its whole reach -- which is why the bug
+//! survived until a chain put a blur next to a resize.
 
 use rayon::prelude::*;
 
 use crate::modifiers::drawing_raster::LayerView;
 use crate::modifiers::kinds::ResizeFilter;
 use crate::modifiers::plan::{ImageSpec, PlanItem, infer_specs, plan_modifiers};
-use crate::modifiers::roi::{StepClass, step_class};
+use crate::modifiers::roi::{StepClass, step_class_for};
 use crate::modifiers::text_raster::TextRaster;
 use crate::modifiers::{Modifier, ModifierKind, motion_blur_samples};
 
@@ -60,11 +80,11 @@ pub(crate) fn source_rows_for_band(
 ) -> Option<(u32, u32)> {
     let (mut lo, mut hi) = (y0, y1);
     for (item, spec) in plan.iter().zip(specs).rev() {
+        let (in_h, out_h) = (spec.input.h, spec.output.h);
         let class = match item {
             PlanItem::Fused(_) => StepClass::Pointwise,
-            PlanItem::Step(_, m) => step_class(&m.kind),
+            PlanItem::Step(_, m) => step_class_for(&m.kind, in_h, out_h),
         };
-        let (in_h, out_h) = (spec.input.h, spec.output.h);
         let (n_lo, n_hi) = rows_needed(class, lo, hi, in_h, in_h, out_h)?;
         lo = n_lo;
         hi = n_hi.max(n_lo);
@@ -72,11 +92,13 @@ pub(crate) fn source_rows_for_band(
     Some((lo, hi))
 }
 
-pub(crate) fn chain_apron_rows(plan: &[PlanItem]) -> u32 {
+pub(crate) fn chain_apron_rows(source: ImageSpec, plan: &[PlanItem]) -> u32 {
+    let specs = infer_specs(source, plan);
     plan.iter()
-        .map(|item| match item {
+        .zip(&specs)
+        .map(|(item, spec)| match item {
             PlanItem::Fused(_) => 0,
-            PlanItem::Step(_, m) => match step_class(&m.kind) {
+            PlanItem::Step(_, m) => match step_class_for(&m.kind, spec.input.h, spec.output.h) {
                 StepClass::Kernel { apron_px, .. } => apron_px.ceil().max(0.0) as u32,
                 _ => 0,
             },
@@ -84,11 +106,12 @@ pub(crate) fn chain_apron_rows(plan: &[PlanItem]) -> u32 {
         .sum()
 }
 
-pub(crate) fn plan_is_bandable(plan: &[PlanItem]) -> bool {
-    plan.iter().all(|item| match item {
+pub(crate) fn plan_is_bandable(source: ImageSpec, plan: &[PlanItem]) -> bool {
+    let specs = infer_specs(source, plan);
+    plan.iter().zip(&specs).all(|(item, spec)| match item {
         PlanItem::Fused(_) => true,
         PlanItem::Step(_, m) => !matches!(
-            step_class(&m.kind),
+            step_class_for(&m.kind, spec.input.h, spec.output.h),
             StepClass::WholeFrame
                 | StepClass::Scanline { dir: (_, 1..) }
                 | StepClass::Scanline {
@@ -140,7 +163,7 @@ pub(crate) fn render_band(
     for (item, spec) in plan.iter().zip(&specs) {
         let class = match item {
             PlanItem::Fused(_) => StepClass::Pointwise,
-            PlanItem::Step(_, m) => step_class(&m.kind),
+            PlanItem::Step(_, m) => step_class_for(&m.kind, spec.input.h, spec.output.h),
         };
         cur = apply_stage_banded(
             item,
@@ -153,6 +176,7 @@ pub(crate) fn render_band(
             spec.input.h,
             text_layers,
             drawing_layers,
+            raster_to_doc(ImageSpec::new(img_w, img_h), spec.input),
         );
         if spec.input != spec.output {
             let num = spec.output.h as u64;
@@ -178,6 +202,16 @@ pub(crate) fn render_band(
     out
 }
 
+fn raster_to_doc(src: ImageSpec, stage_in: ImageSpec) -> (f32, f32) {
+    if stage_in.w == src.w && stage_in.h == src.h {
+        return (1.0, 1.0);
+    }
+    (
+        src.w as f32 / stage_in.w.max(1) as f32,
+        src.h as f32 / stage_in.h.max(1) as f32,
+    )
+}
+
 pub(crate) fn render_full(
     modifiers: &[Modifier],
     text_layers: &[Option<TextRaster>],
@@ -192,9 +226,11 @@ pub(crate) fn render_full(
     cur[..copy].copy_from_slice(&pixels[..copy]);
 
     let plan = plan_modifiers(modifiers);
-    let specs = infer_specs(ImageSpec::new(img_w, img_h), &plan);
+    let src_spec = ImageSpec::new(img_w, img_h);
+    let specs = infer_specs(src_spec, &plan);
 
     for (item, spec) in plan.iter().zip(&specs) {
+        let to_doc = raster_to_doc(src_spec, spec.input);
         let ImageSpec { w: img_w, h: img_h } = spec.input;
         let w = img_w as usize;
         let h = img_h as usize;
@@ -218,12 +254,12 @@ pub(crate) fn render_full(
                 }
                 ModifierKind::Text(_) => {
                     if let Some(Some(raster)) = text_layers.get(*i) {
-                        text_full(&mut cur, img_w, img_h, raster);
+                        text_full(&mut cur, img_w, img_h, raster, to_doc);
                     }
                 }
                 ModifierKind::Drawing(_) => {
                     if let Some(Some(raster)) = drawing_layers.get(*i) {
-                        drawing_full(&mut cur, img_w, raster);
+                        drawing_full(&mut cur, img_w, raster, to_doc);
                     }
                 }
                 ModifierKind::PixelSort(ps) => {
@@ -268,6 +304,7 @@ fn apply_stage_banded(
     full_h: u32,
     text_layers: &[Option<TextRaster>],
     drawing_layers: &[Option<LayerView<'_>>],
+    to_doc: (f32, f32),
 ) -> Vec<u8> {
     let _ = class;
     let (wu, hu) = (w as usize, h as usize);
@@ -285,12 +322,12 @@ fn apply_stage_banded(
             }
             ModifierKind::Text(_) => {
                 if let Some(Some(raster)) = text_layers.get(*i) {
-                    text_band(&mut cur, w, h, y_off, raster);
+                    text_band(&mut cur, w, h, y_off, raster, to_doc);
                 }
             }
             ModifierKind::Drawing(_) => {
                 if let Some(Some(raster)) = drawing_layers.get(*i) {
-                    drawing_band(&mut cur, w, h, y_off, raster);
+                    drawing_band(&mut cur, w, h, y_off, raster, to_doc);
                 }
             }
             ModifierKind::PixelSort(ps) => {
@@ -305,8 +342,16 @@ fn apply_stage_banded(
             ModifierKind::Resize(r) => {
                 let num = spec.output.h as u64;
                 let den = spec.input.h.max(1) as u64;
-                let band_out_h = (((h as u64 * num) / den) as u32).max(1);
-                cur = resample(&cur, w, h, spec.output.w, band_out_h, r.filter);
+                let out_base = ((y_off as u64 * num) / den) as u32;
+                let out_end = (((y_off as u64 + h as u64) * num) / den) as u32;
+                let band = VBand {
+                    out_base,
+                    out_len: out_end.saturating_sub(out_base).max(1),
+                    src_base: y_off,
+                    full_src_h: spec.input.h,
+                    full_out_h: spec.output.h,
+                };
+                cur = resample_band(&cur, w, h, spec.output.w, &band, r.filter);
             }
             other => debug_assert!(
                 false,
@@ -570,12 +615,12 @@ fn sample_bilinear(pixels: &[u8], w: u32, h: u32, fx: f32, fy: f32) -> [f32; 4] 
     o
 }
 
-fn drawing_full(buf: &mut [u8], img_w: u32, raster: &LayerView<'_>) {
+fn drawing_full(buf: &mut [u8], img_w: u32, raster: &LayerView<'_>, to_doc: (f32, f32)) {
     let w = img_w as usize;
     buf.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
-        let fy = y as f32 + 0.5;
+        let fy = (y as f32 + 0.5) * to_doc.1;
         for x in 0..w {
-            if let Some(src) = raster.sample(x as f32 + 0.5, fy) {
+            if let Some(src) = raster.sample((x as f32 + 0.5) * to_doc.0, fy) {
                 let o = x * 4;
                 let dst = pixel_to_f32(&row[o..o + 4]);
                 row[o..o + 4].copy_from_slice(&f32_to_pixel(blend_over(dst, src)));
@@ -584,12 +629,19 @@ fn drawing_full(buf: &mut [u8], img_w: u32, raster: &LayerView<'_>) {
     });
 }
 
-fn drawing_band(buf: &mut [u8], img_w: u32, _h: u32, y_off: u32, raster: &LayerView<'_>) {
+fn drawing_band(
+    buf: &mut [u8],
+    img_w: u32,
+    _h: u32,
+    y_off: u32,
+    raster: &LayerView<'_>,
+    to_doc: (f32, f32),
+) {
     let w = img_w as usize;
     buf.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
-        let fy = (y_off + y as u32) as f32 + 0.5;
+        let fy = ((y_off + y as u32) as f32 + 0.5) * to_doc.1;
         for x in 0..w {
-            if let Some(src) = raster.sample(x as f32 + 0.5, fy) {
+            if let Some(src) = raster.sample((x as f32 + 0.5) * to_doc.0, fy) {
                 let o = x * 4;
                 let dst = pixel_to_f32(&row[o..o + 4]);
                 row[o..o + 4].copy_from_slice(&f32_to_pixel(blend_over(dst, src)));
@@ -598,12 +650,19 @@ fn drawing_band(buf: &mut [u8], img_w: u32, _h: u32, y_off: u32, raster: &LayerV
     });
 }
 
-fn text_band(buf: &mut [u8], img_w: u32, _h: u32, y_off: u32, raster: &TextRaster) {
+fn text_band(
+    buf: &mut [u8],
+    img_w: u32,
+    _h: u32,
+    y_off: u32,
+    raster: &TextRaster,
+    to_doc: (f32, f32),
+) {
     let w = img_w as usize;
     buf.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
-        let fy = (y_off + y as u32) as f32 + 0.5;
+        let fy = ((y_off + y as u32) as f32 + 0.5) * to_doc.1;
         for x in 0..w {
-            if let Some(src) = raster.sample(x as f32 + 0.5, fy) {
+            if let Some(src) = raster.sample((x as f32 + 0.5) * to_doc.0, fy) {
                 let o = x * 4;
                 let dst = pixel_to_f32(&row[o..o + 4]);
                 row[o..o + 4].copy_from_slice(&f32_to_pixel(blend_over(dst, src)));
@@ -612,13 +671,13 @@ fn text_band(buf: &mut [u8], img_w: u32, _h: u32, y_off: u32, raster: &TextRaste
     });
 }
 
-fn text_full(buf: &mut [u8], img_w: u32, img_h: u32, raster: &TextRaster) {
+fn text_full(buf: &mut [u8], img_w: u32, img_h: u32, raster: &TextRaster, to_doc: (f32, f32)) {
     let w = img_w as usize;
     let _ = img_h;
     buf.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
-        let fy = y as f32 + 0.5;
+        let fy = (y as f32 + 0.5) * to_doc.1;
         for x in 0..w {
-            if let Some(src) = raster.sample(x as f32 + 0.5, fy) {
+            if let Some(src) = raster.sample((x as f32 + 0.5) * to_doc.0, fy) {
                 let o = x * 4;
                 let dst = pixel_to_f32(&row[o..o + 4]);
                 row[o..o + 4].copy_from_slice(&f32_to_pixel(blend_over(dst, src)));
@@ -797,6 +856,85 @@ pub(crate) fn resample(
 
     let mid = one_axis(src, src_w, src_h, dst_w, true);
     one_axis(&mid, dst_w, src_h, dst_h, false)
+}
+
+pub(crate) struct VBand {
+    pub out_base: u32,
+    pub out_len: u32,
+    pub src_base: u32,
+    pub full_src_h: u32,
+    pub full_out_h: u32,
+}
+
+pub(crate) fn resample_band(
+    src: &[u8],
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    band: &VBand,
+    filter: ResizeFilter,
+) -> Vec<u8> {
+    let mid = if src_w == dst_w {
+        src.to_vec()
+    } else {
+        resample(src, src_w, src_h, dst_w, src_h, filter)
+    };
+
+    let scale = band.full_out_h as f32 / band.full_src_h.max(1) as f32;
+    let inv = if scale < 1.0 { 1.0 / scale } else { 1.0 };
+    let r = match filter {
+        ResizeFilter::Nearest => 0.0,
+        ResizeFilter::Bilinear => 1.0,
+        ResizeFilter::Lanczos => 3.0,
+    } * inv;
+
+    let row_bytes = dst_w as usize * 4;
+    let mut out = vec![0u8; row_bytes * band.out_len as usize];
+    let in_rows = src_h as usize;
+
+    out.par_chunks_mut(row_bytes)
+        .enumerate()
+        .for_each(|(i, out_row)| {
+            let o = band.out_base + i as u32;
+            let center = (o as f32 + 0.5) / scale;
+
+            if matches!(filter, ResizeFilter::Nearest) {
+                let s = (center.floor().max(0.0) as u32).min(band.full_src_h - 1);
+                let local = (s as i64 - band.src_base as i64).clamp(0, in_rows as i64 - 1) as usize;
+                let in_row = &mid[local * row_bytes..local * row_bytes + row_bytes];
+                out_row.copy_from_slice(in_row);
+                return;
+            }
+
+            let lo = (center - r).floor().max(0.0) as u32;
+            let hi = ((center + r).ceil() as u32)
+                .min(band.full_src_h)
+                .max(lo + 1);
+
+            let mut acc = vec![0.0f32; row_bytes];
+            let mut sum = 0.0f32;
+            for s in lo..hi {
+                let wt = match filter {
+                    ResizeFilter::Nearest => 1.0,
+                    ResizeFilter::Bilinear => {
+                        (1.0 - ((s as f32 + 0.5 - center) / inv).abs()).max(0.0)
+                    }
+                    ResizeFilter::Lanczos => lanczos3((s as f32 + 0.5 - center) / inv),
+                };
+                let local = (s as i64 - band.src_base as i64).clamp(0, in_rows as i64 - 1) as usize;
+                let in_row = &mid[local * row_bytes..local * row_bytes + row_bytes];
+                for (a, &p) in acc.iter_mut().zip(in_row.iter()) {
+                    *a += p as f32 * wt;
+                }
+                sum += wt;
+            }
+            let norm = if sum.abs() < 1e-6 { 1.0 } else { sum };
+            for (o, &a) in out_row.iter_mut().zip(acc.iter()) {
+                *o = (a / norm).round().clamp(0.0, 255.0) as u8;
+            }
+        });
+
+    out
 }
 
 pub(crate) fn f32_to_pixel(c: [f32; 4]) -> [u8; 4] {
@@ -1167,7 +1305,7 @@ mod band_tests {
 
         let plan = plan_modifiers(chain);
         assert!(
-            plan_is_bandable(&plan),
+            plan_is_bandable(ImageSpec::new(w, h), &plan),
             "{label}: chain is not bandable, test would prove nothing"
         );
         let specs = infer_specs(ImageSpec::new(w, h), &plan);
@@ -1258,6 +1396,49 @@ mod band_tests {
     }
 
     #[test]
+    fn bands_match_full_resize_alone() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+        for filter in [ResizeFilter::Nearest, ResizeFilter::Bilinear] {
+            for pct in [50.0f32, 200.0] {
+                let chain = vec![m(ModifierKind::Resize(Resize {
+                    mode: ResizeMode::Percent,
+                    width: pct,
+                    height: pct,
+                    filter,
+                    lock_aspect: true,
+                }))];
+                assert_bands_match_full(&format!("resize-{pct}-{filter:?}"), &chain, 40, 64, 8);
+            }
+        }
+    }
+
+    #[test]
+    fn bands_match_full_blur_then_resize() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+        let resize = |pct: f32| {
+            m(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: pct,
+                height: pct,
+                filter: ResizeFilter::Bilinear,
+                lock_aspect: true,
+            }))
+        };
+        for pct in [50.0f32, 200.0] {
+            let chain = vec![
+                m(ModifierKind::GaussianBlur(GaussianBlur { radius: 5.0 })),
+                resize(pct),
+            ];
+            assert_bands_match_full(&format!("blur-then-resize-{pct}"), &chain, 40, 64, 8);
+            let chain = vec![
+                resize(pct),
+                m(ModifierKind::GaussianBlur(GaussianBlur { radius: 5.0 })),
+            ];
+            assert_bands_match_full(&format!("resize-then-blur-{pct}"), &chain, 40, 64, 8);
+        }
+    }
+
+    #[test]
     fn bands_match_full_with_ragged_final_band() {
         let chain = vec![m(ModifierKind::GaussianBlur(GaussianBlur { radius: 3.0 }))];
         assert_bands_match_full("ragged", &chain, 32, 53, 10);
@@ -1281,7 +1462,7 @@ mod band_tests {
             }))];
             let plan = plan_modifiers(&chain);
             assert!(
-                !plan_is_bandable(&plan),
+                !plan_is_bandable(ImageSpec::new(64, 64), &plan),
                 "pixel sort at {angle} deg must be rejected for banding"
             );
         }
@@ -1294,7 +1475,7 @@ mod band_tests {
         }))];
         let plan = plan_modifiers(&chain);
         assert!(
-            !plan_is_bandable(&plan),
+            !plan_is_bandable(ImageSpec::new(64, 64), &plan),
             "CA reads across the whole frame and must not be banded"
         );
     }
@@ -1617,5 +1798,206 @@ mod blur_edge_tests {
                  clamped reference (max {max})"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod resize_apron_tests {
+    use super::*;
+    use crate::modifiers::kinds::{GaussianBlur, Resize, ResizeFilter, ResizeMode};
+
+    fn resize(pct: f32, filter: ResizeFilter) -> Modifier {
+        Modifier::new(ModifierKind::Resize(Resize {
+            mode: ResizeMode::Percent,
+            width: pct,
+            height: pct,
+            filter,
+            lock_aspect: true,
+        }))
+    }
+
+    #[test]
+    fn a_drawing_covers_the_document_after_a_resize() {
+        use crate::modifiers::drawing_raster;
+        use crate::modifiers::kinds::{Drawing, Stroke};
+
+        const W: u32 = 400;
+        const H: u32 = 400;
+
+        let drawing = || {
+            Modifier::new(ModifierKind::Drawing(Drawing {
+                strokes: vec![Stroke {
+                    points: (0..=20).map(|i| [i as f32 / 20.0, 0.5]).collect(),
+                    size: 40.0,
+                    hardness: 1.0,
+                    opacity: 1.0,
+                    color: [1.0, 0.0, 0.0],
+                }],
+                ..Default::default()
+            }))
+        };
+
+        let render = |chain: &[Modifier], ow: usize, oh: usize| -> Vec<u8> {
+            let src = vec![0u8; (W * H * 4) as usize];
+            let rasters = drawing_raster::build_layers(chain, W, H);
+            let views: Vec<Option<LayerView<'_>>> = rasters
+                .iter()
+                .map(|l| l.as_ref().map(|r| r.view()))
+                .collect();
+            let out = render_full(chain, &[], &views, &src, W, H);
+            assert_eq!(out.len(), ow * oh * 4, "output is not the resized document");
+            out
+        };
+
+        let painted = |out: &[u8], ow: usize, row: usize, x: usize| -> bool {
+            let o = (row * ow + x) * 4;
+            out[o] > 40
+        };
+
+        let plain = render(&[drawing()], W as usize, H as usize);
+        assert!(
+            painted(&plain, W as usize, H as usize / 2, W as usize / 2)
+                && painted(&plain, W as usize, H as usize / 2, W as usize - 4),
+            "premise: without a resize the stroke spans the document"
+        );
+
+        let (ow, oh) = ((W / 2) as usize, (H / 2) as usize);
+        let resized = render(&[resize(50.0, ResizeFilter::Bilinear), drawing()], ow, oh);
+        assert!(
+            painted(&resized, ow, oh / 2, ow / 2),
+            "the stroke is missing from the middle of the resized document"
+        );
+        assert!(
+            painted(&resized, ow, oh / 2, ow - 4),
+            "the stroke stops short of the right edge after a resize. The raster \
+             is built in source space, so a stage running at a different size \
+             must map its coordinates back before sampling."
+        );
+    }
+
+    #[test]
+    fn a_banded_drawing_matches_the_full_render_after_a_resize() {
+        use crate::modifiers::drawing_raster;
+        use crate::modifiers::kinds::{Drawing, Stroke};
+
+        const W: u32 = 400;
+        const H: u32 = 400;
+
+        let chain = vec![
+            resize(50.0, ResizeFilter::Bilinear),
+            Modifier::new(ModifierKind::Drawing(Drawing {
+                strokes: vec![Stroke {
+                    points: (0..=20).map(|i| [i as f32 / 20.0, 0.5]).collect(),
+                    size: 40.0,
+                    hardness: 1.0,
+                    opacity: 1.0,
+                    color: [1.0, 0.0, 0.0],
+                }],
+                ..Default::default()
+            })),
+        ];
+
+        let src = vec![0u8; (W * H * 4) as usize];
+        let rasters = drawing_raster::build_layers(&chain, W, H);
+        let views: Vec<Option<LayerView<'_>>> = rasters
+            .iter()
+            .map(|l| l.as_ref().map(|r| r.view()))
+            .collect();
+
+        let plan = plan_modifiers(&chain);
+        assert!(
+            plan_is_bandable(ImageSpec::new(W, H), &plan),
+            "premise: this chain streams, so export takes the banded path"
+        );
+
+        let full = render_full(&chain, &[], &views, &src, W, H);
+        let (ow, oh) = (W / 2, H / 2);
+        let row_bytes = ow as usize * 4;
+
+        let mut y = 0;
+        while y < oh {
+            let y1 = (y + 8).min(oh);
+            let band = render_band(&chain, &[], &views, &src, W, H, y, y1);
+            let want = &full[y as usize * row_bytes..y1 as usize * row_bytes];
+            assert_eq!(
+                band, want,
+                "banded drawing differs from the full render at rows {y}..{y1}, \
+                 so a streamed export paints the drawing somewhere else"
+            );
+            y = y1;
+        }
+    }
+
+    #[test]
+    fn a_resize_chain_can_be_banded() {
+        let chain = vec![resize(50.0, ResizeFilter::Lanczos)];
+        let plan = plan_modifiers(&chain);
+        assert!(
+            plan_is_bandable(ImageSpec::new(1179, 1159), &plan),
+            "a resize was treated as whole-frame, so it cannot stream and the \
+             preview cannot band it"
+        );
+    }
+
+    #[test]
+    fn a_resize_beside_a_blur_can_still_be_banded() {
+        let chain = vec![
+            Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 20.0 })),
+            resize(50.0, ResizeFilter::Lanczos),
+        ];
+        let plan = plan_modifiers(&chain);
+        assert!(plan_is_bandable(ImageSpec::new(1179, 1159), &plan));
+    }
+
+    #[test]
+    fn the_apron_widens_as_the_reduction_grows() {
+        let src = ImageSpec::new(1000, 1000);
+        let half = chain_apron_rows(src, &plan_modifiers(&[resize(50.0, ResizeFilter::Lanczos)]));
+        let quarter =
+            chain_apron_rows(src, &plan_modifiers(&[resize(25.0, ResizeFilter::Lanczos)]));
+        assert!(
+            quarter > half,
+            "a 4x reduction needs a wider apron than a 2x one, got {quarter} \
+             and {half}"
+        );
+        assert_eq!(half, 6, "a 50% Lanczos resize should reach 3 / 0.5 rows");
+        assert_eq!(quarter, 12, "a 25% Lanczos resize should reach 3 / 0.25");
+    }
+
+    #[test]
+    fn the_apron_follows_the_chosen_filter() {
+        let src = ImageSpec::new(1000, 1000);
+        let near = chain_apron_rows(src, &plan_modifiers(&[resize(50.0, ResizeFilter::Nearest)]));
+        let bilin = chain_apron_rows(
+            src,
+            &plan_modifiers(&[resize(50.0, ResizeFilter::Bilinear)]),
+        );
+        let lanc = chain_apron_rows(src, &plan_modifiers(&[resize(50.0, ResizeFilter::Lanczos)]));
+        assert_eq!(near, 0);
+        assert_eq!(bilin, 2);
+        assert_eq!(lanc, 6);
+    }
+
+    #[test]
+    fn an_upscale_does_not_widen_the_apron() {
+        let src = ImageSpec::new(1000, 1000);
+        let up = chain_apron_rows(
+            src,
+            &plan_modifiers(&[resize(200.0, ResizeFilter::Lanczos)]),
+        );
+        assert_eq!(up, 3, "an upscale should reach exactly the filter radius");
+    }
+
+    #[test]
+    fn a_band_reaches_past_its_own_rows_under_a_resize() {
+        let chain = vec![resize(50.0, ResizeFilter::Lanczos)];
+        let plan = plan_modifiers(&chain);
+        let specs = infer_specs(ImageSpec::new(1000, 1000), &plan);
+        let (lo, hi) = source_rows_for_band(&plan, &specs, 100, 200).expect("bandable");
+        assert!(
+            lo < 200 && hi > 400,
+            "band for output rows 100..200 fetched source {lo}..{hi}, which \
+             does not cover 200..400 plus the filter's reach"
+        );
     }
 }

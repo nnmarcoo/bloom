@@ -47,6 +47,7 @@ pub struct StageSpec {
 }
 
 impl StageSpec {
+    #[allow(dead_code, reason = "used by the plan tests")]
     pub fn is_passthrough(&self) -> bool {
         self.input == self.output
     }

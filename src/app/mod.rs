@@ -41,7 +41,7 @@ use crate::{
     wgpu::{
         media::image_data::{ImageId, MediaData},
         passes::checkerboard::CheckerboardUniforms,
-        view_program::{Histogram, ViewProgram, hash_modifiers},
+        view_program::{Histogram, ViewProgram, hash_modifiers_for_histogram},
     },
 };
 
@@ -543,7 +543,10 @@ impl App {
         if self.histogram_inflight.is_some() {
             return Task::none();
         }
-        let key = (image.id, hash_modifiers(&self.program.modifiers));
+        let key = (
+            image.id,
+            hash_modifiers_for_histogram(&self.program.modifiers, image.width, image.height),
+        );
         if self
             .histogram
             .as_ref()

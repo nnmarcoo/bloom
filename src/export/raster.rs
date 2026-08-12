@@ -73,9 +73,10 @@ pub(super) fn stream_bands(
 ) -> Result<(), String> {
     let row_bytes = geom.out_w as usize * 4;
 
-    let apron = crate::modifiers::cpu::chain_apron_rows(&crate::modifiers::plan::plan_modifiers(
-        &data.modifiers,
-    ));
+    let apron = crate::modifiers::cpu::chain_apron_rows(
+        crate::modifiers::plan::ImageSpec::new(data.width, data.height),
+        &crate::modifiers::plan::plan_modifiers(&data.modifiers),
+    );
     let strip_rows = band_height(apron, geom.out_h);
     let mut strip = vec![0u8; row_bytes * strip_rows as usize];
 
