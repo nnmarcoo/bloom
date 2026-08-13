@@ -5,6 +5,14 @@
 //! output_for resolves it at plan time against whatever the stage's actual
 //! input turns out to be.
 //!
+//! lock_aspect couples the two numbers when the user edits one, and that is the
+//! only place it acts. output_for reads width and height as stored and never
+//! rederives one from the input's ratio: apply_param is given the source size
+//! while output_for is given this stage's input, and those differ the moment
+//! another resize sits upstream, so rederiving made the panel and the canvas
+//! disagree. Keeping the coupling in the edit means the stored pair is always
+//! what renders.
+//!
 //! The filter is chosen per instance rather than inferred from the scale
 //! direction: a lo-fi upscale wants Nearest precisely because it is blocky,
 //! and that intent cannot be recovered from the numbers.
@@ -94,14 +102,7 @@ impl Resize {
                 input.h as f32 * self.height / 100.0,
             ),
         };
-        let w = w.round().max(1.0) as u32;
-        let h = if self.lock_aspect {
-            let ratio = input.h as f32 / input.w.max(1) as f32;
-            (w as f32 * ratio).round().max(1.0) as u32
-        } else {
-            h.round().max(1.0) as u32
-        };
-        ImageSpec::new(w, h)
+        ImageSpec::new(w.round().max(1.0) as u32, h.round().max(1.0) as u32)
     }
 
     pub fn max_width(&self, img_size: Option<(u32, u32)>) -> f32 {
@@ -307,11 +308,15 @@ mod tests {
     }
 
     #[test]
-    fn locked_aspect_derives_height_from_width() {
-        let r = pct(50.0, 999.0, true);
+    fn a_locked_edit_leaves_a_pair_that_renders_as_shown() {
+        let mut r = pct(100.0, 100.0, true);
+        r.apply_param(ModifierParam::ResizeWidth(50.0), Some((800, 600)));
+        assert_eq!((r.width, r.height), (50.0, 50.0));
         assert_eq!(
             r.output_for(ImageSpec::new(800, 600)),
-            ImageSpec::new(400, 300)
+            ImageSpec::new(400, 300),
+            "lock_aspect couples the pair at edit time, so the stored numbers \
+             are already consistent and output_for can render them verbatim"
         );
     }
 
@@ -450,5 +455,42 @@ mod tests {
         let src = ImageSpec::new(640, 480);
         assert!(pct(100.0, 100.0, true).is_identity_for(src));
         assert!(!pct(50.0, 50.0, true).is_identity_for(src));
+    }
+
+    #[test]
+    fn a_locked_percent_resize_honors_its_own_height() {
+        let r = pct(50.0, 25.0, true);
+        assert_eq!(
+            r.output_for(ImageSpec::new(800, 800)),
+            ImageSpec::new(400, 200),
+            "output_for ignored the stored height and rederived it from the \
+             input's aspect ratio. With lock_aspect the two numbers are kept in \
+             step by apply_param, so output_for must read height rather than \
+             recompute it -- otherwise any state that set the pair directly \
+             (a preset, an undo, a chained resize) renders at a height the \
+             stack never asked for."
+        );
+    }
+
+    #[test]
+    fn a_locked_pixel_resize_uses_the_stage_input_not_the_source() {
+        let mut r = Resize {
+            mode: ResizeMode::Pixels,
+            width: 100.0,
+            height: 100.0,
+            filter: ResizeFilter::Lanczos,
+            lock_aspect: true,
+        };
+        r.apply_param(ModifierParam::ResizeWidth(50.0), Some((200, 100)));
+        assert_eq!(r.height, 25.0, "the UI resolved against the 2:1 source");
+
+        assert_eq!(
+            r.output_for(ImageSpec::new(100, 100)),
+            ImageSpec::new(50, 25),
+            "this resize sits after another that already made the image square, \
+             so its plan input is 100x100 while its UI was handed the 200x100 \
+             source. output_for rederives the ratio from the input and returns \
+             50x50, so the panel shows 50x25 and the canvas renders 50x50."
+        );
     }
 }
