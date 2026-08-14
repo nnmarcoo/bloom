@@ -6,8 +6,14 @@
 //!
 //! An edit is resolved against the size that modifier *receives*, via
 //! stage_input_size, not against the source. The two differ as soon as anything
-//! upstream resizes, and a parameter clamped against the wrong one produces a
-//! document the panel never showed.
+//! upstream resizes or crops, and a parameter clamped against the wrong one
+//! produces a document the panel never showed. A modifier about to be appended
+//! asks for index len(), which is the chain's current output.
+//!
+//! A stack may hold any number of crops. The old one-crop rule was not a
+//! product decision but a consequence of crop being a single display-time
+//! window; as a chain stage each crop reframes whatever the one before it
+//! produced, which is what makes crop, effect, crop possible.
 
 use iced::Task;
 
@@ -78,18 +84,32 @@ pub fn update(
             state.selected_tool = tool;
             program.crop_tool_active = is_crop;
             if is_crop {
-                if let Some(idx) = program
-                    .modifiers
-                    .iter()
-                    .position(|m| m.kind.as_crop().is_some())
-                {
+                // A stack may hold several crops, so the tool edits the
+                // selected one when that is a crop and the last one otherwise,
+                // matching how the text and drawing tools pick their target.
+                let selected = state.active.filter(|i| {
+                    program
+                        .modifiers
+                        .get(*i)
+                        .is_some_and(|m| m.kind.as_crop().is_some())
+                });
+                let existing = selected.or_else(|| {
+                    program
+                        .modifiers
+                        .iter()
+                        .rposition(|m| m.kind.as_crop().is_some())
+                });
+                if let Some(idx) = existing {
                     state.active = Some(idx);
                 } else {
+                    // A new crop starts spanning the whole image it receives,
+                    // which is the stack's output so far.
+                    let idx = program.modifiers.len();
                     let (iw, ih) = program
-                        .image_size()
+                        .stage_input_size(idx)
+                        .or_else(|| program.image_size())
                         .map(|(w, h)| (w as f32, h as f32))
                         .unwrap_or((1.0, 1.0));
-                    let idx = program.modifiers.len();
                     program
                         .modifiers_mut()
                         .push(Modifier::new(ModifierKind::Crop(Crop {
@@ -142,13 +162,6 @@ pub fn update(
             let is_crop = matches!(t, ModifierType::Crop);
             let is_text = matches!(t, ModifierType::Text);
             let is_draw = matches!(t, ModifierType::Drawing);
-            let already_has_crop =
-                is_crop && program.modifiers.iter().any(|m| m.kind.as_crop().is_some());
-            if already_has_crop {
-                return Task::done(Message::Notify(Notification::warning(
-                    "Only one Crop modifier is allowed.",
-                )));
-            }
             if matches!(t, ModifierType::Trim) {
                 if program.modifiers.iter().any(|m| m.kind.as_trim().is_some()) {
                     return Task::done(Message::Notify(Notification::warning(
@@ -162,8 +175,12 @@ pub fn update(
                 }
             }
             let kind = if is_crop {
+                // A fresh crop spans the image it will receive -- the stack's
+                // output so far -- not the source, which is a different size
+                // as soon as anything upstream resizes or crops.
                 let (iw, ih) = program
-                    .image_size()
+                    .stage_input_size(program.modifiers.len())
+                    .or_else(|| program.image_size())
                     .map(|(w, h)| (w as f32, h as f32))
                     .unwrap_or((1.0, 1.0));
                 ModifierKind::Crop(Crop {
@@ -417,6 +434,68 @@ mod fit_on_resize_tests {
             p,
             false,
             EditMsg::Update(0, param),
+        );
+    }
+
+    #[test]
+    fn a_second_crop_can_be_added_and_reframes_what_the_first_produced() {
+        use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
+
+        // The workflow the stage exists for. Adding a second Crop used to be
+        // refused outright, because a display-time crop is a single window on
+        // the final document and cannot say "the region of what the first crop
+        // produced".
+        let mut p = program_with_resize();
+        p.modifiers_mut().clear();
+        let mut st = EditState::default();
+
+        let _ = update(&mut st, &mut p, false, EditMsg::Add(ModifierType::Crop));
+        let _ = update(
+            &mut st,
+            &mut p,
+            false,
+            EditMsg::SetCropRect(0, 0.0, 0.0, 400.0, 300.0),
+        );
+        let _ = update(&mut st, &mut p, false, EditMsg::Add(ModifierType::Crop));
+        let _ = update(
+            &mut st,
+            &mut p,
+            false,
+            EditMsg::SetCropRect(1, 10.0, 20.0, 100.0, 80.0),
+        );
+
+        assert_eq!(
+            p.modifiers
+                .iter()
+                .filter(|m| m.kind.as_crop().is_some())
+                .count(),
+            2,
+            "the second crop was refused"
+        );
+        assert_eq!(
+            chain_output_spec(ImageSpec::new(SRC_W, SRC_H), &plan_modifiers(&p.modifiers)),
+            ImageSpec::new(100, 80),
+            "the second crop takes 100x80 of the 400x300 the first produced"
+        );
+    }
+
+    #[test]
+    fn a_crop_added_after_a_resize_starts_at_the_resized_size() {
+        let mut p = program_with_resize();
+        let mut st = EditState::default();
+        let _ = update(
+            &mut st,
+            &mut p,
+            false,
+            EditMsg::Update(0, ModifierParam::ResizeWidth(50.0)),
+        );
+        let _ = update(&mut st, &mut p, false, EditMsg::Add(ModifierType::Crop));
+
+        let crop = p.modifiers[1].kind.as_crop().expect("crop was added");
+        assert_eq!(
+            (crop.width, crop.height),
+            (SRC_W as f32 * 0.5, SRC_H as f32 * 0.5),
+            "a fresh crop spans the image it receives, not the source"
         );
     }
 

@@ -527,8 +527,14 @@ impl ViewProgram {
     /// those render at a size the panel never showed.
     pub fn stage_input_size(&self, index: usize) -> Option<(u32, u32)> {
         let (w, h) = self.image_size()?;
-        let inputs = stage_inputs(ImageSpec::new(w, h), &self.modifiers);
-        let s = inputs.get(index).copied()?;
+        let src = ImageSpec::new(w, h);
+        // One past the end is the size a modifier appended now would receive,
+        // which is what the tools ask for before pushing one.
+        if index == self.modifiers.len() {
+            let out = chain_output_spec(src, &plan_modifiers(&self.modifiers));
+            return Some((out.w, out.h));
+        }
+        let s = stage_inputs(src, &self.modifiers).get(index).copied()?;
         Some((s.w, s.h))
     }
 
@@ -1695,6 +1701,37 @@ mod crop_tests {
             None,
             "the tool suppresses the display window so the rect can be dragged"
         );
+    }
+
+    #[test]
+    fn the_overlay_is_bounded_by_the_crops_own_stage() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        // The overlay clamps its handles to stage_input_size(crop_idx). With a
+        // half resize upstream the crop sees 50x25, not the 100x50 source, so
+        // bounding it by the source would let the rect be dragged out over
+        // pixels the crop never receives.
+        let mut program = ViewProgram::default();
+        program.set_image(ImageData::new(vec![0u8; 100 * 50 * 4], 100, 50));
+        program
+            .modifiers_mut()
+            .push(Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: 50.0,
+                height: 50.0,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            })));
+        program
+            .modifiers_mut()
+            .push(Modifier::new(ModifierKind::Crop(Crop {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 10.0,
+            })));
+
+        assert_eq!(program.stage_input_size(1), Some((50, 25)));
     }
 
     #[test]
