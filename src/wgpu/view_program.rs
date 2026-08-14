@@ -790,6 +790,30 @@ impl ViewProgram {
         (scale, origin)
     }
 
+    /// The source region the displayed document stands for, [l, t, r, b].
+    ///
+    /// The whole source unless a crop narrowed it. The tiler lays each tile's
+    /// quad out across this region, so a cropped document places its tiles
+    /// over the crop's extent; laying them over the full source while the view
+    /// scales for the smaller document stretches the picture.
+    fn doc_region(&self) -> [f32; 4] {
+        let src = self.image_size;
+        if src == Vec2::ZERO {
+            return [0.0, 0.0, 1.0, 1.0];
+        }
+        // The crop tool shows the uncropped chain, so the document is the whole
+        // source and there is no region to narrow.
+        let (scale, origin) = self.doc_to_source(self.crop_tool_active);
+        let doc = self.effective_display_size();
+        let far = origin + doc * scale;
+        [
+            origin.x.clamp(0.0, src.x),
+            origin.y.clamp(0.0, src.y),
+            far.x.clamp(0.0, src.x),
+            far.y.clamp(0.0, src.y),
+        ]
+    }
+
     fn with_rasters<R>(
         &self,
         img_w: u32,
@@ -1345,6 +1369,7 @@ impl Program<Message> for ViewProgram {
             // renders the stack with crops widened. This must match what
             // effective_display_size reports, or a cropped texture is drawn
             // onto an uncropped quad and the render stretches.
+            doc_region: self.doc_region(),
             modifiers: if self.crop_tool_active {
                 Arc::new(Self::widen_crops(&self.modifiers))
             } else {
@@ -1947,6 +1972,61 @@ mod crop_tests {
                 if tool_open { "open" } else { "closed" }
             );
         }
+    }
+
+    /// The region the tiler lays quads over must be the region the document
+    /// actually covers, in source pixels.
+    ///
+    /// The tiler positions each tile's quad within this region and the view
+    /// scales for effective_display_size, so if the region spans the whole
+    /// source while the document is a crop of it, every quad is laid out over
+    /// an area larger than the document and the picture stretches. That is
+    /// only visible on a multi-tile image, which is why a 30000px source
+    /// showed it and a small one did not.
+    #[test]
+    fn the_tiler_lays_quads_over_the_region_the_document_covers() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        let (w, h) = (30000u32, 30000u32);
+        let mut p = ViewProgram::default();
+        p.set_image(ImageData::new(Vec::new(), w, h));
+        p.modifiers_mut()
+            .push(Modifier::new(ModifierKind::Crop(Crop {
+                x: 5000.0,
+                y: 5000.0,
+                width: 10000.0,
+                height: 10000.0,
+            })));
+
+        assert_eq!(
+            p.doc_region(),
+            [5000.0, 5000.0, 15000.0, 15000.0],
+            "the document is the crop, so the quads span the crop's extent"
+        );
+
+        // A resize after the crop scales the document but not the region it
+        // came from: the same source pixels are still on screen.
+        p.modifiers_mut()
+            .push(Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: 50.0,
+                height: 50.0,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            })));
+        assert_eq!(p.doc_region(), [5000.0, 5000.0, 15000.0, 15000.0]);
+
+        // With the crop tool open the whole source is displayed.
+        p.crop_tool_active = true;
+        assert_eq!(p.doc_region(), [0.0, 0.0, w as f32, h as f32]);
+    }
+
+    #[test]
+    fn an_uncropped_document_covers_the_whole_source() {
+        let (w, h) = (4096u32, 2731u32);
+        let mut p = ViewProgram::default();
+        p.set_image(ImageData::new(Vec::new(), w, h));
+        assert_eq!(p.doc_region(), [0.0, 0.0, w as f32, h as f32]);
     }
 
     /// The pixel grid overlays the document on screen, so its bounds are that

@@ -194,6 +194,7 @@ impl ViewPipeline {
         viewport: Vec2,
         pan_ndc: Vec2,
         rotation: u8,
+        doc_region: [f32; 4],
     ) {
         if self.last_view != Some(*uniforms) {
             self.last_view = Some(*uniforms);
@@ -241,11 +242,14 @@ impl ViewPipeline {
             vec2(1.0 / viewport.y, 1.0 / viewport.x)
         };
 
-        let [cu0, cv0, cu1, cv1] = uniforms.crop_uv;
-        let crop_left = cu0 * full_w;
-        let crop_right = cu1 * full_w;
-        let crop_top = cv0 * full_h;
-        let crop_bottom = cv1 * full_h;
+        // The source region the document stands for. This is *not* crop_uv:
+        // that is the window the shader samples with, and it stays the unit
+        // rect because the chain has already cropped. This says which part of
+        // the source the quads are laid out over, so a cropped document places
+        // its tiles across the crop's extent rather than the whole source --
+        // laying them out over the source while the view scales for the
+        // smaller document is what stretched the picture.
+        let [crop_left, crop_top, crop_right, crop_bottom] = doc_region;
         let crop_cx = (crop_left + crop_right) * 0.5;
         let crop_cy = (crop_top + crop_bottom) * 0.5;
 

@@ -31,6 +31,10 @@ pub struct ViewPrimitive {
     pub mipmap_zoom_out: bool,
     pub smooth_zoom_in: bool,
     pub modifiers: Arc<Vec<Modifier>>,
+    /// The source region the document stands for, as [l, t, r, b] in source
+    /// pixels. The whole source unless a crop narrowed it; the tiler lays its
+    /// quads out over this rather than over the full image.
+    pub doc_region: [f32; 4],
     pub dirty: bool,
     pub pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
     pub reprocess_pending: Arc<std::sync::atomic::AtomicBool>,
@@ -72,6 +76,7 @@ impl Primitive for ViewPrimitive {
             vec2(self.bounds.width, self.bounds.height),
             self.pan_ndc,
             self.rotation,
+            self.doc_region,
         );
         if self.show_checkerboard {
             pipeline.update_checkerboard(queue, self.checker_uniforms);
