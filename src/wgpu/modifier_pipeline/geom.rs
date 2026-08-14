@@ -20,6 +20,7 @@
 //! line visible between tiles on a large upscaled document.
 
 use super::*;
+use crate::modifiers::roi::{self, RegionPx};
 
 pub(super) fn process_vram_budget(device: &Device) -> u64 {
     device
@@ -76,6 +77,33 @@ pub(super) fn tile_out_rect(
         grid_edge(px[2], src_w, out_w),
         grid_edge(px[3], src_h, out_h),
     ]
+}
+
+/// Carry a source-space rect into the chain's output document.
+///
+/// The offset comes first and the ratio second, matching the order the stages
+/// apply them. The edges are then mapped through grid_edge exactly as
+/// tile_out_rect does, because neighbouring tiles must still land on the same
+/// integer boundary -- mapping the span directly rounds them apart and leaves
+/// seams between tiles.
+pub(super) fn to_doc(
+    r: RegionPx,
+    src_w: u32,
+    src_h: u32,
+    doc: (u32, u32),
+    offset: (f32, f32),
+) -> RegionPx {
+    // What the source looks like once the crops have removed their margins.
+    let kept_w = ((src_w as f32 - offset.0).max(1.0)).round() as u32;
+    let kept_h = ((src_h as f32 - offset.1).max(1.0)).round() as u32;
+    let shifted = [
+        r[0] - offset.0,
+        r[1] - offset.1,
+        r[2] - offset.0,
+        r[3] - offset.1,
+    ];
+    let mapped = tile_out_rect(shifted, kept_w, kept_h, doc.0, doc.1);
+    roi::clamp_region(mapped, doc.0 as f32, doc.1 as f32)
 }
 
 pub(super) fn device_dims(r: [f32; 4], scale: f32) -> (u32, u32) {
@@ -203,6 +231,84 @@ pub(super) fn tex_copy_info(
         mip_level: 0,
         origin,
         aspect: iced::wgpu::TextureAspect::All,
+    }
+}
+
+#[cfg(test)]
+mod to_doc_tests {
+    use super::to_doc;
+
+    /// A crop's tiles are placed by translating, not by scaling.
+    ///
+    /// Both the executor (which sizes each tile's output) and the display path
+    /// (which places its quad) map source rects into the document, and they
+    /// must use the same rule. The display path used tile_out_rect, which maps
+    /// by ratio alone: correct for a resize, and for a crop it puts every tile
+    /// in a different wrong place, since the error grows with distance from
+    /// the origin. On a 30000px image that is a preview scattered across the
+    /// viewport that moves wrongly when panned.
+    #[test]
+    fn a_crop_translates_its_tiles_instead_of_scaling_them() {
+        const SRC: u32 = 30000;
+        let doc = (10000u32, 10000u32);
+        let offset = (5000.0f32, 5000.0f32);
+
+        // A tile in the middle of a large source.
+        let tile = [8192.0, 8192.0, 16384.0, 16384.0];
+        let mapped = to_doc(tile, SRC, SRC, doc, offset);
+
+        // The crop kept everything from 5000 on, and the document is that
+        // region, so the tile lands at its source position minus the origin.
+        let kept = (SRC as f32 - offset.0) as u32;
+        let expect = |v: f32| ((v - offset.0) * doc.0 as f32 / kept as f32).round();
+        assert_eq!(
+            mapped,
+            [
+                expect(tile[0]),
+                expect(tile[1]),
+                expect(tile[2]),
+                expect(tile[3])
+            ]
+        );
+
+        // Ratio alone -- what the display path did -- lands somewhere else
+        // entirely, and by an amount that differs per tile.
+        let by_ratio = super::tile_out_rect(tile, SRC, SRC, doc.0, doc.1);
+        assert_ne!(
+            mapped, by_ratio,
+            "mapping a crop by ratio must not agree with translating it, or \
+             this test proves nothing"
+        );
+        assert!(
+            (mapped[0] - by_ratio[0]).abs() > 1000.0,
+            "the drift on a 30000px source is large: {mapped:?} vs {by_ratio:?}"
+        );
+    }
+
+    #[test]
+    fn no_offset_is_the_plain_ratio_mapping() {
+        const SRC: u32 = 4096;
+        let doc = (2048u32, 2048u32);
+        let r = [1024.0, 512.0, 3072.0, 2048.0];
+        assert_eq!(
+            to_doc(r, SRC, SRC, doc, (0.0, 0.0)),
+            super::tile_out_rect(r, SRC, SRC, doc.0, doc.1),
+            "without a crop the two must be the same mapping, or every resize \
+             would shift"
+        );
+    }
+
+    #[test]
+    fn edges_stay_integers_so_neighbours_still_meet() {
+        const SRC: u32 = 1179;
+        let doc = (590u32, 400u32);
+        let offset = (37.0f32, 61.0f32);
+        for x in [0.0f32, 512.0, 1024.0, 1179.0] {
+            let m = to_doc([x, 0.0, x + 1.0, 1.0], SRC, SRC, doc, offset);
+            for v in m {
+                assert_eq!(v, v.round(), "edge {v} is fractional, so tiles seam");
+            }
+        }
     }
 }
 

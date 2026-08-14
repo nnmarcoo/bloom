@@ -221,6 +221,12 @@ use crate::modifiers::gpu::UvRect;
 pub(super) struct DocScale {
     pub src: (u32, u32),
     pub out: (u32, u32),
+    /// Where the chain's output starts inside the source, in source pixels.
+    ///
+    /// Only a crop makes this nonzero, and without it a tile's placement is
+    /// computed by ratio alone -- which puts every tile in the wrong place by
+    /// a different amount, since the error grows with distance from the origin.
+    pub offset: (f32, f32),
     pub roi_active: bool,
 }
 
@@ -267,6 +273,7 @@ pub struct ModifierPipeline {
     linear_sampler: Sampler,
     nearest_sampler: Sampler,
     doc_size: (u32, u32),
+    doc_offset: (f32, f32),
     exec_band_cursor: u32,
     exec_sig: u64,
     exec_slab_pool: Vec<Option<ScratchTarget>>,
@@ -345,6 +352,7 @@ impl ModifierPipeline {
             linear_sampler,
             nearest_sampler,
             doc_size: (width, height),
+            doc_offset: (0.0, 0.0),
             exec_band_cursor: 0,
             exec_sig: 0,
             exec_slab_pool: Vec::new(),
@@ -590,6 +598,10 @@ impl ModifierPipeline {
                 DocScale {
                     src: (source.full_width, source.full_height),
                     out: self.doc_size,
+                    // Recorded by the last prepare, for the same reason
+                    // doc_size is: this path moves quads without the modifier
+                    // list, so it cannot recompute the chain's geometry.
+                    offset: self.doc_offset,
                     roi_active,
                 },
             );
@@ -608,7 +620,11 @@ impl ModifierPipeline {
         let display_uniform: &iced::wgpu::Buffer = if doc.roi_active
             && let (Some(isec), Some(base)) = (tile.isec_px, tile.last_transform)
         {
-            let isec = tile_out_rect(isec, doc.src.0, doc.src.1, doc.out.0, doc.out.1);
+            // Same mapping the executor used to place this tile's output: the
+            // offset first, then the ratio. Mapping by ratio alone put every
+            // tile in a different wrong place, which on a large multi-tile
+            // image reads as the preview being scattered and moving wrong.
+            let isec = to_doc(isec, doc.src.0, doc.src.1, doc.out, doc.offset);
             let t = inscribe_transform(base, isec, pr.px);
             if self.roi_display_uniforms[ti].is_none() {
                 self.roi_display_uniforms[ti] =

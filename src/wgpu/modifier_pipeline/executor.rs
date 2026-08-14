@@ -152,27 +152,6 @@ fn chain_doc_offset(specs: &[crate::modifiers::plan::StageSpec], plan: &[PlanIte
     off
 }
 
-/// Carry a source-space rect into the chain's output document.
-///
-/// The offset comes first and the ratio second, matching the order the stages
-/// apply them. The edges are then mapped through grid_edge exactly as
-/// tile_out_rect does, because neighbouring tiles must still land on the same
-/// integer boundary -- mapping the span directly rounds them apart and leaves
-/// seams between tiles.
-fn to_doc(r: RegionPx, src_w: u32, src_h: u32, doc: (u32, u32), offset: (f32, f32)) -> RegionPx {
-    // What the source looks like once the crops have removed their margins.
-    let kept_w = ((src_w as f32 - offset.0).max(1.0)).round() as u32;
-    let kept_h = ((src_h as f32 - offset.1).max(1.0)).round() as u32;
-    let shifted = [
-        r[0] - offset.0,
-        r[1] - offset.1,
-        r[2] - offset.0,
-        r[3] - offset.1,
-    ];
-    let mapped = tile_out_rect(shifted, kept_w, kept_h, doc.0, doc.1);
-    roi::clamp_region(mapped, doc.0 as f32, doc.1 as f32)
-}
-
 fn full_tile_info(source: &TiledSource) -> TileInfo {
     TileInfo {
         tile_x: 0,
@@ -317,6 +296,9 @@ impl ModifierPipeline {
                 DocScale {
                     src: (source.full_width, source.full_height),
                     out: (source.full_width, source.full_height),
+                    // A fused pointwise run cannot change geometry, so its
+                    // output sits exactly where its input did.
+                    offset: (0.0, 0.0),
                     roi_active: true,
                 },
             );
@@ -395,6 +377,7 @@ impl ModifierPipeline {
 
         let out_spec_doc = doc_spec;
         let chain_offset = chain_doc_offset(&specs, plan);
+        self.doc_offset = chain_offset;
         // A crop can move the document without changing its size, so "does the
         // chain reshape its output" has to include the offset, not just the
         // dimensions.
@@ -1221,6 +1204,7 @@ impl ModifierPipeline {
                 DocScale {
                     src: (source.full_width, source.full_height),
                     out: (out_spec_doc.w, out_spec_doc.h),
+                    offset: chain_offset,
                     roi_active: true,
                 },
             );

@@ -1571,6 +1571,45 @@ fn tiles_cover_a_resized_odd_sized_document() {
     assert_tiles_cover_document(&mp, &source, out.w, out.h, "cover/resized");
 }
 
+/// A crop on a multi-tile image must still tile its document exactly.
+///
+/// The display path placed each tile with tile_out_rect, which maps a source
+/// rect into the document by *ratio*. A crop translates instead, so every tile
+/// landed in a different wrong place -- the error grows with distance from the
+/// origin, so the further a tile sits from the top-left the further it drifts.
+/// On a large image that is a preview scattered across the viewport that moves
+/// wrongly as it is panned.
+#[test]
+fn tiles_cover_a_cropped_document() {
+    use crate::modifiers::kinds::Crop;
+    use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+
+    // Offset crops are the interesting case: at the origin the ratio and the
+    // translation agree on the top-left corner and the drift is easy to miss.
+    for (label, x, y, cw, ch) in [
+        ("cover/cropped-origin", 0.0, 0.0, 700.0, 700.0),
+        ("cover/cropped-offset", 240.0, 310.0, 700.0, 700.0),
+    ] {
+        let (source, _image) = real_source(&device, &queue);
+        let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, REAL_W, REAL_H);
+        let chain = vec![Modifier::new(ModifierKind::Crop(Crop {
+            x,
+            y,
+            width: cw,
+            height: ch,
+        }))];
+
+        let out = chain_output_spec(ImageSpec::new(REAL_W, REAL_H), &plan_modifiers(&chain));
+        assert_geometry_is_stable(&mut mp, &device, &queue, &source, &chain, label);
+        assert_tiles_cover_document(&mp, &source, out.w, out.h, label);
+    }
+}
+
 #[test]
 fn tiles_cover_an_upscaled_odd_sized_document() {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
