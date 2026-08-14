@@ -668,6 +668,129 @@ fn golden_crop_single_tile() {
     run_golden("crop/1-tile", &crop_chain(), None, 2);
 }
 
+/// A crop anchored at (0, 0) -- trimming only width and height.
+///
+/// This is the common case and it took a different path through the backward
+/// ROI walk than crop_chain's offset rect: the executor picked its unmap rule
+/// from whether the origin was nonzero, so this one was crossed as a scale and
+/// part of the output went missing.
+fn crop_at_origin_chain() -> Vec<Modifier> {
+    use crate::modifiers::kinds::Crop;
+    vec![Modifier::new(ModifierKind::Crop(Crop {
+        x: 0.0,
+        y: 0.0,
+        width: 61.0,
+        height: 43.0,
+    }))]
+}
+
+/// A crop with a restricted ROI must still cover what the ROI asks for.
+///
+/// The full-bounds goldens cannot see this: they give every tile the whole
+/// tile as its ROI, so a region computed too small is still large enough. It
+/// takes a *partial* ROI -- what being zoomed in produces -- for an
+/// under-sized gather to leave part of the picture unrendered, which is the
+/// "it cuts off too much and comes back when you zoom out" report.
+#[test]
+fn a_cropped_chain_covers_its_roi_at_every_zoom() {
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+
+    let (w, h) = (GOLDEN_W, GOLDEN_H);
+    for chain_label in ["at-origin", "offset"] {
+        let chain = if chain_label == "at-origin" {
+            crop_at_origin_chain()
+        } else {
+            crop_chain()
+        };
+        let doc = crate::modifiers::plan::chain_output_spec(
+            crate::modifiers::plan::ImageSpec::new(w, h),
+            &crate::modifiers::plan::plan_modifiers(&chain),
+        );
+
+        for frac in [1.0f32, 0.75, 0.5, 0.35] {
+            let pixels = test_pixels(w, h);
+            let image = ImageData::new(pixels, w, h);
+            let mut source = make_source(&device, &queue, &image, Some(FORCED_TILE_DIM));
+            set_partial_roi(&mut source, frac);
+            let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
+            let label = format!("crop-roi/{chain_label}/{frac}");
+            converge(&mut mp, &device, &queue, &source, &chain, &label);
+
+            // Every output the executor produced, unioned in the document.
+            let mut covered: Option<[f32; 4]> = None;
+            for ti in 0..source.tiles.len() {
+                let Some(o) = mp.tile_outputs[ti].as_ref() else {
+                    continue;
+                };
+                let p = o.proc_px.expect("outputs carry proc_px");
+                covered = Some(match covered {
+                    Some(c) => [
+                        c[0].min(p[0]),
+                        c[1].min(p[1]),
+                        c[2].max(p[2]),
+                        c[3].max(p[3]),
+                    ],
+                    None => p,
+                });
+            }
+            let covered = covered.unwrap_or_else(|| panic!("{label}: nothing rendered"));
+
+            // With the whole image visible the outputs must span the whole
+            // cropped document; anything less is picture that never rendered.
+            if frac >= 1.0 {
+                assert!(
+                    covered[0] <= 0.5
+                        && covered[1] <= 0.5
+                        && covered[2] >= doc.w as f32 - 0.5
+                        && covered[3] >= doc.h as f32 - 0.5,
+                    "{label}: the tiles cover {covered:?} of a {}x{} document, \
+                     so part of the picture was never rendered",
+                    doc.w,
+                    doc.h
+                );
+            }
+
+            // The outputs must also lie inside the document -- a region that
+            // ran past it means the rects were computed in the wrong space.
+            assert!(
+                covered[2] <= doc.w as f32 + 0.5 && covered[3] <= doc.h as f32 + 0.5,
+                "{label}: the tiles cover {covered:?}, past the {}x{} document",
+                doc.w,
+                doc.h
+            );
+        }
+    }
+}
+
+#[test]
+fn golden_crop_at_origin_single_tile() {
+    run_golden("crop-at-origin/1-tile", &crop_at_origin_chain(), None, 2);
+}
+
+#[test]
+fn golden_crop_at_origin_multi_tile() {
+    run_golden(
+        "crop-at-origin/2x2",
+        &crop_at_origin_chain(),
+        Some(FORCED_TILE_DIM),
+        2,
+    );
+}
+
+/// The same crop with a blur after it, so the walk has to cross the crop and
+/// then dilate by an apron in the cropped space.
+#[test]
+fn golden_crop_at_origin_then_blur() {
+    let mut chain = crop_at_origin_chain();
+    chain.push(Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
+        radius: 3.0,
+    })));
+    run_golden("crop-at-origin-blur/2x2", &chain, Some(FORCED_TILE_DIM), 4);
+}
+
 #[test]
 fn golden_crop_multi_tile() {
     run_golden("crop/2x2", &crop_chain(), Some(FORCED_TILE_DIM), 2);

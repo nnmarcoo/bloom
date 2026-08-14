@@ -499,6 +499,36 @@ mod tests {
             );
         }
 
+        /// A crop translates whatever its origin is, including zero.
+        ///
+        /// The executor chose between unmap_offset and unmap_region by asking
+        /// whether the origin was nonzero, so a crop anchored at (0, 0) -- the
+        /// common case of trimming only width or height -- was crossed as a
+        /// *scale* and the region grew by the crop's ratio. The stage rects
+        /// then disagreed and the copy-out intersection clipped, which reads as
+        /// part of the picture vanishing at some zooms.
+        #[test]
+        fn a_crop_at_the_origin_translates_rather_than_scales() {
+            let out = [0.0, 0.0, 400.0, 520.0];
+
+            // What the crop stage must do: nothing, since the origin is zero.
+            assert_eq!(unmap_offset((0.0, 0.0), out), out);
+
+            // What crossing it as a size change would do instead.
+            let as_scale = unmap_region((400.0, 520.0), (800.0, 1040.0), out);
+            assert_eq!(
+                as_scale,
+                [0.0, 0.0, 800.0, 1040.0],
+                "sanity: the scale rule doubles the region here"
+            );
+            assert_ne!(
+                as_scale, out,
+                "a crop at the origin must not be crossed as a scale; the two \
+                 rules differ even when the origin is zero, so the choice has \
+                 to be made from the stage's kind rather than its origin"
+            );
+        }
+
         #[test]
         fn the_offset_unmap_is_what_makes_this_work() {
             // Without the offset the walk lands at the origin and culls the

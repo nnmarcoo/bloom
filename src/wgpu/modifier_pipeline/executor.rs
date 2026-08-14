@@ -128,6 +128,51 @@ fn pr_with_roi(
     }
 }
 
+/// Where the chain's output sits inside the source, and how it is scaled.
+///
+/// A resize maps a source rect into the document by ratio; a crop translates it
+/// and clips. A chain can do both, so this walks the stages forward and
+/// accumulates one offset in the *final* document's units -- each crop's origin
+/// is carried through whatever resizes follow it.
+fn chain_doc_offset(specs: &[crate::modifiers::plan::StageSpec], plan: &[PlanItem]) -> (f32, f32) {
+    let mut off = (0.0f32, 0.0f32);
+    for (k, item) in plan.iter().enumerate() {
+        let (iw, ih) = (specs[k].input.w as f32, specs[k].input.h as f32);
+        let (ow, oh) = (specs[k].output.w as f32, specs[k].output.h as f32);
+        if let PlanItem::Step(_, m) = item
+            && m.kind.as_crop().is_some()
+        {
+            let (ox, oy) = roi::stage_origin(&m.kind, specs[k].input);
+            off = (off.0 + ox, off.1 + oy);
+        } else if iw > 0.0 && ih > 0.0 {
+            // A size change after a crop scales the offset with everything else.
+            off = (off.0 * ow / iw, off.1 * oh / ih);
+        }
+    }
+    off
+}
+
+/// Carry a source-space rect into the chain's output document.
+///
+/// The offset comes first and the ratio second, matching the order the stages
+/// apply them. The edges are then mapped through grid_edge exactly as
+/// tile_out_rect does, because neighbouring tiles must still land on the same
+/// integer boundary -- mapping the span directly rounds them apart and leaves
+/// seams between tiles.
+fn to_doc(r: RegionPx, src_w: u32, src_h: u32, doc: (u32, u32), offset: (f32, f32)) -> RegionPx {
+    // What the source looks like once the crops have removed their margins.
+    let kept_w = ((src_w as f32 - offset.0).max(1.0)).round() as u32;
+    let kept_h = ((src_h as f32 - offset.1).max(1.0)).round() as u32;
+    let shifted = [
+        r[0] - offset.0,
+        r[1] - offset.1,
+        r[2] - offset.0,
+        r[3] - offset.1,
+    ];
+    let mapped = tile_out_rect(shifted, kept_w, kept_h, doc.0, doc.1);
+    roi::clamp_region(mapped, doc.0 as f32, doc.1 as f32)
+}
+
 fn full_tile_info(source: &TiledSource) -> TileInfo {
     TileInfo {
         tile_x: 0,
@@ -349,7 +394,11 @@ impl ModifierPipeline {
 
         let specs = infer_specs(source_spec_doc, plan);
         let out_spec_doc = doc_spec;
-        let chain_resizes = out_spec_doc != source_spec_doc;
+        let chain_offset = chain_doc_offset(&specs, plan);
+        // A crop can move the document without changing its size, so "does the
+        // chain reshape its output" has to include the offset, not just the
+        // dimensions.
+        let chain_resizes = out_spec_doc != source_spec_doc || chain_offset != (0.0, 0.0);
         let classes: Vec<StepClass> = plan
             .iter()
             .zip(&specs)
@@ -415,11 +464,13 @@ impl ModifierPipeline {
                 continue;
             }
             let doc = (out_spec_doc.w, out_spec_doc.h);
-            let roi_doc = if chain_resizes {
-                tile_out_rect(roi, source.full_width, source.full_height, doc.0, doc.1)
-            } else {
-                roi
-            };
+            let roi_doc = to_doc(
+                roi,
+                source.full_width,
+                source.full_height,
+                doc,
+                chain_offset,
+            );
             let reuse = self.tile_outputs[ti].as_ref().is_some_and(|o| {
                 o.doc == doc
                     && o.proc_px.is_some_and(|p| rect_contains(p, roi_doc))
@@ -439,12 +490,12 @@ impl ModifierPipeline {
                 pr_with_roi(tile, full_w, full_h, scale, downscale, roi, pitch)
             };
             let pr = if chain_resizes && !reuse {
-                let px = tile_out_rect(
+                let px = to_doc(
                     pr.px,
                     source.full_width,
                     source.full_height,
-                    out_spec_doc.w,
-                    out_spec_doc.h,
+                    (out_spec_doc.w, out_spec_doc.h),
+                    chain_offset,
                 );
                 let (w, h) = device_dims(px, scale);
                 ProcRect {
@@ -603,15 +654,22 @@ impl ModifierPipeline {
                 // it unmaps by adding the origin; everything else scales. Doing
                 // either with the other's rule lands the read on the wrong
                 // pixels, which for a crop means the whole region shifts.
-                let origin = match &plan[k] {
-                    PlanItem::Step(_, m) => roi::stage_origin(&m.kind, specs[k].input),
-                    PlanItem::Fused(_) => (0.0, 0.0),
+                // Which rule applies is a property of the *stage*, not of the
+                // origin it currently has: a crop with its origin at 0 still
+                // translates rather than scales, and crossing it as a scale
+                // widened the region by the crop's ratio. The stage rects then
+                // disagreed and the copy-out intersection clipped, which reads
+                // as part of the picture vanishing at some zooms.
+                let crop_origin = match &plan[k] {
+                    PlanItem::Step(_, m) if m.kind.as_crop().is_some() => {
+                        Some(roi::stage_origin(&m.kind, specs[k].input))
+                    }
+                    _ => None,
                 };
                 let to_input = |r: RegionPx| -> RegionPx {
-                    if origin == (0.0, 0.0) {
-                        roi::unmap_region((ow, oh), (iw, ih), r)
-                    } else {
-                        roi::unmap_offset(origin, r)
+                    match crop_origin {
+                        Some(o) => roi::unmap_offset(o, r),
+                        None => roi::unmap_region((ow, oh), (iw, ih), r),
                     }
                 };
                 let back = |r: RegionPx| -> RegionPx {
