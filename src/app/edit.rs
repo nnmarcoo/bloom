@@ -23,6 +23,7 @@ use crate::{
     modifiers::{
         Modifier, ModifierKind, ModifierParam, ModifierType,
         kinds::{Crop, Drawing, Text},
+        tool_target,
     },
     wgpu::view_program::ViewProgram,
 };
@@ -84,20 +85,10 @@ pub fn update(
             state.selected_tool = tool;
             program.crop_tool_active = is_crop;
             if is_crop {
-                // A stack may hold several crops, so the tool edits the
-                // selected one when that is a crop and the last one otherwise,
-                // matching how the text and drawing tools pick their target.
-                let selected = state.active.filter(|i| {
-                    program
-                        .modifiers
-                        .get(*i)
-                        .is_some_and(|m| m.kind.as_crop().is_some())
-                });
-                let existing = selected.or_else(|| {
-                    program
-                        .modifiers
-                        .iter()
-                        .rposition(|m| m.kind.as_crop().is_some())
+                // Shared with the overlay in components::viewer, so the tool
+                // and the rectangle it draws always mean the same crop.
+                let existing = tool_target(&program.modifiers, state.active, |m| {
+                    m.enabled && m.kind.as_crop().is_some()
                 });
                 if let Some(idx) = existing {
                     state.active = Some(idx);

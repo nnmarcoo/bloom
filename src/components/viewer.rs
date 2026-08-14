@@ -12,7 +12,7 @@ use crate::{
     components::{edit_panel, info_panel, notifications},
     gallery::Gallery,
     keybinds::Keymap,
-    modifiers::{MediaTiming, Modifier, ViewCtx, kinds::Text},
+    modifiers::{MediaTiming, Modifier, ViewCtx, kinds::Text, tool_target},
     styles::{PAD, spinner_bg_style},
     wgpu::view_program::{Histogram, ViewProgram},
     widgets::{
@@ -65,14 +65,16 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
 
     let mut layers: Vec<Element<'_, Message>> = vec![base];
 
+    // tool_target is shared with edit.rs so the overlay and the tool's message
+    // handling cannot disagree about which crop is being edited. Taking the
+    // *first* crop meant that with several in the stack the overlay edited one
+    // the user had not selected.
     if ctx.selected_tool == &Tool::Crop
         && ctx.loading.is_none()
-        && let Some((crop_idx, crop_m)) = ctx
-            .modifiers
-            .iter()
-            .enumerate()
-            .find(|(_, m)| m.enabled && m.kind.as_crop().is_some())
-        && let Some(crop) = crop_m.kind.as_crop()
+        && let Some(crop_idx) = tool_target(ctx.modifiers, ctx.active_modifier, |m| {
+            m.enabled && m.kind.as_crop().is_some()
+        })
+        && let Some(crop) = ctx.modifiers[crop_idx].kind.as_crop()
     {
         // The overlay converts through the program's uv, so it must be bounded
         // by the space that uv is a fraction of. Bounding it by the crop's own

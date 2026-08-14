@@ -183,6 +183,24 @@ impl Modifier {
     }
 }
 
+/// Which modifier a tool should edit: the selected one when it is of the right
+/// kind, otherwise the last one of that kind in the stack.
+///
+/// A stack can hold several crops, texts or drawings, so "the one the tool
+/// means" is a real question with one answer. It lives here because the tool's
+/// message handling and the overlay that draws it both have to reach the same
+/// modifier -- when they disagreed, the overlay edited the first crop while the
+/// user had selected another.
+pub fn tool_target(
+    modifiers: &[Modifier],
+    active: Option<usize>,
+    is_kind: impl Fn(&Modifier) -> bool,
+) -> Option<usize> {
+    active
+        .filter(|i| modifiers.get(*i).is_some_and(&is_kind))
+        .or_else(|| modifiers.iter().rposition(&is_kind))
+}
+
 macro_rules! define_modifiers {
     ($($variant:ident => $label:literal @ $category:literal),* $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -442,6 +460,76 @@ pub enum ModifierParam {
     DrawingStrokeExtend([f32; 2]),
     DrawingUndoStroke,
     DrawingClear,
+}
+
+#[cfg(test)]
+mod tool_target_tests {
+    use super::*;
+    use crate::modifiers::kinds::{Crop, Exposure};
+
+    fn crop() -> Modifier {
+        Modifier::new(ModifierKind::Crop(Crop::default()))
+    }
+
+    fn exposure() -> Modifier {
+        Modifier::new(ModifierKind::Exposure(Exposure { exposure: 0.2 }))
+    }
+
+    fn is_crop(m: &Modifier) -> bool {
+        m.enabled && m.kind.as_crop().is_some()
+    }
+
+    #[test]
+    fn the_selected_one_wins_over_the_first() {
+        let mods = vec![crop(), exposure(), crop()];
+        assert_eq!(
+            tool_target(&mods, Some(2), is_crop),
+            Some(2),
+            "the tool must edit the crop the user selected, not whichever comes \
+             first in the stack"
+        );
+    }
+
+    #[test]
+    fn the_last_one_is_the_fallback() {
+        let mods = vec![crop(), exposure(), crop()];
+        assert_eq!(tool_target(&mods, None, is_crop), Some(2));
+    }
+
+    #[test]
+    fn a_selection_of_another_kind_falls_back() {
+        let mods = vec![crop(), exposure(), crop()];
+        assert_eq!(
+            tool_target(&mods, Some(1), is_crop),
+            Some(2),
+            "an exposure is selected, so the crop tool takes the last crop"
+        );
+    }
+
+    #[test]
+    fn a_disabled_crop_is_not_a_target() {
+        let mut off = crop();
+        off.enabled = false;
+        let mods = vec![crop(), off];
+        assert_eq!(
+            tool_target(&mods, Some(1), is_crop),
+            Some(0),
+            "a disabled crop draws no overlay, so it cannot be the target even \
+             when selected"
+        );
+    }
+
+    #[test]
+    fn nothing_matches_gives_nothing() {
+        assert_eq!(tool_target(&[exposure()], Some(0), is_crop), None);
+        assert_eq!(tool_target(&[], None, is_crop), None);
+    }
+
+    #[test]
+    fn an_out_of_range_selection_falls_back() {
+        let mods = vec![crop()];
+        assert_eq!(tool_target(&mods, Some(9), is_crop), Some(0));
+    }
 }
 
 #[cfg(test)]
