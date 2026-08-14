@@ -255,6 +255,12 @@ pub struct ModifierPipeline {
     tile_display_bgs_nearest: Vec<Option<BindGroup>>,
 
     roi_display_uniforms: Vec<Option<iced::wgpu::Buffer>>,
+    /// The proc UV each tile's display quad was last built with.
+    ///
+    /// Kept so a test can see what the display path computed: the transforms
+    /// themselves go straight into GPU buffers, so a wrong normalization is
+    /// otherwise invisible until it is on screen.
+    tile_display_uv: Vec<Option<UvRect>>,
     reprocess_pending: bool,
 
     uniform_pool: Vec<iced::wgpu::Buffer>,
@@ -335,6 +341,7 @@ impl ModifierPipeline {
             tile_display_bgs_linear: Vec::new(),
             tile_display_bgs_nearest: Vec::new(),
             roi_display_uniforms: Vec::new(),
+            tile_display_uv: Vec::new(),
             reprocess_pending: false,
             uniform_pool: Vec::new(),
             ca_uniform_pool: Vec::new(),
@@ -381,6 +388,11 @@ impl ModifierPipeline {
         self.doc_size
     }
 
+    #[cfg(test)]
+    pub(super) fn tile_display_uv(&self, i: usize) -> Option<UvRect> {
+        self.tile_display_uv.get(i).copied().flatten()
+    }
+
     pub fn tile_display_bg(&self, i: usize, nearest: bool) -> Option<&BindGroup> {
         if nearest {
             self.tile_display_bgs_nearest.get(i)?.as_ref()
@@ -405,6 +417,7 @@ impl ModifierPipeline {
         self.tile_display_bgs_linear.resize_with(n_tiles, || None);
         self.tile_display_bgs_nearest.resize_with(n_tiles, || None);
         self.roi_display_uniforms.resize_with(n_tiles, || None);
+        self.tile_display_uv.resize_with(n_tiles, || None);
 
         if dirty {
             for o in self.tile_outputs.iter_mut().flatten() {
@@ -584,8 +597,13 @@ impl ModifierPipeline {
         queue: &Queue,
         source: &TiledSource,
     ) {
-        let full_w = source.full_width as f32;
-        let full_h = source.full_height as f32;
+        // proc_px lives in the chain's output document, so it normalizes
+        // against that document -- not the source. They differ as soon as a
+        // crop or resize is in the stack, and this path runs on every frame of
+        // a pan: with a 3x crop the quads collapsed to a third of their size
+        // while dragging and snapped back when the pan settled and prepare()
+        // rebuilt them properly.
+        let (doc_w, doc_h) = (self.doc_size.0 as f32, self.doc_size.1 as f32);
         for ti in 0..source.tiles.len() {
             let tile = &source.tiles[ti];
             if tile_ndc_culled(tile.last_ndc_rect) {
@@ -598,7 +616,7 @@ impl ModifierPipeline {
                 continue;
             }
             let (proc_px, w, h) = (o.proc_px, o.width, o.height);
-            let pr = proc_rect_from_px(proc_px, tile, full_w, full_h, w, h);
+            let pr = proc_rect_from_px(proc_px, tile, doc_w, doc_h, w, h);
             let roi_active = proc_px.is_some() && tile.isec_px.is_some();
             self.build_roi_display_bgs(
                 device,
@@ -656,6 +674,11 @@ impl ModifierPipeline {
         } else {
             &tile.uniform_buffer
         };
+
+        if self.tile_display_uv.len() <= ti {
+            self.tile_display_uv.resize_with(ti + 1, || None);
+        }
+        self.tile_display_uv[ti] = Some(pr.proc);
 
         let output_view = &self.tile_outputs[ti].as_ref().unwrap().view;
         let make_bg = |sampler: &Sampler, label: &str| {

@@ -1691,6 +1691,81 @@ fn moving_a_crop_does_not_reuse_outputs_from_its_old_position() {
     }
 }
 
+/// Panning must place the quads where a full prepare would.
+///
+/// While the view is moving, view_pipeline defers the chain and calls
+/// refresh_display_transforms, which rebuilds each tile's quad from the output
+/// it already has. proc_px lives in the chain's *output document*, so it has
+/// to normalize against that document -- normalizing against the source made
+/// every quad a fraction of its correct size, so a cropped image collapsed
+/// while dragging and snapped back when the pan settled.
+#[test]
+fn panning_places_a_cropped_documents_quads_where_prepare_does() {
+    use crate::modifiers::kinds::Crop;
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let (source, _image) = real_source(&device, &queue);
+    assert!(source.tiles.len() > 1, "the defect needs multiple tiles");
+
+    let chain = vec![Modifier::new(ModifierKind::Crop(Crop {
+        x: 240.0,
+        y: 310.0,
+        width: 700.0,
+        height: 700.0,
+    }))];
+
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, REAL_W, REAL_H);
+    converge(&mut mp, &device, &queue, &source, &chain, "pan/crop");
+
+    // What prepare left behind, per tile.
+    let before: Vec<Option<[f32; 4]>> = (0..source.tiles.len())
+        .map(|ti| mp.tile_outputs[ti].as_ref().and_then(|o| o.proc_px))
+        .collect();
+
+    // The deferred path a pan takes. It must not disturb the geometry: the
+    // outputs are unchanged, so the quads it builds are the same ones.
+    mp.refresh_display_transforms(&device, &queue, &source);
+
+    for (ti, want) in before.iter().enumerate() {
+        let got = mp.tile_outputs[ti].as_ref().and_then(|o| o.proc_px);
+        assert_eq!(
+            got, *want,
+            "tile {ti}: refreshing the display transforms changed its region"
+        );
+    }
+
+    // The uv each quad was built with must be proc_px over the *document*.
+    let doc = crate::modifiers::plan::chain_output_spec(
+        crate::modifiers::plan::ImageSpec::new(REAL_W, REAL_H),
+        &crate::modifiers::plan::plan_modifiers(&chain),
+    );
+    assert_ne!(
+        (doc.w, doc.h),
+        (REAL_W, REAL_H),
+        "the crop must actually shrink the document, or this proves nothing"
+    );
+
+    let mut checked = 0;
+    for (ti, want) in before.iter().enumerate() {
+        let (Some(px), Some(uv)) = (want, mp.tile_display_uv(ti)) else {
+            continue;
+        };
+        let expect = [px[0] / doc.w as f32, px[1] / doc.h as f32];
+        assert!(
+            (uv.origin[0] - expect[0]).abs() < 1e-4 && (uv.origin[1] - expect[1]).abs() < 1e-4,
+            "tile {ti}: the quad uv origin is {:?} but proc_px {px:?} over the              {}x{} document is {expect:?}. Normalizing against the source              makes every quad a fraction of its size, which is a cropped              image collapsing while it is dragged.",
+            uv.origin,
+            doc.w,
+            doc.h
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "no tile carried both a region and a uv");
+}
+
 #[test]
 fn changing_the_resize_does_not_reuse_stale_outputs() {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
