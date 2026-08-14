@@ -33,7 +33,14 @@ pub struct Tile {
     pub linear_bind_group: BindGroup,
     pub last_ndc_rect: Option<(Vec2, Vec2)>,
     pub last_transform: Option<Mat4>,
-    pub last_crop_uv: Option<[f32; 4]>,
+    /// The document region this tile's placement was computed for.
+    ///
+    /// Was last_crop_uv, the shader's sampling window, back when that also
+    /// said which part of the source the document covered. crop_uv is now
+    /// always the unit rect, so keying the cache on it meant the guard never
+    /// fired and a tile the crop excluded kept its old placement -- a fragment
+    /// of the image stranded in the viewport.
+    pub last_doc_region: Option<[f32; 4]>,
     pub proc_rect_uv: Option<[f32; 4]>,
     pub proc_rect_px: Option<[f32; 4]>,
     pub isec_px: Option<[f32; 4]>,
@@ -274,7 +281,7 @@ impl TiledSource {
                     linear_bind_group,
                     last_ndc_rect: None,
                     last_transform: None,
-                    last_crop_uv: None,
+                    last_doc_region: None,
                     proc_rect_uv: None,
                     proc_rect_px: None,
                     isec_px: None,

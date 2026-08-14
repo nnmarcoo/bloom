@@ -54,6 +54,21 @@ pub struct DisplayUniforms {
     pub crop_uv: [f32; 4],
 }
 
+/// The part of `tile` the document actually covers, as [l, t, r, b].
+///
+/// Empty (left >= right, or top >= bottom) when the tile falls entirely
+/// outside the document -- a crop can exclude whole tiles on a large image,
+/// and those must stop being drawn or a fragment of the old picture stays
+/// stranded in the viewport.
+pub(crate) fn tile_doc_intersection(tile: [f32; 4], doc: [f32; 4]) -> [f32; 4] {
+    [
+        doc[0].max(tile[0]),
+        doc[1].max(tile[1]),
+        doc[2].min(tile[2]),
+        doc[3].min(tile[3]),
+    ]
+}
+
 pub(crate) fn tile_ndc_culled(rect: Option<(Vec2, Vec2)>) -> bool {
     matches!(
         rect,
@@ -223,12 +238,12 @@ impl ViewPipeline {
         if source.tiles.len() == 1 {
             let tile = &mut source.tiles[0];
             if tile.last_transform != Some(uniforms.transform)
-                || tile.last_crop_uv != Some(uniforms.crop_uv)
+                || tile.last_doc_region != Some(doc_region)
             {
                 queue.write_buffer(&tile.uniform_buffer, 0, bytes_of(uniforms));
                 tile.last_ndc_rect = Some(ndc_rect_of_transform(&uniforms.transform));
                 tile.last_transform = Some(uniforms.transform);
-                tile.last_crop_uv = Some(uniforms.crop_uv);
+                tile.last_doc_region = Some(doc_region);
             }
             return;
         }
@@ -259,16 +274,14 @@ impl ViewPipeline {
             let tw = tile.width as f32;
             let th = tile.height as f32;
 
-            let isec_left = crop_left.max(tx);
-            let isec_right = crop_right.min(tx + tw);
-            let isec_top = crop_top.max(ty);
-            let isec_bottom = crop_bottom.min(ty + th);
+            let [isec_left, isec_top, isec_right, isec_bottom] =
+                tile_doc_intersection([tx, ty, tx + tw, ty + th], doc_region);
 
             if isec_left >= isec_right || isec_top >= isec_bottom {
-                if tile.last_crop_uv != Some(uniforms.crop_uv) {
+                if tile.last_doc_region != Some(doc_region) {
                     tile.last_ndc_rect = Some((vec2(2.0, 2.0), vec2(3.0, 3.0)));
                     tile.last_transform = None;
-                    tile.last_crop_uv = Some(uniforms.crop_uv);
+                    tile.last_doc_region = Some(doc_region);
                 }
                 continue;
             }
@@ -302,7 +315,7 @@ impl ViewPipeline {
             };
 
             if tile.last_transform != Some(transform)
-                || tile.last_crop_uv != Some(uniforms.crop_uv)
+                || tile.last_doc_region != Some(doc_region)
                 || tile.proc_rect_px != roi
             {
                 queue.write_buffer(
@@ -315,7 +328,7 @@ impl ViewPipeline {
                 );
                 tile.last_ndc_rect = Some(ndc);
                 tile.last_transform = Some(transform);
-                tile.last_crop_uv = Some(uniforms.crop_uv);
+                tile.last_doc_region = Some(doc_region);
 
                 tile.proc_rect_px = roi;
                 tile.proc_rect_uv =
@@ -612,6 +625,117 @@ impl Pipeline for ViewPipeline {
             last_view: None,
             view_changed_at: std::time::Instant::now() - VIEW_SETTLE * 2,
             format,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tile_culling_tests {
+    use super::tile_doc_intersection;
+
+    // A 30000px image in 8192px tiles, cropped to the middle.
+    const SRC: f32 = 30000.0;
+    const TILE: f32 = 8192.0;
+    const DOC: [f32; 4] = [12000.0, 12000.0, 20000.0, 20000.0];
+
+    fn tiles() -> Vec<[f32; 4]> {
+        let mut v = Vec::new();
+        let mut y = 0.0;
+        while y < SRC {
+            let mut x = 0.0;
+            while x < SRC {
+                v.push([x, y, (x + TILE).min(SRC), (y + TILE).min(SRC)]);
+                x += TILE;
+            }
+            y += TILE;
+        }
+        v
+    }
+
+    fn is_empty(r: [f32; 4]) -> bool {
+        r[0] >= r[2] || r[1] >= r[3]
+    }
+
+    #[test]
+    fn a_tile_outside_the_document_has_an_empty_intersection() {
+        // The top-left tile ends at 8192, well before the crop starts at 12000.
+        let outside = tile_doc_intersection([0.0, 0.0, TILE, TILE], DOC);
+        assert!(
+            is_empty(outside),
+            "a tile the crop excludes must intersect the document in nothing, \
+             or it keeps being drawn and strands a fragment of the old picture \
+             in the viewport"
+        );
+    }
+
+    #[test]
+    fn a_crop_excludes_whole_tiles_on_a_large_image() {
+        let excluded = tiles()
+            .into_iter()
+            .filter(|t| is_empty(tile_doc_intersection(*t, DOC)))
+            .count();
+        assert!(
+            excluded > 0,
+            "this crop should fall entirely outside several of the {} tiles; \
+             without that the culling path is never exercised",
+            tiles().len()
+        );
+    }
+
+    #[test]
+    fn a_tile_the_document_covers_keeps_the_overlapping_part() {
+        // The centre tile spans 8192..16384 and the crop starts at 12000.
+        let r = tile_doc_intersection([TILE, TILE, TILE * 2.0, TILE * 2.0], DOC);
+        assert_eq!(r, [12000.0, 12000.0, 16384.0, 16384.0]);
+    }
+
+    /// The guard around the cull branch must fire when the crop moves.
+    ///
+    /// It used to compare crop_uv, the shader's sampling window, back when
+    /// that also said which part of the source the document covered. crop_uv
+    /// is now always the unit rect -- the chain crops, so the shader must not
+    /// -- so `last != current` went false from the second frame on. The cull
+    /// branch sits behind that guard, so a tile the crop excluded never had
+    /// its placement updated and kept being drawn: a fragment of the old
+    /// picture stranded in the viewport.
+    #[test]
+    fn moving_the_crop_invalidates_a_tiles_cached_placement() {
+        // The guard as it is written: last recorded region vs the current one.
+        fn stale(last: Option<[f32; 4]>, current: [f32; 4]) -> bool {
+            last != Some(current)
+        }
+
+        let first = [12000.0f32, 12000.0, 20000.0, 20000.0];
+        let moved = [9000.0f32, 9000.0, 17000.0, 17000.0];
+
+        // First frame: nothing cached, so the tile is updated.
+        assert!(stale(None, first));
+        // Held still: no work.
+        assert!(!stale(Some(first), first));
+        // Crop moved: the tile must be updated again, which is what the old
+        // key could not express because crop_uv was identical either way.
+        assert!(
+            stale(Some(first), moved),
+            "a tile cached for one crop must be seen as stale under another,              or the cull branch never runs and excluded tiles keep drawing"
+        );
+
+        // What the old key did on those same two frames.
+        const UNIT_UV: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
+        assert!(
+            !stale(Some(UNIT_UV), UNIT_UV),
+            "crop_uv is constant now, so keying on it reports every frame as              cached no matter how the crop moves"
+        );
+    }
+
+    #[test]
+    fn an_uncropped_document_keeps_every_tile_whole() {
+        let full = [0.0, 0.0, SRC, SRC];
+        for t in tiles() {
+            assert_eq!(
+                tile_doc_intersection(t, full),
+                t,
+                "without a crop a tile is entirely inside the document"
+            );
         }
     }
 }
