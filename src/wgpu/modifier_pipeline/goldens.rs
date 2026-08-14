@@ -1635,6 +1635,62 @@ fn tiles_cover_an_upscaled_odd_sized_document() {
     assert_tiles_cover_document(&mp, &source, out.w, out.h, "cover/upscaled");
 }
 
+/// Dragging a crop's position must not reuse outputs from its old position.
+///
+/// A crop that moves without resizing leaves the document's *size* unchanged,
+/// so an output rendered for the previous origin passed the reuse check and
+/// kept its proc_px -- new content placed at the old offset. exec_sig does
+/// notice the change, but only after the tile textures have been sized and
+/// positioned from that stale comparison.
+///
+/// The ROI is partial here because that is when it shows: zoomed in, each tile
+/// renders a window rather than its whole self, so a wrongly-placed region is
+/// wrong everywhere rather than merely redundant.
+#[test]
+fn moving_a_crop_does_not_reuse_outputs_from_its_old_position() {
+    use crate::modifiers::kinds::Crop;
+    use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let (w, h) = (1024u32, 1024u32);
+    let pixels = test_pixels(w, h);
+    let image = ImageData::new(pixels.clone(), w, h);
+    let mut source = make_source(&device, &queue, &image, Some(512));
+    set_partial_roi(&mut source, 0.5);
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
+
+    // The size never changes; only the origin moves.
+    for (x, y) in [
+        (0.0f32, 0.0f32),
+        (120.0, 40.0),
+        (300.0, 260.0),
+        (60.0, 380.0),
+        (0.0, 0.0),
+    ] {
+        let chain = vec![Modifier::new(ModifierKind::Crop(Crop {
+            x,
+            y,
+            width: 500.0,
+            height: 500.0,
+        }))];
+        converge(&mut mp, &device, &queue, &source, &chain, "crop-drag");
+
+        let out = chain_output_spec(ImageSpec::new(w, h), &plan_modifiers(&chain));
+        let cpu = crate::modifiers::cpu::render_full(&chain, &[], &[], &pixels, w, h);
+        let gpu = assemble_doc(&device, &queue, &mp, &source, out.w, out.h);
+        let (max_d, pct) = diff_stats(&gpu, &cpu, 2);
+        assert!(
+            max_d <= 2,
+            "crop at ({x}, {y}): GPU diverges from the oracle by {max_d} \
+             ({pct:.2}% of channels over). The document is the same size at \
+             every position, so an output from the previous origin was reused."
+        );
+    }
+}
+
 #[test]
 fn changing_the_resize_does_not_reuse_stale_outputs() {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};

@@ -132,7 +132,18 @@ struct TileOutput {
     height: u32,
     proc_px: Option<[f32; 4]>,
     quality_scale: f32,
-    doc: (u32, u32),
+    /// The document this output was built for: its size *and* where it sits in
+    /// the source. Size alone is not enough -- moving a crop's origin leaves
+    /// the size identical, so an output rendered for the old position looked
+    /// reusable and its proc_px was kept, placing new content at the old
+    /// offset.
+    doc: DocId,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct DocId {
+    pub size: (u32, u32),
+    pub origin: (f32, f32),
 }
 
 struct ScratchTarget {

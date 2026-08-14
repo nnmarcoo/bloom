@@ -231,7 +231,10 @@ impl ModifierPipeline {
                     height: pr.h,
                     proc_px: Some(pr.px),
                     quality_scale: cur_scale,
-                    doc: (source.full_width, source.full_height),
+                    doc: DocId {
+                        size: (source.full_width, source.full_height),
+                        origin: (0.0, 0.0),
+                    },
                 });
                 self.tile_display_bgs_linear[ti] = None;
                 self.tile_display_bgs_nearest[ti] = None;
@@ -446,12 +449,15 @@ impl ModifierPipeline {
                 self.tile_display_bgs_nearest[ti] = None;
                 continue;
             }
-            let doc = (out_spec_doc.w, out_spec_doc.h);
+            let doc = DocId {
+                size: (out_spec_doc.w, out_spec_doc.h),
+                origin: chain_offset,
+            };
             let roi_doc = to_doc(
                 roi,
                 source.full_width,
                 source.full_height,
-                doc,
+                doc.size,
                 chain_offset,
             );
             let reuse = self.tile_outputs[ti].as_ref().is_some_and(|o| {
@@ -464,8 +470,8 @@ impl ModifierPipeline {
                 proc_rect_from_px(
                     o.proc_px,
                     tile,
-                    doc.0 as f32,
-                    doc.1 as f32,
+                    doc.size.0 as f32,
+                    doc.size.1 as f32,
                     o.width,
                     o.height,
                 )
