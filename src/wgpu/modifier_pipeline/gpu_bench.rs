@@ -310,23 +310,25 @@ mod tests {
     /// Measured 4096x2731, 100% zoom, best of 5:
     ///
     /// ```text
-    /// chain                 no crop    crop 50%     crop 25%   ceiling 25%
-    /// pointwise x1             3.00  4.83 (0.6x)  2.99 (1.0x)         0.90
-    /// blur r=8                 9.18  5.36 (1.7x)  3.17 (2.9x)         0.99
-    /// blur r=32               17.62  6.94 (2.5x)  3.94 (4.5x)         1.63
-    /// blur r=128              21.13  6.66 (3.2x)  4.46 (4.7x)         2.57
-    /// chromatic aberration     5.30  3.41 (1.6x)  2.79 (1.9x)         1.53
+    /// chain                 no crop    crop 50%      crop 25%   ceiling 25%
+    /// pointwise x1             3.32  2.57 (1.3x)   1.20 (2.8x)         0.84
+    /// blur r=8                 9.08  4.07 (2.2x)  0.90 (10.1x)         0.85
+    /// blur r=32               18.58  6.83 (2.7x)  1.65 (11.3x)         1.73
+    /// blur r=128              20.80  7.10 (2.9x)   2.21 (9.4x)         1.93
+    /// chromatic aberration     5.95  3.79 (1.6x)   0.73 (8.1x)         0.96
     /// ```
     ///
-    /// Two things worth reading honestly. **Pointwise gets slower**: the stage
-    /// costs an allocation and a texture copy, and a fused pointwise run is
-    /// cheap enough that the copy dominates what it saves. **Nothing reaches
-    /// the ceiling** -- a 25% crop is 16x fewer pixels and the heaviest blur
-    /// collects 4.7x of a possible 8.2x. Both point at the same fixed cost:
-    /// the crop's copy, plus a gather still sized before the chain narrows.
-    /// Eliding the copy when the crop's output already lines up with its
-    /// input's slab would recover most of it, and is the obvious next thing to
-    /// try if crop-heavy previews feel slow.
+    /// A 25% crop is 16x fewer pixels and the expensive chains collect most of
+    /// that, several of them landing at the ceiling. blur r=8 and chromatic
+    /// aberration read as *faster* than their ceiling, which is measurement
+    /// noise on sub-millisecond numbers rather than a real result -- treat
+    /// anything under about 2ms here as "at the floor", not as a ranking.
+    ///
+    /// An earlier revision of this table had pointwise getting *slower* behind
+    /// a crop (0.6x at 50%) and nothing reaching the ceiling. That was the
+    /// geometry bugs fixed after it: tiles were placed by ratio rather than by
+    /// the crop's offset, so the chain was rendering regions it then threw
+    /// away. The crop's own copy is still real, but it no longer dominates.
     #[test]
     #[ignore = "GPU timing baseline; run with --release --ignored --nocapture"]
     fn gpu_bench_crop_stage() {
