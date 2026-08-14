@@ -6,6 +6,7 @@ use iced::widget::{Space, button, column, container, mouse_area, row, scrollable
 use iced::{Element, Length, Padding, mouse};
 
 use crate::app::{EditMsg, Message};
+use crate::modifiers::plan::{ImageSpec, stage_inputs};
 use crate::modifiers::{Modifier, ViewCtx};
 use crate::styles::{
     PAD, modifier_active_card_style, modifier_card_style, modifier_drop_indicator_style,
@@ -22,11 +23,26 @@ pub fn view<'a>(
     timed: bool,
 ) -> Element<'a, Message> {
     let n = modifiers.len();
+    let stage_sizes = ctx.image_size.map(|(w, h)| {
+        stage_inputs(ImageSpec::new(w, h), modifiers)
+            .into_iter()
+            .map(|s| (s.w, s.h))
+            .collect::<Vec<_>>()
+    });
     let mut stack_col = column![];
     for (i, modifier) in modifiers.iter().enumerate() {
         let show_indicator = matches!((dragging, drag_target),
             (Some(src), Some(tgt)) if tgt == i && src != i);
         stack_col = stack_col.push(gap(show_indicator));
+        // Each panel resolves its numbers against the size that modifier
+        // actually receives, not the source, so what it shows is what renders.
+        let ctx = ViewCtx {
+            image_size: stage_sizes
+                .as_ref()
+                .and_then(|s| s.get(i).copied())
+                .or(ctx.image_size),
+            ..ctx
+        };
         stack_col = stack_col.push(card(
             i,
             modifier,

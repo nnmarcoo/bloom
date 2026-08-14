@@ -13,13 +13,13 @@ use iced::Element;
 
 use crate::app::Message;
 use crate::modifiers::gpu::{ModEntry, TileInfo};
-use crate::modifiers::plan::ImageSpec;
 use crate::modifiers::kinds::{
     BrightnessContrast, ChromaticAberration, ColorBalance, Crop, Drawing, Duotone, Exposure,
     GaussianBlur, Grain, Grayscale, Halftone, HueSaturation, Invert, Levels, MotionBlur, PixelSort,
     Posterize, RadialBlur, Resize, Sepia, Solarize, Temperature, Text, Threshold, Trim, Vibrance,
     Vignette,
 };
+use crate::modifiers::plan::ImageSpec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Axis {
