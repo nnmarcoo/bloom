@@ -16,8 +16,15 @@
 //! The exception is the crop tool: while it is open the view shows the
 //! *uncropped* chain, so the rect can be dragged back out over material the
 //! chain would otherwise discard. That is effective_display_size branching on
-//! crop_tool_active, with crop_origin saying where the kept region sits inside
-//! what is shown.
+//! crop_tool_active, and the renderer is handed the same widened stack so the
+//! quad and the texture agree about the document.
+//!
+//! Everything that overlays the view -- the pixel grid, the overlays' uv --
+//! therefore measures against effective_display_size, which starts at its own
+//! origin. Only screen_to_image_coords needs to get back to *source* pixels,
+//! and it undoes the chain's scale and offset separately: a resize scales the
+//! picture, a crop moves its origin, and collapsing the two into one ratio
+//! reads the wrong pixel.
 //!
 //! The histogram renders on a *bounded* source, not the document. Rendering
 //! the whole document costs time proportional to its area and is paid on every
@@ -364,16 +371,20 @@ impl ViewProgram {
         {
             return None;
         }
+        // The grid draws over the document on screen, and that document starts
+        // at its own origin -- the chain has already removed anything before
+        // it. crop_origin answers where the kept region sits inside the picture
+        // the crop *tool* shows, which is a different question; using it here
+        // shifted every line by the crop's offset and ran the bounds past the
+        // image.
         let eff = self.effective_display_size();
-        let origin = self.crop_origin();
-        let to_pixels =
-            Mat4::from_translation(vec3(0.5 * eff.x + origin.x, 0.5 * eff.y + origin.y, 0.0))
-                * Mat4::from_scale(vec3(0.5 * eff.x, -0.5 * eff.y, 1.0));
+        let to_pixels = Mat4::from_translation(vec3(0.5 * eff.x, 0.5 * eff.y, 0.0))
+            * Mat4::from_scale(vec3(0.5 * eff.x, -0.5 * eff.y, 1.0));
         let screen_to_img = to_pixels * self.build_transform(viewport).inverse();
         Some(PixelGridUniforms {
             screen_to_img,
             viewport: [bounds.x, bounds.y, viewport.x, viewport.y],
-            bounds_img: [origin.x, origin.y, origin.x + eff.x, origin.y + eff.y],
+            bounds_img: [0.0, 0.0, eff.x, eff.y],
         })
     }
 
@@ -572,33 +583,6 @@ impl ViewProgram {
         } else {
             self.chain_output_size()
         }
-    }
-
-    /// Where the crop's output sits inside the image the crop tool displays.
-    ///
-    /// Zero unless the crop tool is open: with the tool closed the chain has
-    /// already removed everything outside the rect, so its output starts at the
-    /// origin by definition.
-    fn crop_origin(&self) -> Vec2 {
-        if !self.crop_tool_active {
-            return Vec2::ZERO;
-        }
-        // Walk to the first enabled crop rather than materialising every
-        // stage's input: this runs per frame and only one entry is ever read.
-        // A crop contributes nothing to what precedes it, so the sizes ahead of
-        // it are the same either way.
-        let mut cur = ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32);
-        for m in self.modifiers.iter() {
-            if !m.has_visible_effect() {
-                continue;
-            }
-            if let Some(c) = m.kind.as_crop() {
-                let (x, y, _, _) = c.rect_in(cur);
-                return vec2(x, y);
-            }
-            cur = m.kind.output_spec(cur);
-        }
-        Vec2::ZERO
     }
 
     fn chain_output_size(&self) -> Vec2 {
@@ -1965,6 +1949,62 @@ mod crop_tests {
         }
     }
 
+    /// The pixel grid overlays the document on screen, so its bounds are that
+    /// document -- which always starts at its own origin.
+    ///
+    /// crop_origin says where the kept region sits inside the picture the crop
+    /// *tool* displays, which is a different question. Feeding it to the grid
+    /// shifted every line by the crop's offset and ran the bounds past the
+    /// image: with the tool open on an 800x1040 source cropped at (100, 200),
+    /// the grid claimed [100, 200, 900, 1240].
+    #[test]
+    fn the_pixel_grid_covers_the_document_it_draws_over() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        let (w, h) = (800u32, 1040u32);
+        let bounds = Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: 1000.0,
+            height: 800.0,
+        };
+        for with_resize in [false, true] {
+            for tool_open in [false, true] {
+                let mut p = ViewProgram::default();
+                p.set_image(ImageData::new(vec![0u8; (w * h * 4) as usize], w, h));
+                if with_resize {
+                    p.modifiers_mut()
+                        .push(Modifier::new(ModifierKind::Resize(Resize {
+                            mode: ResizeMode::Percent,
+                            width: 50.0,
+                            height: 50.0,
+                            filter: ResizeFilter::Lanczos,
+                            lock_aspect: true,
+                        })));
+                }
+                p.modifiers_mut()
+                    .push(Modifier::new(ModifierKind::Crop(Crop {
+                        x: 100.0,
+                        y: 200.0,
+                        width: 300.0,
+                        height: 400.0,
+                    })));
+                p.set_bounds(bounds);
+                p.show_pixel_grid = true;
+                p.crop_tool_active = tool_open;
+                p.fit();
+
+                let g = p.grid_uniforms(bounds).expect("grid is on");
+                let eff = p.effective_display_size();
+                assert_eq!(
+                    g.bounds_img,
+                    [0.0, 0.0, eff.x, eff.y],
+                    "resize={with_resize} tool_open={tool_open}: the grid must                      span exactly the {eff:?} document it draws over"
+                );
+            }
+        }
+    }
+
     #[test]
     fn the_rendered_stack_matches_the_document_the_view_lays_out() {
         let (w, h) = (800u32, 1040u32);
@@ -2802,42 +2842,23 @@ mod document_size_tests {
     }
 
     #[test]
-    fn the_crop_tool_places_the_origin_in_the_stages_own_space() {
-        // With the tool open the view shows the uncropped image so the rect can
-        // be dragged back out, so the origin says where the kept region sits.
-        // 50% leaves a 400x300 image, and the rect is clamped into it.
+    fn the_crop_tool_shows_the_picture_the_rect_cuts_from() {
+        // Open, the view is the uncropped chain so the rect can be dragged back
+        // out; closed, it is what the chain actually produces. 50% leaves a
+        // 400x300 image and the crop keeps 200x150 of it.
         let mut p = program(
             vec![resize_pct(50.0), crop_of(100.0, 60.0, 200.0, 150.0)],
             800,
             600,
         );
+        assert_eq!(p.effective_display_size(), vec2(200.0, 150.0));
+
         p.crop_tool_active = true;
-        assert_eq!(p.crop_origin(), vec2(100.0, 60.0));
         assert_eq!(
             p.effective_display_size(),
             vec2(400.0, 300.0),
             "the tool shows the whole resized image, not just the kept region"
         );
-    }
-
-    #[test]
-    fn a_closed_crop_tool_leaves_the_origin_at_zero() {
-        // The chain has already discarded everything outside the rect, so the
-        // document it produces starts at its own origin by definition.
-        let p = program(
-            vec![resize_pct(50.0), crop_of(100.0, 60.0, 200.0, 150.0)],
-            800,
-            600,
-        );
-        assert_eq!(p.crop_origin(), Vec2::ZERO);
-        assert_eq!(p.effective_display_size(), vec2(200.0, 150.0));
-    }
-
-    #[test]
-    fn the_crop_tool_origin_without_a_resize_is_the_source_offset() {
-        let mut p = program(vec![crop_of(400.0, 300.0, 400.0, 300.0)], 800, 600);
-        p.crop_tool_active = true;
-        assert_eq!(p.crop_origin(), vec2(400.0, 300.0));
     }
 
     #[test]
