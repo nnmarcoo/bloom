@@ -300,7 +300,14 @@ pub(crate) fn render_full(
                 }
                 ModifierKind::Crop(c) => {
                     let (x, y, _, _) = c.rect_in(spec.input);
-                    cur = crop_full(&cur, img_w, x as u32, y as u32, spec.output);
+                    cur = copy_rect(
+                        &cur,
+                        w,
+                        x as usize,
+                        y as usize,
+                        spec.output.w as usize,
+                        spec.output.h as usize,
+                    );
                 }
                 other => debug_assert!(
                     false,
@@ -387,19 +394,8 @@ fn apply_stage_banded(
                 // crop that the band happens to include are dropped.
                 let (x, y, _, _) = c.rect_in(spec.input);
                 let skip = (y as u32).saturating_sub(y_off) as usize;
-                let keep = hu.saturating_sub(skip);
-                let rows = keep.min(spec.output.h as usize);
-                let src_row = wu * 4;
-                let out_row = spec.output.w as usize * 4;
-                let mut dst = vec![0u8; out_row * rows];
-                for r in 0..rows {
-                    let s = (skip + r) * src_row + x as usize * 4;
-                    let Some(chunk) = cur.get(s..s + out_row) else {
-                        break;
-                    };
-                    dst[r * out_row..(r + 1) * out_row].copy_from_slice(chunk);
-                }
-                cur = dst;
+                let rows = hu.saturating_sub(skip).min(spec.output.h as usize);
+                cur = copy_rect(&cur, wu, x as usize, skip, spec.output.w as usize, rows);
             }
             other => debug_assert!(
                 false,
@@ -558,16 +554,17 @@ fn blur_direct(buf: &mut [u8], w: usize, h: usize, radius: f32) {
     );
 }
 
-/// Copy the crop's rows out of `src`, which is `src_w` wide.
+/// Copy `rows` rows of `out_w` pixels out of `src`, starting at (`x`, `y`).
 ///
-/// `x`/`y` are the crop's origin in the input, and `out` its extent. Rows are
-/// copied whole rather than per pixel; a crop moves data without touching it.
-fn crop_full(src: &[u8], src_w: u32, x: u32, y: u32, out: ImageSpec) -> Vec<u8> {
-    let row = out.w as usize * 4;
-    let src_stride = src_w as usize * 4;
-    let mut dst = vec![0u8; row * out.h as usize];
-    for r in 0..out.h as usize {
-        let s = (y as usize + r) * src_stride + x as usize * 4;
+/// Serves both crop paths: the full render takes the crop's whole height, the
+/// banded one takes however much of it the band holds. Rows are copied whole
+/// rather than per pixel, since a crop moves data without touching it.
+fn copy_rect(src: &[u8], src_w: usize, x: usize, y: usize, out_w: usize, rows: usize) -> Vec<u8> {
+    let row = out_w * 4;
+    let stride = src_w * 4;
+    let mut dst = vec![0u8; row * rows];
+    for r in 0..rows {
+        let s = (y + r) * stride + x * 4;
         let Some(chunk) = src.get(s..s + row) else {
             break;
         };

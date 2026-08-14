@@ -583,20 +583,22 @@ impl ViewProgram {
         if !self.crop_tool_active {
             return Vec2::ZERO;
         }
-        let src = ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32);
-        let inputs = stage_inputs(src, &self.modifiers);
-        self.modifiers
-            .iter()
-            .enumerate()
-            .find_map(|(i, m)| {
-                if !m.enabled {
-                    return None;
-                }
-                let c = m.kind.as_crop()?;
-                let (x, y, _, _) = c.rect_in(inputs.get(i).copied()?);
-                Some(vec2(x, y))
-            })
-            .unwrap_or(Vec2::ZERO)
+        // Walk to the first enabled crop rather than materialising every
+        // stage's input: this runs per frame and only one entry is ever read.
+        // A crop contributes nothing to what precedes it, so the sizes ahead of
+        // it are the same either way.
+        let mut cur = ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32);
+        for m in self.modifiers.iter() {
+            if !m.has_visible_effect() {
+                continue;
+            }
+            if let Some(c) = m.kind.as_crop() {
+                let (x, y, _, _) = c.rect_in(cur);
+                return vec2(x, y);
+            }
+            cur = m.kind.output_spec(cur);
+        }
+        Vec2::ZERO
     }
 
     fn chain_output_size(&self) -> Vec2 {
@@ -619,12 +621,17 @@ impl ViewProgram {
         if self.image_size == Vec2::ZERO {
             return self.image_size;
         }
-        let mods = Self::widen_crops(&self.modifiers);
-        let out = chain_output_spec(
-            ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32),
-            &plan_modifiers(&mods),
-        );
-        vec2(out.w as f32, out.h as f32)
+        // Walk the sizes directly rather than cloning the stack to widen it:
+        // this runs on every cursor move and every frame, and cloning copies
+        // whole Drawing stroke lists and Text bodies to read two numbers.
+        // A widened crop is the identity, so skipping crops *is* the widening.
+        let mut cur = ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32);
+        for m in self.modifiers.iter() {
+            if m.has_visible_effect() && m.kind.as_crop().is_none() {
+                cur = m.kind.output_spec(cur);
+            }
+        }
+        vec2(cur.w as f32, cur.h as f32)
     }
 
     /// The stack with every crop opened to its full input.
@@ -632,8 +639,12 @@ impl ViewProgram {
     /// The crop tool renders this rather than the real stack, so the picture
     /// on screen is the one the rect is cutting *from* and the user can drag
     /// back out over material the chain would otherwise have discarded. It has
-    /// to be the same widening effective_display_size reports, or the quad and
-    /// the texture disagree about the document's size and the render stretches.
+    /// to produce the size uncropped_chain_size reports, or the quad and the
+    /// texture disagree about the document and the render stretches --
+    /// the_rendered_stack_matches_the_document_the_view_lays_out pins that.
+    ///
+    /// This one does clone, because the renderer needs real modifiers; the size
+    /// query above walks the specs instead, since it runs far more often.
     fn widen_crops(modifiers: &[Modifier]) -> Vec<Modifier> {
         modifiers
             .iter()
@@ -735,23 +746,64 @@ impl ViewProgram {
         .truncate();
         let eff = self.effective_display_size();
         let local_px = (img_ndc + 1.0) * 0.5 * vec2(eff.x, -eff.y) + vec2(0.0, eff.y);
-        let doc_px = local_px + self.crop_origin();
 
-        // eff is the document actually on screen, so doc_px is already in it.
-        // Report source pixels by rescaling from that same document -- with the
-        // crop tool open that is the uncropped chain, not the cropped output.
-        // Rescaling from the cropped size while displaying the uncropped one
-        // sent the viewport centre well outside the image, which is what made
-        // the overlay's handles jump.
+        // local_px is in the document on screen. Getting back to source pixels
+        // undoes the chain's two effects in the order it applied them: a resize
+        // scaled the picture, a crop moved its origin. Scaling by
+        // image_size/displayed alone ignores the offset, so with a crop in the
+        // stack the eyedropper read a pixel shifted by the crop's origin.
+        //
+        // With the crop tool open the view already shows the uncropped chain,
+        // so there is no offset left to undo -- adding one there shifted every
+        // reading the other way.
         let displayed = if self.crop_tool_active {
             self.uncropped_chain_size()
         } else {
             self.chain_output_size()
         };
-        if displayed == Vec2::ZERO || displayed == self.image_size {
-            return Some(doc_px);
+        if displayed == Vec2::ZERO {
+            return Some(local_px);
         }
-        Some(doc_px * self.image_size / displayed)
+        let (scale, origin) = self.doc_to_source(self.crop_tool_active);
+        Some(local_px * scale + origin)
+    }
+
+    /// How to get from the displayed document back to source pixels.
+    ///
+    /// Returns the scale to divide out and the origin to add, in that order.
+    /// The two cannot be collapsed into one ratio: a resize scales the picture
+    /// while a crop only moves its origin, so `image_size / displayed` -- which
+    /// mixes both into a single factor -- reads the wrong pixel as soon as a
+    /// crop is in the stack.
+    ///
+    /// `widened` skips the crops, for the crop tool: it displays the uncropped
+    /// chain, so there is no offset left to undo.
+    fn doc_to_source(&self, widened: bool) -> (Vec2, Vec2) {
+        let mut cur = ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32);
+        let mut scale = Vec2::ONE;
+        let mut origin = Vec2::ZERO;
+        for m in self.modifiers.iter() {
+            if !m.has_visible_effect() {
+                continue;
+            }
+            if let Some(c) = m.kind.as_crop() {
+                if widened {
+                    continue;
+                }
+                let (x, y, _, _) = c.rect_in(cur);
+                // The offset is in this stage's space; carry it out through the
+                // scale accumulated so far to land in source pixels.
+                origin += vec2(x, y) * scale;
+                cur = m.kind.output_spec(cur);
+                continue;
+            }
+            let out = m.kind.output_spec(cur);
+            if out != cur && cur.w > 0 && cur.h > 0 {
+                scale *= vec2(cur.w as f32 / out.w as f32, cur.h as f32 / out.h as f32);
+            }
+            cur = out;
+        }
+        (scale, origin)
     }
 
     fn with_rasters<R>(
@@ -1864,6 +1916,51 @@ mod crop_tests {
                  {back_px:?}. The overlay measures against {bounds:?} but the \
                  program reports uv against a different image, so every drag \
                  is scaled by the ratio between them."
+            );
+        }
+    }
+
+    /// The eyedropper reports source pixels, and the crop tool must not move
+    /// them. With the tool open the view shows the *uncropped* chain, so
+    /// effective_display_size already spans the whole picture and adding
+    /// crop_origin on top shifts every reading by the crop's offset.
+    #[test]
+    fn the_crop_tool_does_not_shift_what_the_eyedropper_reads() {
+        let (w, h) = (800u32, 1040u32);
+        for tool_open in [false, true] {
+            let mut p = ViewProgram::default();
+            p.set_image(ImageData::new(vec![0u8; (w * h * 4) as usize], w, h));
+            p.modifiers_mut()
+                .push(Modifier::new(ModifierKind::Crop(Crop {
+                    x: 100.0,
+                    y: 200.0,
+                    width: 400.0,
+                    height: 500.0,
+                })));
+            p.set_bounds(Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: 1000.0,
+                height: 800.0,
+            });
+            p.crop_tool_active = tool_open;
+            p.fit();
+
+            let got = p
+                .screen_to_image_coords(vec2(500.0, 400.0))
+                .expect("the viewport centre is over the image");
+            // Closed, the document is the 400x500 crop and its centre is the
+            // crop's centre in source pixels. Open, the whole 800x1040 source
+            // is on screen and the centre is the source's centre.
+            let want = if tool_open {
+                vec2(400.0, 520.0)
+            } else {
+                vec2(300.0, 450.0)
+            };
+            assert!(
+                (got - want).length() <= 1.5,
+                "crop tool {}: the viewport centre reads {got:?}, not {want:?}",
+                if tool_open { "open" } else { "closed" }
             );
         }
     }

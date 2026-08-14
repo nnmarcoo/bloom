@@ -342,9 +342,10 @@ impl ModifierPipeline {
         let full_h = source.full_height as f32;
 
         let source_spec_doc = ImageSpec::new(source.full_width, source.full_height);
-        let doc_spec = infer_specs(source_spec_doc, plan)
-            .last()
-            .map_or(source_spec_doc, |s| s.output);
+        // One walk, used for doc_size here and for every stage's geometry
+        // below; it was being computed twice per prepare.
+        let specs = infer_specs(source_spec_doc, plan);
+        let doc_spec = specs.last().map_or(source_spec_doc, |s| s.output);
         self.doc_size = (doc_spec.w, doc_spec.h);
 
         let n_tiles = source.tiles.len();
@@ -392,7 +393,6 @@ impl ModifierPipeline {
             }
         }
 
-        let specs = infer_specs(source_spec_doc, plan);
         let out_spec_doc = doc_spec;
         let chain_offset = chain_doc_offset(&specs, plan);
         // A crop can move the document without changing its size, so "does the
@@ -651,15 +651,11 @@ impl ModifierPipeline {
                 let (iw, ih) = (specs[k].input.w as f32, specs[k].input.h as f32);
                 let (ow, oh) = (specs[k].output.w as f32, specs[k].output.h as f32);
                 // Crossing a stage backward: a crop translates its output, so
-                // it unmaps by adding the origin; everything else scales. Doing
-                // either with the other's rule lands the read on the wrong
-                // pixels, which for a crop means the whole region shifts.
+                // it unmaps by adding the origin; everything else scales.
                 // Which rule applies is a property of the *stage*, not of the
-                // origin it currently has: a crop with its origin at 0 still
-                // translates rather than scales, and crossing it as a scale
-                // widened the region by the crop's ratio. The stage rects then
-                // disagreed and the copy-out intersection clipped, which reads
-                // as part of the picture vanishing at some zooms.
+                // origin it currently has -- a crop anchored at 0 still
+                // translates, and crossing it as a scale widens the region by
+                // the crop's ratio.
                 let crop_origin = match &plan[k] {
                     PlanItem::Step(_, m) if m.kind.as_crop().is_some() => {
                         Some(roi::stage_origin(&m.kind, specs[k].input))
