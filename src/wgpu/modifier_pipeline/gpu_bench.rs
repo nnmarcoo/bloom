@@ -296,30 +296,62 @@ mod tests {
         println!();
     }
 
-    /// What a crop would be worth if it were a chain stage.
+    /// What a crop actually saves now that it is a chain stage.
     ///
-    /// Crop is applied at display time today, so every stage after it runs at
-    /// full size and the window discards the rest. As a stage it would shrink
-    /// the buffer, and everything downstream would run on the smaller image.
+    /// The "crop" columns prepend a real Crop stage to the chain at full source
+    /// size. The "ceiling" column runs the same chain on a genuinely smaller
+    /// source, which is the best a crop could possibly do -- it is what this
+    /// bench measured before the stage existed, and keeping it here says how
+    /// much of the predicted headroom the implementation actually collects.
     ///
-    /// There is no "crop as a stage" to measure yet, so the ceiling is measured
-    /// directly: the same chain on a genuinely smaller source is exactly what
-    /// the cropped chain would cost. The gap between the two columns is the
-    /// headroom the change is chasing. `set_viewport` is given the whole image
-    /// in both cases so the ROI machinery is not silently doing the crop's job
-    /// and flattering the result.
+    /// set_viewport is given the whole image throughout, so the ROI machinery
+    /// is not quietly doing the crop's job and flattering the numbers.
+    ///
+    /// Measured 4096x2731, 100% zoom, best of 5:
+    ///
+    /// ```text
+    /// chain                 no crop    crop 50%     crop 25%   ceiling 25%
+    /// pointwise x1             3.00  4.83 (0.6x)  2.99 (1.0x)         0.90
+    /// blur r=8                 9.18  5.36 (1.7x)  3.17 (2.9x)         0.99
+    /// blur r=32               17.62  6.94 (2.5x)  3.94 (4.5x)         1.63
+    /// blur r=128              21.13  6.66 (3.2x)  4.46 (4.7x)         2.57
+    /// chromatic aberration     5.30  3.41 (1.6x)  2.79 (1.9x)         1.53
+    /// ```
+    ///
+    /// Two things worth reading honestly. **Pointwise gets slower**: the stage
+    /// costs an allocation and a texture copy, and a fused pointwise run is
+    /// cheap enough that the copy dominates what it saves. **Nothing reaches
+    /// the ceiling** -- a 25% crop is 16x fewer pixels and the heaviest blur
+    /// collects 4.7x of a possible 8.2x. Both point at the same fixed cost:
+    /// the crop's copy, plus a gather still sized before the chain narrows.
+    /// Eliding the copy when the crop's output already lines up with its
+    /// input's slab would recover most of it, and is the obvious next thing to
+    /// try if crop-heavy previews feel slow.
     #[test]
     #[ignore = "GPU timing baseline; run with --release --ignored --nocapture"]
-    fn gpu_bench_crop_headroom() {
+    fn gpu_bench_crop_stage() {
         let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let Some((device, queue)) = try_device() else {
             eprintln!("gpu_bench_crop_headroom: no adapter, skipping");
             return;
         };
 
+        use crate::modifiers::kinds::Crop;
+
         // Fractions of each axis kept by the crop. 0.5 keeps a quarter of the
         // pixels, 0.25 a sixteenth.
         const KEEP: [f32; 3] = [1.0, 0.5, 0.25];
+
+        let cropped = |chain: &[Modifier], keep: f32| -> Vec<Modifier> {
+            let mut v = vec![m(ModifierKind::Crop(Crop {
+                x: 0.0,
+                y: 0.0,
+                width: (W as f32 * keep).max(1.0),
+                height: (H as f32 * keep).max(1.0),
+            }))];
+            v.extend(chain.iter().cloned());
+            v
+        };
 
         let cases: Vec<(&str, Vec<Modifier>)> = vec![
             (
@@ -337,48 +369,63 @@ mod tests {
             ),
         ];
 
-        println!("\nCrop headroom -- what a crop would save if it were a stage");
-        println!("(chain cost at the size a crop would leave; best of {RUNS}, 100% zoom)");
-        println!("  full frame is {W}x{H}");
-        println!("  {:-<62}", "");
+        // The full-size source, reused for every cropped chain.
+        let full_image = ImageData::new(pixels(W, H), W, H);
+        let mut full_source = make_source(&device, &queue, &full_image);
+        set_viewport(&mut full_source, 1.0, 1.0);
+
         println!(
-            "  {:<24} {:>10} {:>10} {:>12}",
-            "chain", "full ms", "crop ms", "speedup"
+            "
+Crop as a chain stage -- measured saving, best of {RUNS}, 100% zoom"
         );
-        println!("  {:-<62}", "");
+        println!("  full frame is {W}x{H}");
+        println!("  {:-<78}", "");
+        println!(
+            "  {:<22} {:>9} {:>15} {:>15} {:>12}",
+            "chain", "no crop", "crop 50%", "crop 25%", "ceiling 25%"
+        );
+        println!("  {:-<78}", "");
 
         for (label, modifiers) in &cases {
-            let mut row = vec![String::new(); KEEP.len()];
-            let mut full_ms: Option<f64> = None;
+            let base = time_chain(&device, &queue, &full_source, modifiers)
+                .map(|d| d.as_secs_f64() * 1000.0);
 
-            for (i, keep) in KEEP.iter().enumerate() {
-                let (cw, ch) = (
-                    ((W as f32 * keep) as u32).max(1),
-                    ((H as f32 * keep) as u32).max(1),
-                );
-                let image = ImageData::new(pixels(cw, ch), cw, ch);
-                let mut source = make_source(&device, &queue, &image);
-                set_viewport(&mut source, 1.0, 1.0);
-
-                let ms = time_chain(&device, &queue, &source, modifiers)
+            let mut cells: Vec<String> = Vec::new();
+            for keep in KEEP.iter().skip(1) {
+                let chain = cropped(modifiers, *keep);
+                let ms = time_chain(&device, &queue, &full_source, &chain)
                     .map(|d| d.as_secs_f64() * 1000.0);
-                match (ms, full_ms) {
-                    (Some(v), None) => {
-                        full_ms = Some(v);
-                        row[i] = format!("{v:.2}");
-                    }
-                    (Some(v), Some(f)) => row[i] = format!("{v:.2} ({:.1}x)", f / v),
-                    (None, _) => row[i] = "n/c".into(),
-                }
+                cells.push(match (ms, base) {
+                    (Some(v), Some(b)) => format!("{v:.2} ({:.1}x)", b / v),
+                    (Some(v), None) => format!("{v:.2}"),
+                    (None, _) => "n/c".into(),
+                });
             }
 
+            // The ceiling: the same chain on a source that is already small.
+            let keep = KEEP[KEEP.len() - 1];
+            let (cw, ch) = (
+                ((W as f32 * keep) as u32).max(1),
+                ((H as f32 * keep) as u32).max(1),
+            );
+            let small = ImageData::new(pixels(cw, ch), cw, ch);
+            let mut small_source = make_source(&device, &queue, &small);
+            set_viewport(&mut small_source, 1.0, 1.0);
+            let ceiling = time_chain(&device, &queue, &small_source, modifiers)
+                .map(|d| d.as_secs_f64() * 1000.0);
+
             println!(
-                "  {:<24} {:>10} {:>10} {:>12}",
-                label, row[0], row[1], row[2]
+                "  {:<22} {:>9} {:>15} {:>15} {:>12}",
+                label,
+                base.map_or("n/c".into(), |v| format!("{v:.2}")),
+                cells[0],
+                cells[1],
+                ceiling.map_or("n/c".into(), |v| format!("{v:.2}")),
             );
         }
-        println!("  {:-<62}", "");
-        println!("  columns: keep 100% / keep 50% per axis / keep 25% per axis");
+        println!("  {:-<78}", "");
+        println!("  crop N% keeps N% of each axis, so 50% is a quarter of the pixels");
+        println!("  ceiling = same chain on an already-small source: the best a crop could do");
         println!();
     }
 
