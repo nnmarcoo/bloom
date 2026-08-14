@@ -6,17 +6,18 @@
 //! dimensions while reporting coordinates in source pixels, since that is what
 //! the user is pointing at.
 //!
-//! effective_display_size and crop_origin are both in the resized document, and
-//! crop fractions multiply the resized size, not the source -- mixing the two
-//! put the pixel grid's transform in one space and its bounds in another.
-//! Resize is applied before crop, matching export::geom_of, or the preview and
-//! the file would disagree.
+//! Crop is a chain stage, so the document the view lays out is simply the
+//! chain's output and there is no display-time crop window at all. Keeping one
+//! meant the crop was applied twice -- once by the chain, once by the shader
+//! remapping uv into the window -- so the surviving strip was stretched across
+//! the whole quad. crop_uv is now always the unit rect, and
+//! a_cropped_document_keeps_its_shape_on_screen pins that.
 //!
-//! Crop itself stores source pixels, so crop() divides by the source to get a
-//! fraction. The fraction carries no scale, which is what lets the display path
-//! resolve it against source-space tiles while the size math resolves it
-//! against the document. Dividing by the document there would exceed 1.0 under
-//! a downscale and sample past the tile.
+//! The exception is the crop tool: while it is open the view shows the
+//! *uncropped* chain, so the rect can be dragged back out over material the
+//! chain would otherwise discard. That is effective_display_size branching on
+//! crop_tool_active, with crop_origin saying where the kept region sits inside
+//! what is shown.
 //!
 //! The histogram renders on a *bounded* source, not the document. Rendering
 //! the whole document costs time proportional to its area and is paid on every
@@ -538,30 +539,6 @@ impl ViewProgram {
         Some((s.w, s.h))
     }
 
-    fn crop(&self) -> Option<[f32; 4]> {
-        if self.image_size == Vec2::ZERO {
-            return None;
-        }
-        self.modifiers.iter().find_map(|m| {
-            if !m.enabled {
-                return None;
-            }
-            let crop = m.kind.as_crop()?;
-            let iw = self.image_size.x;
-            let ih = self.image_size.y;
-            Some([
-                crop.x / iw,
-                crop.y / ih,
-                (crop.x + crop.width) / iw,
-                (crop.y + crop.height) / ih,
-            ])
-        })
-    }
-
-    fn displayed_crop(&self) -> Option<[f32; 4]> {
-        self.crop().filter(|_| !self.crop_tool_active)
-    }
-
     pub fn active_trim(&self, duration: Duration) -> Option<(Duration, Duration)> {
         let trim = self
             .modifiers
@@ -690,13 +667,10 @@ impl ViewProgram {
         if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
             return None;
         }
-        let display_uv = if let Some([min_u, min_v, max_u, max_v]) = self.displayed_crop() {
-            let span = vec2((max_u - min_u).max(1e-6), (max_v - min_v).max(1e-6));
-            vec2((uv.x - min_u) / span.x, (uv.y - min_v) / span.y)
-        } else {
-            uv
-        };
-        let img_ndc = vec4(display_uv.x * 2.0 - 1.0, 1.0 - display_uv.y * 2.0, 0.0, 1.0);
+        // uv is in the displayed document, which is the chain's output and is
+        // already cropped. Remapping through a crop window here would apply it
+        // a second time.
+        let img_ndc = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
         let screen_ndc = self.build_transform(viewport) * img_ndc;
         Some(vec2(
             (screen_ndc.x + 1.0) * 0.5 * viewport.x,
@@ -1264,7 +1238,10 @@ impl Program<Message> for ViewProgram {
         ViewPrimitive {
             uniforms: DisplayUniforms {
                 transform: self.build_transform(viewport),
-                crop_uv: self.displayed_crop().unwrap_or([0.0, 0.0, 1.0, 1.0]),
+                // No display-time window: the chain's output is already
+                // cropped. Passing one here windows an image that has
+                // already been cropped, which stretches what is left.
+                crop_uv: [0.0, 0.0, 1.0, 1.0],
             },
             image: self.image.clone(),
             scale: s,
@@ -1697,10 +1674,65 @@ mod crop_tests {
         program.crop_tool_active = true;
         assert_eq!(exported_size(&program), (50, 25));
         assert_eq!(
-            program.displayed_crop(),
-            None,
-            "the tool suppresses the display window so the rect can be dragged"
+            program.effective_display_size(),
+            vec2(100.0, 50.0),
+            "the tool shows the uncropped picture so the rect can be dragged \
+             back out, but that must not change what is exported"
         );
+    }
+
+    /// A crop must not be applied twice: once by the chain, once by the
+    /// display window.
+    ///
+    /// The chain's output is already cropped, so passing a crop_uv to the
+    /// display pass windows an image that has already been windowed. The
+    /// shader remaps uv into that window, so the surviving strip is stretched
+    /// across the whole quad -- on an 800x1040 image, moving x to ~268 lost
+    /// half the picture and smeared the rest horizontally.
+    #[test]
+    fn a_cropped_document_keeps_its_shape_on_screen() {
+        let (w, h) = (800u32, 1040u32);
+        let viewport = vec2(1000.0, 800.0);
+
+        for (cx, cw) in [(0.0f32, 800.0f32), (268.0, 532.0), (400.0, 400.0)] {
+            let mut p = ViewProgram::default();
+            p.set_image(ImageData::new(vec![0u8; (w * h * 4) as usize], w, h));
+            p.modifiers_mut()
+                .push(Modifier::new(ModifierKind::Crop(Crop {
+                    x: cx,
+                    y: 0.0,
+                    width: cw,
+                    height: h as f32,
+                })));
+            p.set_bounds(Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: viewport.x,
+                height: viewport.y,
+            });
+            p.fit();
+
+            // The document really is the cropped size.
+            assert_eq!(p.effective_display_size(), vec2(cw, h as f32));
+
+            // Its corners on screen must keep the document's aspect ratio. A
+            // second crop applied at display time stretches one axis only, so
+            // the drawn aspect stops matching the document's.
+            let tl = p.image_uv_to_screen(vec2(0.0, 0.0)).expect("top left");
+            let br = p.image_uv_to_screen(vec2(1.0, 1.0)).expect("bottom right");
+            let drawn = (br - tl).abs();
+            let want = cw / h as f32;
+            let got = drawn.x / drawn.y;
+            assert!(
+                (got - want).abs() < 0.01,
+                "crop x={cx} w={cw}: the document is {cw}x{h} (aspect {want:.3}) \
+                 but it is drawn {:.1}x{:.1} (aspect {got:.3}). The crop is \
+                 being applied twice -- once by the chain and once by the \
+                 display window -- so the kept strip is stretched.",
+                drawn.x,
+                drawn.y
+            );
+        }
     }
 
     #[test]
@@ -1738,7 +1770,11 @@ mod crop_tests {
     fn a_disabled_crop_is_neither_shown_nor_exported() {
         let mut program = program_with_crop();
         program.modifiers_mut()[0].enabled = false;
-        assert_eq!(program.displayed_crop(), None);
+        assert_eq!(
+            program.effective_display_size(),
+            vec2(100.0, 50.0),
+            "a disabled crop must leave the view at the source size"
+        );
         assert_eq!(
             exported_size(&program),
             (100, 50),
