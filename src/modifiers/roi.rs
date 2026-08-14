@@ -10,6 +10,12 @@
 //! backward: unmap first to cross a stage that changes dimensions, then dilate
 //! by the apron in the input's own space. Reversing them would apply a
 //! half-size apron in a full-size space.
+//!
+//! unmap_region carries a scale and no offset, which is everything a resize
+//! needs. A crop is the other half of that: same scale, pure offset. unmap_offset
+//! crosses it, and crop_stage_feasibility shows the two together reproduce the
+//! tile culling the display-time crop does today -- which is what a crop stage
+//! would have to preserve.
 
 use crate::modifiers::{InputRequest, ModifierKind};
 
@@ -81,6 +87,27 @@ pub fn unmap_region(from: (f32, f32), to: (f32, f32), r: RegionPx) -> RegionPx {
     }
     let (sx, sy) = (to.0 / from.0, to.1 / from.1);
     [r[0] * sx, r[1] * sy, r[2] * sx, r[3] * sy]
+}
+
+/// Cross a stage that *translates* its input rather than scaling it.
+///
+/// unmap_region carries a scale but no offset, which is all a resize needs. A
+/// crop is the opposite: same scale, pure offset, where output pixel (0, 0)
+/// comes from input pixel (origin). A backward walk that only scales cannot
+/// express it, so a crop stage would report the wrong source region and tile
+/// culling would read the wrong tiles.
+#[allow(
+    dead_code,
+    reason = "proves the crop-as-a-stage walk before the stage exists; \
+              crop_stage_feasibility is its only caller until then"
+)]
+pub fn unmap_offset(origin: (f32, f32), r: RegionPx) -> RegionPx {
+    [
+        r[0] + origin.0,
+        r[1] + origin.1,
+        r[2] + origin.0,
+        r[3] + origin.1,
+    ]
 }
 
 pub fn input_needed(class: StepClass, out: RegionPx, w: f32, h: f32) -> RegionPx {
@@ -339,6 +366,148 @@ mod tests {
                 "{name}: StepClass {step:?} and EffectClass {effect:?} describe \
                  different input reaches, so ROI and the backend would disagree \
                  about how much input this stage needs."
+            );
+        }
+    }
+
+    /// Step 2 of the crop-as-a-stage feasibility check.
+    ///
+    /// Today a crop culls tiles at display time: view_pipeline intersects the
+    /// crop rect with each tile and skips the ones that miss. If crop became a
+    /// chain stage that culling has to fall out of the backward ROI walk
+    /// instead, or large documents would start reading tiles they do not need.
+    ///
+    /// These tests answer whether the walk can reproduce it. They are pure
+    /// geometry -- no crop stage exists yet -- so they gate the feature rather
+    /// than test it.
+    mod crop_stage_feasibility {
+        use super::*;
+
+        const FULL_W: f32 = 4096.0;
+        const FULL_H: f32 = 2731.0;
+        const TILE: f32 = 1024.0;
+
+        // The crop the user drew, in source pixels.
+        const CROP: RegionPx = [1500.0, 800.0, 2600.0, 1900.0];
+
+        fn tiles() -> Vec<RegionPx> {
+            let mut v = Vec::new();
+            let mut y = 0.0;
+            while y < FULL_H {
+                let mut x = 0.0;
+                while x < FULL_W {
+                    v.push([x, y, (x + TILE).min(FULL_W), (y + TILE).min(FULL_H)]);
+                    x += TILE;
+                }
+                y += TILE;
+            }
+            v
+        }
+
+        fn intersects(a: RegionPx, b: RegionPx) -> bool {
+            a[0].max(b[0]) < a[2].min(b[2]) && a[1].max(b[1]) < a[3].min(b[3])
+        }
+
+        /// What view_pipeline does today: intersect the crop with each tile.
+        fn culled_today() -> Vec<bool> {
+            tiles().iter().map(|t| !intersects(CROP, *t)).collect()
+        }
+
+        /// What a crop stage would do: ask the backward walk which source
+        /// region feeds the crop's whole output, then cull against that.
+        fn culled_by_walk(chain_after_crop: &[StepClass]) -> Vec<bool> {
+            let (cw, ch) = (CROP[2] - CROP[0], CROP[3] - CROP[1]);
+
+            // Start from the crop stage's entire output and walk back through
+            // anything downstream of it, in the cropped space.
+            let mut cur = [0.0, 0.0, cw, ch];
+            for c in chain_after_crop.iter().rev() {
+                cur = input_needed(*c, cur, cw, ch);
+            }
+
+            // Cross the crop itself: pure translation, no scale.
+            let src = clamp_region(unmap_offset((CROP[0], CROP[1]), cur), FULL_W, FULL_H);
+            tiles().iter().map(|t| !intersects(src, *t)).collect()
+        }
+
+        #[test]
+        fn a_crop_stage_culls_exactly_the_tiles_the_display_crop_culls() {
+            assert_eq!(
+                culled_by_walk(&[]),
+                culled_today(),
+                "the backward walk through a crop stage must reach the same \
+                 source region the display-time crop culls against. If it does \
+                 not, moving crop into the chain loses tile culling and large \
+                 documents read tiles they do not need."
+            );
+        }
+
+        #[test]
+        fn culling_survives_a_pointwise_stage_after_the_crop() {
+            assert_eq!(culled_by_walk(&[StepClass::Pointwise]), culled_today());
+        }
+
+        #[test]
+        fn a_blur_after_the_crop_widens_the_read_but_not_past_the_apron() {
+            let with_blur = culled_by_walk(&[StepClass::Kernel {
+                apron_px: 32.0,
+                separable: true,
+            }]);
+            let plain = culled_today();
+
+            // A blur legitimately reads a little outside the crop, so it may
+            // keep tiles the display crop dropped -- but never fewer.
+            for (i, (blurred_culls, plain_culls)) in with_blur.iter().zip(&plain).enumerate() {
+                let dropped_a_needed_tile = *blurred_culls && !*plain_culls;
+                assert!(
+                    !dropped_a_needed_tile,
+                    "tile {i}: the blurred chain culled a tile the plain crop \
+                     kept, so the apron was applied in the wrong direction"
+                );
+            }
+            assert!(
+                with_blur.iter().filter(|c| **c).count() > 0,
+                "a 32px apron around a {}x{} crop of a {FULL_W}x{FULL_H} image \
+                 should still cull most tiles; culling nothing means the walk \
+                 widened to the whole frame",
+                CROP[2] - CROP[0],
+                CROP[3] - CROP[1]
+            );
+        }
+
+        #[test]
+        fn a_whole_frame_stage_after_the_crop_still_only_reads_the_crop() {
+            // WholeFrame widens to the stage's own frame, which after a crop is
+            // the cropped frame -- not the source. That containment is the
+            // whole point of cropping early.
+            assert_eq!(
+                culled_by_walk(&[StepClass::WholeFrame]),
+                culled_today(),
+                "a full-frame effect placed after a crop reads the cropped \
+                 frame. If this widened to the source, cropping early would \
+                 stop being an optimisation."
+            );
+        }
+
+        #[test]
+        fn the_offset_unmap_is_what_makes_this_work() {
+            // Without the offset the walk lands at the origin and culls the
+            // wrong tiles -- this is the failure the feature has to avoid.
+            let (cw, ch) = (CROP[2] - CROP[0], CROP[3] - CROP[1]);
+            let scale_only = clamp_region(
+                unmap_region((cw, ch), (cw, ch), [0.0, 0.0, cw, ch]),
+                FULL_W,
+                FULL_H,
+            );
+            let wrong: Vec<bool> = tiles()
+                .iter()
+                .map(|t| !intersects(scale_only, *t))
+                .collect();
+            assert_ne!(
+                wrong,
+                culled_today(),
+                "if a scale-only unmap already reproduced the culling, the \
+                 offset would be unnecessary; this pins why it is needed"
             );
         }
     }
