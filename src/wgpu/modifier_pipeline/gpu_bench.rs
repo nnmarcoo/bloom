@@ -296,6 +296,92 @@ mod tests {
         println!();
     }
 
+    /// What a crop would be worth if it were a chain stage.
+    ///
+    /// Crop is applied at display time today, so every stage after it runs at
+    /// full size and the window discards the rest. As a stage it would shrink
+    /// the buffer, and everything downstream would run on the smaller image.
+    ///
+    /// There is no "crop as a stage" to measure yet, so the ceiling is measured
+    /// directly: the same chain on a genuinely smaller source is exactly what
+    /// the cropped chain would cost. The gap between the two columns is the
+    /// headroom the change is chasing. `set_viewport` is given the whole image
+    /// in both cases so the ROI machinery is not silently doing the crop's job
+    /// and flattering the result.
+    #[test]
+    #[ignore = "GPU timing baseline; run with --release --ignored --nocapture"]
+    fn gpu_bench_crop_headroom() {
+        let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((device, queue)) = try_device() else {
+            eprintln!("gpu_bench_crop_headroom: no adapter, skipping");
+            return;
+        };
+
+        // Fractions of each axis kept by the crop. 0.5 keeps a quarter of the
+        // pixels, 0.25 a sixteenth.
+        const KEEP: [f32; 3] = [1.0, 0.5, 0.25];
+
+        let cases: Vec<(&str, Vec<Modifier>)> = vec![
+            (
+                "pointwise x1",
+                vec![m(ModifierKind::Exposure(Exposure { exposure: 0.3 }))],
+            ),
+            ("blur r=8", blur(8.0)),
+            ("blur r=32", blur(32.0)),
+            ("blur r=128", blur(128.0)),
+            (
+                "chromatic aberration",
+                vec![m(ModifierKind::ChromaticAberration(ChromaticAberration {
+                    amount: 20.0,
+                }))],
+            ),
+        ];
+
+        println!("\nCrop headroom -- what a crop would save if it were a stage");
+        println!("(chain cost at the size a crop would leave; best of {RUNS}, 100% zoom)");
+        println!("  full frame is {W}x{H}");
+        println!("  {:-<62}", "");
+        println!(
+            "  {:<24} {:>10} {:>10} {:>12}",
+            "chain", "full ms", "crop ms", "speedup"
+        );
+        println!("  {:-<62}", "");
+
+        for (label, modifiers) in &cases {
+            let mut row = vec![String::new(); KEEP.len()];
+            let mut full_ms: Option<f64> = None;
+
+            for (i, keep) in KEEP.iter().enumerate() {
+                let (cw, ch) = (
+                    ((W as f32 * keep) as u32).max(1),
+                    ((H as f32 * keep) as u32).max(1),
+                );
+                let image = ImageData::new(pixels(cw, ch), cw, ch);
+                let mut source = make_source(&device, &queue, &image);
+                set_viewport(&mut source, 1.0, 1.0);
+
+                let ms = time_chain(&device, &queue, &source, modifiers)
+                    .map(|d| d.as_secs_f64() * 1000.0);
+                match (ms, full_ms) {
+                    (Some(v), None) => {
+                        full_ms = Some(v);
+                        row[i] = format!("{v:.2}");
+                    }
+                    (Some(v), Some(f)) => row[i] = format!("{v:.2} ({:.1}x)", f / v),
+                    (None, _) => row[i] = "n/c".into(),
+                }
+            }
+
+            println!(
+                "  {:<24} {:>10} {:>10} {:>12}",
+                label, row[0], row[1], row[2]
+            );
+        }
+        println!("  {:-<62}", "");
+        println!("  columns: keep 100% / keep 50% per axis / keep 25% per axis");
+        println!();
+    }
+
     #[test]
     #[ignore = "GPU timing baseline; run with --release --ignored --nocapture"]
     fn gpu_bench_resize() {
