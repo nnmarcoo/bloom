@@ -19,6 +19,7 @@ use crate::modifiers::kinds::{
     Posterize, RadialBlur, Resize, Sepia, Solarize, Temperature, Text, Threshold, Trim, Vibrance,
     Vignette,
 };
+use crate::modifiers::plan::ImageSpec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Axis {
@@ -123,6 +124,12 @@ pub trait ModifierImpl {
 
     fn effect_class(&self) -> EffectClass {
         EffectClass::from_input_request(self.input_request())
+    }
+
+    /// The size this modifier produces from `input`. Defaults to identity, so
+    /// only a modifier that actually changes dimensions overrides it.
+    fn output_spec(&self, input: ImageSpec) -> ImageSpec {
+        input
     }
 
     fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>);
@@ -280,6 +287,10 @@ impl ModifierKind {
 
     pub fn effect_class(&self) -> EffectClass {
         self.as_impl().effect_class()
+    }
+
+    pub fn output_spec(&self, input: ImageSpec) -> ImageSpec {
+        self.as_impl().output_spec(input)
     }
 
     pub fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>) {

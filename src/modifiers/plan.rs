@@ -16,8 +16,12 @@
 //! This lives in `modifiers` rather than `wgpu` because it is backend-agnostic:
 //! the GPU pipeline and the CPU export path consume the same plan, which is what
 //! keeps the two from drifting apart.
+//!
+//! Stage sizes come from each modifier's own output_spec, never from a match on
+//! the kind here. A modifier that changes dimensions declares that itself, so
+//! adding one does not mean editing the planner.
 
-use crate::modifiers::{Modifier, ModifierKind};
+use crate::modifiers::Modifier;
 
 #[derive(Debug)]
 pub enum PlanItem<'a> {
@@ -53,20 +57,15 @@ impl StageSpec {
     }
 }
 
-fn output_spec(kind: &ModifierKind, input: ImageSpec) -> Option<ImageSpec> {
-    match kind {
-        ModifierKind::Resize(r) => Some(r.output_for(input)),
-        _ => None,
-    }
-}
-
 pub fn infer_specs(source: ImageSpec, plan: &[PlanItem]) -> Vec<StageSpec> {
     let mut cur = source;
     plan.iter()
         .map(|item| {
             let output = match item {
+                // A fused run is pointwise by construction, and pointwise
+                // modifiers take output_spec's identity default.
                 PlanItem::Fused(_) => cur,
-                PlanItem::Step(_, m) => output_spec(&m.kind, cur).unwrap_or(cur),
+                PlanItem::Step(_, m) => m.kind.output_spec(cur),
             };
             let spec = StageSpec { input: cur, output };
             cur = output;
@@ -79,6 +78,28 @@ pub fn chain_output_spec(source: ImageSpec, plan: &[PlanItem]) -> ImageSpec {
     infer_specs(source, plan)
         .last()
         .map_or(source, |s| s.output)
+}
+
+/// The input size each modifier in the raw stack sees, indexed by its position
+/// in `modifiers`.
+///
+/// This walks the stack rather than the plan so that every entry has an answer,
+/// including modifiers the planner drops. A disabled modifier still shows a
+/// panel, and that panel must resolve its numbers against the size the modifier
+/// would receive were it switched back on -- which is the size at its position,
+/// with the disabled ones contributing nothing.
+pub fn stage_inputs(source: ImageSpec, modifiers: &[Modifier]) -> Vec<ImageSpec> {
+    let mut cur = source;
+    modifiers
+        .iter()
+        .map(|m| {
+            let input = cur;
+            if m.has_visible_effect() {
+                cur = m.kind.output_spec(cur);
+            }
+            input
+        })
+        .collect()
 }
 
 pub fn plan_modifiers(modifiers: &[Modifier]) -> Vec<PlanItem<'_>> {
@@ -148,6 +169,144 @@ mod tests {
     #[test]
     fn an_empty_plan_outputs_the_source_size() {
         assert_eq!(chain_output_spec(SRC, &[]), SRC);
+    }
+
+    #[test]
+    fn stage_sizes_come_from_each_modifiers_own_declaration() {
+        use crate::modifiers::ModifierType;
+
+        let src = ImageSpec::new(800, 600);
+        for t in ModifierType::ALL {
+            let kind = ModifierKind::from(t.clone());
+            let name = kind.name();
+            let declared = kind.output_spec(src);
+
+            let mods = vec![m(kind)];
+            let plan = plan_modifiers(&mods);
+            let Some(spec) = infer_specs(src, &plan).into_iter().next() else {
+                continue;
+            };
+
+            assert_eq!(
+                spec.output, declared,
+                "{name}: the plan produced {:?} but the modifier declares \
+                 {declared:?}. infer_specs must read output_spec rather than \
+                 special-case a kind, or a new dimension-changing modifier \
+                 renders at the wrong size until the planner is edited too.",
+                spec.output
+            );
+        }
+    }
+
+    #[test]
+    fn a_modifier_that_declares_a_new_size_needs_no_planner_change() {
+        let src = ImageSpec::new(800, 600);
+        let half = m(ModifierKind::Resize(Resize {
+            mode: ResizeMode::Percent,
+            width: 50.0,
+            height: 50.0,
+            filter: ResizeFilter::Lanczos,
+            lock_aspect: true,
+        }));
+        assert_eq!(half.kind.output_spec(src), ImageSpec::new(400, 300));
+
+        let plan = plan_modifiers(std::slice::from_ref(&half));
+        assert_eq!(
+            chain_output_spec(src, &plan),
+            half.kind.output_spec(src),
+            "the chain's output must be exactly what the modifier declared"
+        );
+    }
+
+    #[test]
+    fn a_modifier_sees_the_size_the_one_before_it_produced() {
+        let mods = vec![resize_pct(50.0), blur(), resize_pct(50.0)];
+        let inputs = stage_inputs(SRC, &mods);
+
+        assert_eq!(inputs[0], SRC, "the first modifier reads the source");
+        assert_eq!(
+            inputs[1],
+            ImageSpec::new(960, 540),
+            "the blur sits after a half resize"
+        );
+        assert_eq!(
+            inputs[2],
+            ImageSpec::new(960, 540),
+            "the second resize resolves its percentage against the already \
+             halved image, not against the source"
+        );
+    }
+
+    #[test]
+    fn stage_inputs_agrees_with_the_planner() {
+        let mods = vec![
+            exposure(),
+            resize_pct(50.0),
+            blur(),
+            resize_pct(200.0),
+            exposure(),
+        ];
+        let inputs = stage_inputs(SRC, &mods);
+        let plan = plan_modifiers(&mods);
+        let specs = infer_specs(SRC, &plan);
+
+        // Every planned Step must see the same input the UI reports for it.
+        for (item, spec) in plan.iter().zip(&specs) {
+            if let PlanItem::Step(i, _) = item {
+                assert_eq!(
+                    inputs[*i], spec.input,
+                    "modifier {i}: the panel resolves against {:?} while the \
+                     renderer feeds it {:?}. stage_inputs and infer_specs walk \
+                     the same declarations, so they must not disagree -- that \
+                     gap is what made a panel show one size and the canvas \
+                     render another.",
+                    inputs[*i], spec.input
+                );
+            }
+        }
+
+        assert_eq!(
+            chain_output_spec(SRC, &plan),
+            SRC,
+            "sanity: halving then doubling returns to the source size"
+        );
+    }
+
+    #[test]
+    fn every_modifier_has_a_stage_input() {
+        let mods = vec![exposure(), resize_pct(50.0), blur()];
+        assert_eq!(
+            stage_inputs(SRC, &mods).len(),
+            mods.len(),
+            "stage_inputs is indexed by stack position, so every modifier -- \
+             including ones the planner drops -- must have an entry"
+        );
+    }
+
+    #[test]
+    fn a_disabled_resize_does_not_move_the_stages_after_it() {
+        let mut off = resize_pct(50.0);
+        off.enabled = false;
+        let mods = vec![off, blur()];
+        assert_eq!(
+            stage_inputs(SRC, &mods)[1],
+            SRC,
+            "a disabled resize contributes nothing, so the blur still reads \
+             the source"
+        );
+    }
+
+    #[test]
+    fn a_disabled_modifier_still_reports_its_own_input() {
+        let mut off = blur();
+        off.enabled = false;
+        let mods = vec![resize_pct(50.0), off];
+        assert_eq!(
+            stage_inputs(SRC, &mods)[1],
+            ImageSpec::new(960, 540),
+            "a disabled modifier still shows a panel, and that panel must \
+             resolve against the size it would receive once re-enabled"
+        );
     }
 
     #[test]

@@ -65,7 +65,7 @@ use crate::{
         Modifier, cpu,
         drawing_raster::{DrawingLayerCache, LayerView},
         kinds::{Resize, ResizeMode},
-        plan::{ImageSpec, chain_output_spec, plan_modifiers},
+        plan::{ImageSpec, chain_output_spec, plan_modifiers, stage_inputs},
         text_raster::TextRaster,
     },
     wgpu::{
@@ -520,6 +520,16 @@ impl ViewProgram {
             return None;
         }
         Some((self.image_size.x as u32, self.image_size.y as u32))
+    }
+
+    /// The size the modifier at `index` receives, which is the source only when
+    /// nothing upstream resizes. Parameters resolved against the wrong one of
+    /// those render at a size the panel never showed.
+    pub fn stage_input_size(&self, index: usize) -> Option<(u32, u32)> {
+        let (w, h) = self.image_size()?;
+        let inputs = stage_inputs(ImageSpec::new(w, h), &self.modifiers);
+        let s = inputs.get(index).copied()?;
+        Some((s.w, s.h))
     }
 
     fn crop(&self) -> Option<[f32; 4]> {
@@ -1726,6 +1736,47 @@ mod eyedropper_resize_tests {
             program.modifiers_mut().push(m);
         }
         program
+    }
+
+    #[test]
+    fn a_chained_resize_edits_against_the_size_it_receives() {
+        use crate::modifiers::ModifierParam;
+
+        let mut program = program_with(vec![resize_pct(50.0), resize_pct(100.0)], 800, 800);
+
+        assert_eq!(
+            program.stage_input_size(1),
+            Some((400, 400)),
+            "the second resize sits after a half resize, so it receives 400x400"
+        );
+
+        // Drive the second resize the way the panel does.
+        let img_size = program.stage_input_size(1);
+        program.modifiers_mut()[1].apply_param(ModifierParam::ResizeWidth(50.0), img_size);
+
+        let doc = chain_output_spec(
+            ImageSpec::new(800, 800),
+            &plan_modifiers(&program.modifiers),
+        );
+        assert_eq!(
+            doc,
+            ImageSpec::new(200, 200),
+            "50% of the 400x400 it receives is 200x200. Resolving the edit \
+             against the 800x800 source instead would size the clamp and the \
+             rendered document off different images."
+        );
+    }
+
+    #[test]
+    fn the_first_modifier_still_sees_the_source() {
+        let program = program_with(vec![resize_pct(50.0)], 800, 800);
+        assert_eq!(program.stage_input_size(0), Some((800, 800)));
+    }
+
+    #[test]
+    fn a_stage_input_is_none_past_the_end_of_the_stack() {
+        let program = program_with(vec![resize_pct(50.0)], 800, 800);
+        assert_eq!(program.stage_input_size(7), None);
     }
 
     #[test]

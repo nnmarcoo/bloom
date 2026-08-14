@@ -3,6 +3,11 @@
 //! Modifiers live in an ordered list the user can reorder freely; nothing here
 //! restricts what may sit where. Geometry-changing modifiers are handled by the
 //! renderer's planning, not by constraining the stack.
+//!
+//! An edit is resolved against the size that modifier *receives*, via
+//! stage_input_size, not against the source. The two differ as soon as anything
+//! upstream resizes, and a parameter clamped against the wrong one produces a
+//! document the panel never showed.
 
 use iced::Task;
 
@@ -214,7 +219,7 @@ pub fn update(
                 param,
                 ModifierParam::ResizeWidth(_) | ModifierParam::ResizeHeight(_)
             );
-            let img_size = program.image_size();
+            let img_size = program.stage_input_size(i);
             if let Some(m) = program.modifiers_mut().get_mut(i) {
                 m.apply_param(param, img_size);
             }
@@ -412,6 +417,46 @@ mod fit_on_resize_tests {
             p,
             false,
             EditMsg::Update(0, param),
+        );
+    }
+
+    #[test]
+    fn an_edit_resolves_against_the_stage_input_not_the_source() {
+        use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
+
+        let mut p = program_with_resize();
+        p.modifiers_mut()
+            .push(Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Pixels,
+                width: 800.0,
+                height: 600.0,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: false,
+            })));
+        // Halve the source with the first resize, so the second receives 400x300.
+        let _ = update(
+            &mut EditState::default(),
+            &mut p,
+            false,
+            EditMsg::Update(0, ModifierParam::ResizeWidth(50.0)),
+        );
+
+        // Ask the second resize for more width than its input has.
+        let _ = update(
+            &mut EditState::default(),
+            &mut p,
+            false,
+            EditMsg::Update(1, ModifierParam::ResizeWidth(800.0)),
+        );
+
+        let doc = chain_output_spec(ImageSpec::new(SRC_W, SRC_H), &plan_modifiers(&p.modifiers));
+        assert_eq!(
+            doc.w, 400,
+            "the second resize receives a 400px-wide image, so its width must \
+             clamp to 400. Clamping against the 800px source instead lets it \
+             ask for an upscale the panel presents as a limit, and the \
+             document comes out {}px wide.",
+            doc.w
         );
     }
 
