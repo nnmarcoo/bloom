@@ -961,7 +961,6 @@ impl ViewProgram {
             width,
             height,
             modifiers: self.modifiers.as_ref().clone(),
-            crop: self.crop(),
             rotation: self.rotation,
             trim: self.active_trim(duration),
         }
@@ -978,7 +977,6 @@ impl ViewProgram {
             width: info.width,
             height: info.height,
             modifiers: self.modifiers.as_ref().clone(),
-            crop: self.crop(),
             rotation: self.rotation,
             trim: self.active_trim(info.duration),
         }
@@ -1668,38 +1666,46 @@ mod crop_tests {
         program
     }
 
+    /// The exported document's size, which is what the crop now controls.
+    ///
+    /// Export used to carry a separate crop uv and apply it after the chain.
+    /// The crop is a stage, so the chain's output *is* the cropped image and
+    /// its size is the thing to assert -- a stronger check than the uv, which
+    /// could be right while the render ignored it.
+    fn exported_size(p: &ViewProgram) -> (u32, u32) {
+        let d = p.export_frame_data().expect("image is loaded");
+        let out = chain_output_spec(
+            ImageSpec::new(d.width, d.height),
+            &plan_modifiers(&d.modifiers),
+        );
+        (out.w, out.h)
+    }
+
     #[test]
-    fn crop_is_exported_while_the_crop_tool_is_active() {
+    fn the_crop_is_exported_whether_or_not_the_tool_is_open() {
+        // The tool only changes what the *view* shows; the export is the
+        // stack, and the stack says crop.
         let mut program = program_with_crop();
+        assert_eq!(exported_size(&program), (50, 25));
+
         program.crop_tool_active = true;
-
-        assert_eq!(program.displayed_crop(), None);
-        assert_eq!(program.crop(), Some([0.1, 0.4, 0.6, 0.9]));
+        assert_eq!(exported_size(&program), (50, 25));
         assert_eq!(
-            program.export_frame_data().expect("image is loaded").crop,
-            Some([0.1, 0.4, 0.6, 0.9]),
+            program.displayed_crop(),
+            None,
+            "the tool suppresses the display window so the rect can be dragged"
         );
     }
 
     #[test]
-    fn crop_applies_to_view_and_export_when_the_tool_is_inactive() {
-        let program = program_with_crop();
-        assert_eq!(program.displayed_crop(), program.crop());
-        assert_eq!(
-            program.export_frame_data().expect("image is loaded").crop,
-            Some([0.1, 0.4, 0.6, 0.9]),
-        );
-    }
-
-    #[test]
-    fn disabled_crop_is_neither_shown_nor_exported() {
+    fn a_disabled_crop_is_neither_shown_nor_exported() {
         let mut program = program_with_crop();
         program.modifiers_mut()[0].enabled = false;
-        assert_eq!(program.crop(), None);
         assert_eq!(program.displayed_crop(), None);
         assert_eq!(
-            program.export_frame_data().expect("image is loaded").crop,
-            None,
+            exported_size(&program),
+            (100, 50),
+            "a disabled crop must leave the source size"
         );
     }
 }

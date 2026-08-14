@@ -818,7 +818,6 @@ fn golden_drawing_multi_tile() {
         width: GOLDEN_W,
         height: GOLDEN_H,
         modifiers: chain,
-        crop: None,
         rotation: 0,
         trim: None,
     };

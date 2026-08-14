@@ -60,7 +60,6 @@ mod tests {
             width: W,
             height: H,
             modifiers: modifiers.to_vec(),
-            crop: None,
             rotation: 0,
             trim: None,
         };
