@@ -44,6 +44,25 @@ pub fn step_class(kind: &ModifierKind) -> StepClass {
     }
 }
 
+/// Where a stage's output sits inside its input, in input pixels.
+///
+/// Zero for everything except a crop, whose output starts at the crop's origin.
+/// The backward walk adds this after unmapping, which is what keeps tile
+/// culling working when a crop moves into the chain.
+#[allow(
+    dead_code,
+    reason = "the backends read this once crop executes as a stage"
+)]
+pub fn stage_origin(kind: &ModifierKind, input: crate::modifiers::plan::ImageSpec) -> (f32, f32) {
+    match kind.as_crop() {
+        Some(c) => {
+            let (x, y, _, _) = c.rect_in(input);
+            (x, y)
+        }
+        None => (0.0, 0.0),
+    }
+}
+
 pub fn step_class_for(kind: &ModifierKind, in_h: u32, out_h: u32) -> StepClass {
     if let Some(r) = kind.as_resize() {
         let scale = if in_h == 0 {

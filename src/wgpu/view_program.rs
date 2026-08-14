@@ -564,23 +564,43 @@ impl ViewProgram {
         (!trim.is_full()).then(|| trim.resolve(duration))
     }
 
+    /// The document the view lays out, which is the chain's output.
+    ///
+    /// Crop is a chain stage, so its shrinking is already in that number; there
+    /// is nothing left to apply here. The one exception is the crop tool, which
+    /// has to show the material outside the rect in order to let the user drag
+    /// it back -- see uncropped_chain_size.
     fn effective_display_size(&self) -> Vec2 {
-        let resized = self.chain_output_size();
-        if let Some([min_u, min_v, max_u, max_v]) = self.displayed_crop() {
-            vec2((max_u - min_u) * resized.x, (max_v - min_v) * resized.y)
+        if self.crop_tool_active {
+            self.uncropped_chain_size()
         } else {
-            resized
+            self.chain_output_size()
         }
     }
 
+    /// Where the crop's output sits inside the image the crop tool displays.
+    ///
+    /// Zero unless the crop tool is open: with the tool closed the chain has
+    /// already removed everything outside the rect, so its output starts at the
+    /// origin by definition.
     fn crop_origin(&self) -> Vec2 {
-        match self.displayed_crop() {
-            Some([min_u, min_v, ..]) => {
-                let doc = self.chain_output_size();
-                vec2(min_u * doc.x, min_v * doc.y)
-            }
-            None => Vec2::ZERO,
+        if !self.crop_tool_active {
+            return Vec2::ZERO;
         }
+        let src = ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32);
+        let inputs = stage_inputs(src, &self.modifiers);
+        self.modifiers
+            .iter()
+            .enumerate()
+            .find_map(|(i, m)| {
+                if !m.enabled {
+                    return None;
+                }
+                let c = m.kind.as_crop()?;
+                let (x, y, _, _) = c.rect_in(inputs.get(i).copied()?);
+                Some(vec2(x, y))
+            })
+            .unwrap_or(Vec2::ZERO)
     }
 
     fn chain_output_size(&self) -> Vec2 {
@@ -590,6 +610,33 @@ impl ViewProgram {
         let out = chain_output_spec(
             ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32),
             &plan_modifiers(&self.modifiers),
+        );
+        vec2(out.w as f32, out.h as f32)
+    }
+
+    /// The chain's output with every crop widened to its full input.
+    ///
+    /// The crop tool needs the picture the crop is cutting *from*, so the user
+    /// can drag the rect back out over material the chain would otherwise have
+    /// discarded. Everything else in the stack still applies.
+    fn uncropped_chain_size(&self) -> Vec2 {
+        if self.image_size == Vec2::ZERO {
+            return self.image_size;
+        }
+        let mods: Vec<Modifier> = self
+            .modifiers
+            .iter()
+            .map(|m| {
+                let mut m = m.clone();
+                if let Some(c) = m.kind.as_crop_mut() {
+                    *c = crate::modifiers::kinds::Crop::default();
+                }
+                m
+            })
+            .collect();
+        let out = chain_output_spec(
+            ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32),
+            &plan_modifiers(&mods),
         );
         vec2(out.w as f32, out.h as f32)
     }
@@ -2295,6 +2342,9 @@ mod document_size_tests {
 
     #[test]
     fn crop_applies_to_the_resized_document() {
+        // 50% leaves 400x300, and the crop asks for 400x300 of it -- all of it.
+        // Under the old display-time crop this was read as a fraction of the
+        // source and cut the document to 200x150, halving it a second time.
         let p = program(
             vec![resize_pct(50.0), crop_of(0.0, 0.0, 400.0, 300.0)],
             800,
@@ -2302,47 +2352,93 @@ mod document_size_tests {
         );
         assert_eq!(
             p.effective_display_size(),
-            vec2(200.0, 150.0),
-            "the crop selects half the source, which is half the resized \
-             document: 200x150 of 400x300"
+            vec2(400.0, 300.0),
+            "the crop names 400x300 of the image the resize produced, which is \
+             the whole thing"
         );
+
+        // Half of the resized document is what asking for half of it looks like.
+        let half = program(
+            vec![resize_pct(50.0), crop_of(0.0, 0.0, 200.0, 150.0)],
+            800,
+            600,
+        );
+        assert_eq!(half.effective_display_size(), vec2(200.0, 150.0));
     }
 
     #[test]
-    fn a_crop_is_the_same_fraction_at_every_resize() {
-        for pct in [25.0f32, 50.0, 100.0, 200.0] {
+    fn a_crop_takes_the_pixels_it_names_from_the_stage_it_sits_at() {
+        // Crop is a chain stage, so its rect is measured in the image it
+        // receives rather than being a scale-free fraction of the document.
+        // A 400x300 crop after a resize takes 400x300 of the resized image,
+        // and is clamped when the resize left less than that.
+        for (pct, want) in [
+            (25.0f32, vec2(200.0, 150.0)),
+            (50.0, vec2(400.0, 300.0)),
+            (100.0, vec2(400.0, 300.0)),
+            (200.0, vec2(400.0, 300.0)),
+        ] {
             let p = program(
                 vec![resize_pct(pct), crop_of(0.0, 0.0, 400.0, 300.0)],
                 800,
                 600,
             );
-            let doc = vec2(800.0 * pct / 100.0, 600.0 * pct / 100.0);
             assert_eq!(
                 p.effective_display_size(),
-                vec2(doc.x * 0.5, doc.y * 0.5),
-                "at {pct}% a half-the-source crop must stay half the document; \
-                 crop stores source pixels, so its fraction is scale-free"
+                want,
+                "at {pct}% a 400x300 crop of the resized image should be {want:?}"
             );
         }
     }
 
     #[test]
-    fn crop_origin_is_in_the_resized_space() {
+    fn a_crop_clamps_to_an_input_smaller_than_its_rect() {
+        // 25% leaves a 200x150 image; a 400x300 rect cannot take more than
+        // exists, and must not report a document larger than its input.
         let p = program(
-            vec![resize_pct(50.0), crop_of(400.0, 300.0, 400.0, 300.0)],
+            vec![resize_pct(25.0), crop_of(0.0, 0.0, 400.0, 300.0)],
             800,
             600,
         );
+        assert_eq!(p.effective_display_size(), vec2(200.0, 150.0));
+    }
+
+    #[test]
+    fn the_crop_tool_places_the_origin_in_the_stages_own_space() {
+        // With the tool open the view shows the uncropped image so the rect can
+        // be dragged back out, so the origin says where the kept region sits.
+        // 50% leaves a 400x300 image, and the rect is clamped into it.
+        let mut p = program(
+            vec![resize_pct(50.0), crop_of(100.0, 60.0, 200.0, 150.0)],
+            800,
+            600,
+        );
+        p.crop_tool_active = true;
+        assert_eq!(p.crop_origin(), vec2(100.0, 60.0));
         assert_eq!(
-            p.crop_origin(),
-            vec2(200.0, 150.0),
-            "the origin is placed in the document the extent is measured in"
+            p.effective_display_size(),
+            vec2(400.0, 300.0),
+            "the tool shows the whole resized image, not just the kept region"
         );
     }
 
     #[test]
-    fn crop_origin_without_a_resize_is_the_source_offset() {
-        let p = program(vec![crop_of(400.0, 300.0, 400.0, 300.0)], 800, 600);
+    fn a_closed_crop_tool_leaves_the_origin_at_zero() {
+        // The chain has already discarded everything outside the rect, so the
+        // document it produces starts at its own origin by definition.
+        let p = program(
+            vec![resize_pct(50.0), crop_of(100.0, 60.0, 200.0, 150.0)],
+            800,
+            600,
+        );
+        assert_eq!(p.crop_origin(), Vec2::ZERO);
+        assert_eq!(p.effective_display_size(), vec2(200.0, 150.0));
+    }
+
+    #[test]
+    fn the_crop_tool_origin_without_a_resize_is_the_source_offset() {
+        let mut p = program(vec![crop_of(400.0, 300.0, 400.0, 300.0)], 800, 600);
+        p.crop_tool_active = true;
         assert_eq!(p.crop_origin(), vec2(400.0, 300.0));
     }
 

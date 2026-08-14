@@ -132,6 +132,17 @@ pub trait ModifierImpl {
         input
     }
 
+    /// Whether this modifier moves or resizes its output relative to its input.
+    ///
+    /// Kept separate from output_spec because it must hold for *every* input,
+    /// not the one input a caller happens to have: a crop that currently spans
+    /// the whole image still changes geometry, and a plan built while it did
+    /// would otherwise fuse it and stop being able to shrink. Anything true
+    /// here is barred from a fused run, however cheap its per-pixel work is.
+    fn changes_geometry(&self) -> bool {
+        false
+    }
+
     fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>);
 
     fn pack(&self, _tile: &TileInfo) -> Option<ModEntry> {
@@ -291,6 +302,10 @@ impl ModifierKind {
 
     pub fn output_spec(&self, input: ImageSpec) -> ImageSpec {
         self.as_impl().output_spec(input)
+    }
+
+    pub fn changes_geometry(&self) -> bool {
+        self.as_impl().changes_geometry()
     }
 
     pub fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>) {

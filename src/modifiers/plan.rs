@@ -102,6 +102,17 @@ pub fn stage_inputs(source: ImageSpec, modifiers: &[Modifier]) -> Vec<ImageSpec>
         .collect()
 }
 
+/// Whether a modifier may be folded into a fused pointwise run.
+///
+/// Being pointwise is necessary but not sufficient: a fused run is evaluated at
+/// one coordinate in one space, so a modifier that *moves* or *resizes* its
+/// output cannot join one however cheap its per-pixel work is. Crop reads a
+/// single sample per output pixel yet changes the geometry, and fusing it made
+/// it silently render as a passthrough -- planned, sized, and then ignored.
+fn is_fusable(m: &Modifier) -> bool {
+    m.kind.effect_class().is_pointwise() && !m.kind.changes_geometry()
+}
+
 pub fn plan_modifiers(modifiers: &[Modifier]) -> Vec<PlanItem<'_>> {
     let mut plan: Vec<PlanItem> = Vec::new();
     let mut current: Vec<&Modifier> = Vec::new();
@@ -109,7 +120,7 @@ pub fn plan_modifiers(modifiers: &[Modifier]) -> Vec<PlanItem<'_>> {
         if !m.has_visible_effect() {
             continue;
         }
-        if !m.kind.effect_class().is_pointwise() {
+        if !is_fusable(m) {
             if !current.is_empty() {
                 plan.push(PlanItem::Fused(std::mem::take(&mut current)));
             }
@@ -194,6 +205,40 @@ mod tests {
                  special-case a kind, or a new dimension-changing modifier \
                  renders at the wrong size until the planner is edited too.",
                 spec.output
+            );
+        }
+    }
+
+    #[test]
+    fn a_geometry_changing_modifier_is_never_fused() {
+        use crate::modifiers::ModifierType;
+
+        let src = ImageSpec::new(800, 600);
+        for t in ModifierType::ALL {
+            let kind = ModifierKind::from(t.clone());
+            if !kind.changes_geometry() {
+                continue;
+            }
+            let name = kind.name();
+
+            // Surround it with pointwise modifiers that would happily fuse.
+            let mods = vec![exposure(), m(kind), exposure()];
+            let plan = plan_modifiers(&mods);
+
+            assert_eq!(
+                shape(&plan),
+                ["F(1)", "S(1)", "F(1)"],
+                "{name} changes geometry but was folded into a fused run. A \
+                 fused run is evaluated at one coordinate in one space, so a \
+                 stage that moves or resizes its output cannot join one -- it \
+                 would be planned and sized and then silently rendered as a \
+                 passthrough."
+            );
+
+            let specs = infer_specs(src, &plan);
+            assert_eq!(
+                specs[1].input, src,
+                "{name}: the fused run before it must not have changed the size"
             );
         }
     }
