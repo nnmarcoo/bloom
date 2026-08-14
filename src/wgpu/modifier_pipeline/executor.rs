@@ -599,32 +599,35 @@ impl ModifierPipeline {
             for k in (0..n).rev() {
                 let (iw, ih) = (specs[k].input.w as f32, specs[k].input.h as f32);
                 let (ow, oh) = (specs[k].output.w as f32, specs[k].output.h as f32);
-                if matches!(classes[k], StepClass::Scanline { .. }) {
-                    cur = snap_region(
-                        roi::input_needed(
-                            classes[k],
-                            roi::unmap_region((ow, oh), (iw, ih), cur),
-                            iw,
-                            ih,
-                        ),
+                // Crossing a stage backward: a crop translates its output, so
+                // it unmaps by adding the origin; everything else scales. Doing
+                // either with the other's rule lands the read on the wrong
+                // pixels, which for a crop means the whole region shifts.
+                let origin = match &plan[k] {
+                    PlanItem::Step(_, m) => roi::stage_origin(&m.kind, specs[k].input),
+                    PlanItem::Fused(_) => (0.0, 0.0),
+                };
+                let to_input = |r: RegionPx| -> RegionPx {
+                    if origin == (0.0, 0.0) {
+                        roi::unmap_region((ow, oh), (iw, ih), r)
+                    } else {
+                        roi::unmap_offset(origin, r)
+                    }
+                };
+                let back = |r: RegionPx| -> RegionPx {
+                    snap_region(
+                        roi::input_needed(classes[k], to_input(r), iw, ih),
                         pitch,
                         iw,
                         ih,
-                    );
+                    )
+                };
+                if matches!(classes[k], StepClass::Scanline { .. }) {
+                    cur = back(cur);
                     out_rects[k] = cur;
                 } else {
                     out_rects[k] = cur;
-                    cur = snap_region(
-                        roi::input_needed(
-                            classes[k],
-                            roi::unmap_region((ow, oh), (iw, ih), cur),
-                            iw,
-                            ih,
-                        ),
-                        pitch,
-                        iw,
-                        ih,
-                    );
+                    cur = back(cur);
                 }
             }
             let src_rect = cur;
@@ -896,6 +899,53 @@ impl ModifierPipeline {
                                 );
                             }
                             _ => unreachable!(),
+                        }
+                        prev = outs;
+                    }
+                    PlanItem::Step(_, m) if m.kind.as_crop().is_some() => {
+                        // out_r is already in the crop's output space and
+                        // prev.rect in its input, and the backward walk put
+                        // them a whole origin apart. Copying the overlap is
+                        // therefore the entire operation -- a crop moves
+                        // pixels without touching them, so no pass is needed.
+                        let origin = roi::stage_origin(&m.kind, specs[k].input);
+                        let (ow, oh) = rect_dims(out_r, scale);
+                        let outs = self.pooled_stage(device, &mut slab_slot, ow, oh, out_r);
+
+                        // Both rects in the input's space, so they can meet.
+                        let want = roi::unmap_offset(origin, out_r);
+                        let src = scale_rect(prev.rect, scale);
+                        let dst = scale_rect(want, scale);
+                        let i = [
+                            dst[0].max(src[0]),
+                            dst[1].max(src[1]),
+                            dst[2].min(src[2]),
+                            dst[3].min(src[3]),
+                        ];
+                        if i[2] > i[0] && i[3] > i[1] {
+                            encoder.copy_texture_to_texture(
+                                tex_copy_info(
+                                    &prev.tex,
+                                    iced::wgpu::Origin3d {
+                                        x: i[0] - src[0],
+                                        y: i[1] - src[1],
+                                        z: 0,
+                                    },
+                                ),
+                                tex_copy_info(
+                                    &outs.tex,
+                                    iced::wgpu::Origin3d {
+                                        x: i[0] - dst[0],
+                                        y: i[1] - dst[1],
+                                        z: 0,
+                                    },
+                                ),
+                                iced::wgpu::Extent3d {
+                                    width: (i[2] - i[0]).min(ow.saturating_sub(i[0] - dst[0])),
+                                    height: (i[3] - i[1]).min(oh.saturating_sub(i[1] - dst[1])),
+                                    depth_or_array_layers: 1,
+                                },
+                            );
                         }
                         prev = outs;
                     }

@@ -177,6 +177,42 @@ fn assemble_scaled(
     full
 }
 
+/// Assemble the tile outputs into a document of `dw` x `dh`.
+///
+/// assemble maps each tile back to its position in the *source*, which only
+/// works while the chain keeps the source's size. A crop changes both the
+/// document's size and where each tile's output lands in it, so the placement
+/// has to come from proc_px -- which the executor writes in the chain's output
+/// space for exactly this reason.
+fn assemble_doc(
+    device: &Device,
+    queue: &Queue,
+    mp: &ModifierPipeline,
+    source: &TiledSource,
+    dw: u32,
+    dh: u32,
+) -> Vec<u8> {
+    let mut full = vec![0u8; (dw * dh * 4) as usize];
+    for ti in 0..source.tiles.len() {
+        let Some(o) = mp.tile_outputs[ti].as_ref() else {
+            continue;
+        };
+        let px = o.proc_px.expect("executor outputs always carry proc_px");
+        let (x0, y0) = (px[0].round() as u32, px[1].round() as u32);
+        if x0 >= dw || y0 >= dh {
+            continue;
+        }
+        let data = read_texture(device, queue, &o._tex, o.width, o.height);
+        let cols = o.width.min(dw - x0);
+        for r in 0..o.height.min(dh - y0) {
+            let d = (((y0 + r) * dw + x0) * 4) as usize;
+            let s = (r * o.width * 4) as usize;
+            full[d..d + (cols * 4) as usize].copy_from_slice(&data[s..s + (cols * 4) as usize]);
+        }
+    }
+    full
+}
+
 fn set_partial_roi(source: &mut TiledSource, frac: f32) {
     let (fw, fh) = (source.full_width as f32, source.full_height as f32);
     let (half_w, half_h) = (fw * frac * 0.5, fh * frac * 0.5);
@@ -473,8 +509,23 @@ fn run_golden_dims(
     let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
     converge(&mut mp, &device, &queue, &source, modifiers, label);
 
-    let gpu_img = assemble(&device, &queue, &mp, &source);
+    // A chain that changes the document's size cannot be assembled back into
+    // the source's grid; place the tiles by proc_px in the output document.
+    let doc = crate::modifiers::plan::chain_output_spec(
+        crate::modifiers::plan::ImageSpec::new(w, h),
+        &crate::modifiers::plan::plan_modifiers(modifiers),
+    );
+    let gpu_img = if (doc.w, doc.h) == (w, h) {
+        assemble(&device, &queue, &mp, &source)
+    } else {
+        assemble_doc(&device, &queue, &mp, &source, doc.w, doc.h)
+    };
     let cpu_img = crate::modifiers::cpu::render_full(modifiers, &[], &[], &pixels, w, h);
+    assert_eq!(
+        cpu_img.len(),
+        (doc.w * doc.h * 4) as usize,
+        "{label}: the CPU oracle did not produce the planned document size"
+    );
     let (max_d, pct_over) = diff_stats(&gpu_img, &cpu_img, tol);
     assert!(
         max_d <= tol,
@@ -600,6 +651,63 @@ fn golden_blur_single_tile() {
 #[test]
 fn golden_blur_multi_tile() {
     run_golden("blur/2x2", &blur_chain(), Some(FORCED_TILE_DIM), 4);
+}
+
+fn crop_chain() -> Vec<Modifier> {
+    use crate::modifiers::kinds::Crop;
+    vec![Modifier::new(ModifierKind::Crop(Crop {
+        x: 13.0,
+        y: 9.0,
+        width: 51.0,
+        height: 37.0,
+    }))]
+}
+
+#[test]
+fn golden_crop_single_tile() {
+    run_golden("crop/1-tile", &crop_chain(), None, 2);
+}
+
+#[test]
+fn golden_crop_multi_tile() {
+    run_golden("crop/2x2", &crop_chain(), Some(FORCED_TILE_DIM), 2);
+}
+
+/// The workflow the crop stage exists for: reframe, blur what is left, trim.
+/// The blur reads its own frame, so the second crop cannot be folded into the
+/// first and the chain really does need both stages.
+fn crop_blur_crop_chain() -> Vec<Modifier> {
+    use crate::modifiers::kinds::Crop;
+    vec![
+        Modifier::new(ModifierKind::Crop(Crop {
+            x: 8.0,
+            y: 6.0,
+            width: 70.0,
+            height: 50.0,
+        })),
+        Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 3.0 })),
+        Modifier::new(ModifierKind::Crop(Crop {
+            x: 11.0,
+            y: 7.0,
+            width: 40.0,
+            height: 30.0,
+        })),
+    ]
+}
+
+#[test]
+fn golden_crop_blur_crop_single_tile() {
+    run_golden("crop-blur-crop/1-tile", &crop_blur_crop_chain(), None, 4);
+}
+
+#[test]
+fn golden_crop_blur_crop_multi_tile() {
+    run_golden(
+        "crop-blur-crop/2x2",
+        &crop_blur_crop_chain(),
+        Some(FORCED_TILE_DIM),
+        4,
+    );
 }
 
 fn mixed_chain() -> Vec<Modifier> {

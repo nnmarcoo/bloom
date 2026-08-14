@@ -49,10 +49,6 @@ pub fn step_class(kind: &ModifierKind) -> StepClass {
 /// Zero for everything except a crop, whose output starts at the crop's origin.
 /// The backward walk adds this after unmapping, which is what keeps tile
 /// culling working when a crop moves into the chain.
-#[allow(
-    dead_code,
-    reason = "the backends read this once crop executes as a stage"
-)]
 pub fn stage_origin(kind: &ModifierKind, input: crate::modifiers::plan::ImageSpec) -> (f32, f32) {
     match kind.as_crop() {
         Some(c) => {
@@ -115,11 +111,6 @@ pub fn unmap_region(from: (f32, f32), to: (f32, f32), r: RegionPx) -> RegionPx {
 /// comes from input pixel (origin). A backward walk that only scales cannot
 /// express it, so a crop stage would report the wrong source region and tile
 /// culling would read the wrong tiles.
-#[allow(
-    dead_code,
-    reason = "proves the crop-as-a-stage walk before the stage exists; \
-              crop_stage_feasibility is its only caller until then"
-)]
 pub fn unmap_offset(origin: (f32, f32), r: RegionPx) -> RegionPx {
     [
         r[0] + origin.0,
