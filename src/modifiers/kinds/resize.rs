@@ -148,6 +148,10 @@ impl ModifierImpl for Resize {
         InputRequest::FullFrame
     }
 
+    fn output_spec(&self, input: ImageSpec) -> ImageSpec {
+        self.output_for(input)
+    }
+
     fn apply_param(&mut self, param: ModifierParam, _img_size: Option<(u32, u32)>) {
         match param {
             ModifierParam::ResizeWidth(v) => {

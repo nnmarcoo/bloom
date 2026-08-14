@@ -16,8 +16,12 @@
 //! This lives in `modifiers` rather than `wgpu` because it is backend-agnostic:
 //! the GPU pipeline and the CPU export path consume the same plan, which is what
 //! keeps the two from drifting apart.
+//!
+//! Stage sizes come from each modifier's own output_spec, never from a match on
+//! the kind here. A modifier that changes dimensions declares that itself, so
+//! adding one does not mean editing the planner.
 
-use crate::modifiers::{Modifier, ModifierKind};
+use crate::modifiers::Modifier;
 
 #[derive(Debug)]
 pub enum PlanItem<'a> {
@@ -53,20 +57,15 @@ impl StageSpec {
     }
 }
 
-fn output_spec(kind: &ModifierKind, input: ImageSpec) -> Option<ImageSpec> {
-    match kind {
-        ModifierKind::Resize(r) => Some(r.output_for(input)),
-        _ => None,
-    }
-}
-
 pub fn infer_specs(source: ImageSpec, plan: &[PlanItem]) -> Vec<StageSpec> {
     let mut cur = source;
     plan.iter()
         .map(|item| {
             let output = match item {
+                // A fused run is pointwise by construction, and pointwise
+                // modifiers take output_spec's identity default.
                 PlanItem::Fused(_) => cur,
-                PlanItem::Step(_, m) => output_spec(&m.kind, cur).unwrap_or(cur),
+                PlanItem::Step(_, m) => m.kind.output_spec(cur),
             };
             let spec = StageSpec { input: cur, output };
             cur = output;
@@ -148,6 +147,53 @@ mod tests {
     #[test]
     fn an_empty_plan_outputs_the_source_size() {
         assert_eq!(chain_output_spec(SRC, &[]), SRC);
+    }
+
+    #[test]
+    fn stage_sizes_come_from_each_modifiers_own_declaration() {
+        use crate::modifiers::ModifierType;
+
+        let src = ImageSpec::new(800, 600);
+        for t in ModifierType::ALL {
+            let kind = ModifierKind::from(t.clone());
+            let name = kind.name();
+            let declared = kind.output_spec(src);
+
+            let mods = vec![m(kind)];
+            let plan = plan_modifiers(&mods);
+            let Some(spec) = infer_specs(src, &plan).into_iter().next() else {
+                continue;
+            };
+
+            assert_eq!(
+                spec.output, declared,
+                "{name}: the plan produced {:?} but the modifier declares \
+                 {declared:?}. infer_specs must read output_spec rather than \
+                 special-case a kind, or a new dimension-changing modifier \
+                 renders at the wrong size until the planner is edited too.",
+                spec.output
+            );
+        }
+    }
+
+    #[test]
+    fn a_modifier_that_declares_a_new_size_needs_no_planner_change() {
+        let src = ImageSpec::new(800, 600);
+        let half = m(ModifierKind::Resize(Resize {
+            mode: ResizeMode::Percent,
+            width: 50.0,
+            height: 50.0,
+            filter: ResizeFilter::Lanczos,
+            lock_aspect: true,
+        }));
+        assert_eq!(half.kind.output_spec(src), ImageSpec::new(400, 300));
+
+        let plan = plan_modifiers(std::slice::from_ref(&half));
+        assert_eq!(
+            chain_output_spec(src, &plan),
+            half.kind.output_spec(src),
+            "the chain's output must be exactly what the modifier declared"
+        );
     }
 
     #[test]
