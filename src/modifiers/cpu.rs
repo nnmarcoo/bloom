@@ -85,6 +85,17 @@ pub(crate) fn source_rows_for_band(
             PlanItem::Fused(_) => StepClass::Pointwise,
             PlanItem::Step(_, m) => step_class_for(&m.kind, in_h, out_h),
         };
+        // A crop translates its rows rather than scaling them, so the ratio
+        // mapping in rows_needed does not apply: shift by the origin instead.
+        // Crossing it as a scale would land the band on the wrong rows.
+        if let PlanItem::Step(_, m) = item
+            && let Some(c) = m.kind.as_crop()
+        {
+            let oy = c.rect_in(spec.input).1 as u32;
+            lo = (lo + oy).min(in_h);
+            hi = (hi + oy).min(in_h).max(lo);
+            continue;
+        }
         let (n_lo, n_hi) = rows_needed(class, lo, hi, in_h, in_h, out_h)?;
         lo = n_lo;
         hi = n_hi.max(n_lo);
@@ -179,9 +190,21 @@ pub(crate) fn render_band(
             raster_to_doc(ImageSpec::new(img_w, img_h), spec.input),
         );
         if spec.input != spec.output {
-            let num = spec.output.h as u64;
-            let den = spec.input.h.max(1) as u64;
-            y_off = ((y_off as u64 * num) / den) as u32;
+            // A crop shifts its rows by the origin; everything else that
+            // changes height rescales them. Rescaling a crop would move the
+            // band to a row it never produced.
+            let crop_origin_y = match item {
+                PlanItem::Step(_, m) => m.kind.as_crop().map(|c| c.rect_in(spec.input).1 as u32),
+                _ => None,
+            };
+            y_off = match crop_origin_y {
+                Some(oy) => y_off.saturating_sub(oy),
+                None => {
+                    let num = spec.output.h as u64;
+                    let den = spec.input.h.max(1) as u64;
+                    ((y_off as u64 * num) / den) as u32
+                }
+            };
             cur_h = (cur.len() / (spec.output.w as usize * 4)) as u32;
             cur_w = spec.output.w;
         }
@@ -275,6 +298,10 @@ pub(crate) fn render_full(
                     let out = spec.output;
                     cur = resample(&cur, img_w, img_h, out.w, out.h, r.filter);
                 }
+                ModifierKind::Crop(c) => {
+                    let (x, y, _, _) = c.rect_in(spec.input);
+                    cur = crop_full(&cur, img_w, x as u32, y as u32, spec.output);
+                }
                 other => debug_assert!(
                     false,
                     "{} is planned as a standalone step but has no CPU implementation",
@@ -352,6 +379,27 @@ fn apply_stage_banded(
                     full_out_h: spec.output.h,
                 };
                 cur = resample_band(&cur, w, h, spec.output.w, &band, r.filter);
+            }
+            ModifierKind::Crop(c) => {
+                // The band already holds the rows the crop keeps -- the row
+                // walk shifted them by the origin -- so only the horizontal
+                // window and the new width are applied here. Rows above the
+                // crop that the band happens to include are dropped.
+                let (x, y, _, _) = c.rect_in(spec.input);
+                let skip = (y as u32).saturating_sub(y_off) as usize;
+                let keep = hu.saturating_sub(skip);
+                let rows = keep.min(spec.output.h as usize);
+                let src_row = wu * 4;
+                let out_row = spec.output.w as usize * 4;
+                let mut dst = vec![0u8; out_row * rows];
+                for r in 0..rows {
+                    let s = (skip + r) * src_row + x as usize * 4;
+                    let Some(chunk) = cur.get(s..s + out_row) else {
+                        break;
+                    };
+                    dst[r * out_row..(r + 1) * out_row].copy_from_slice(chunk);
+                }
+                cur = dst;
             }
             other => debug_assert!(
                 false,
@@ -508,6 +556,24 @@ fn blur_direct(buf: &mut [u8], w: usize, h: usize, radius: f32) {
             }
         },
     );
+}
+
+/// Copy the crop's rows out of `src`, which is `src_w` wide.
+///
+/// `x`/`y` are the crop's origin in the input, and `out` its extent. Rows are
+/// copied whole rather than per pixel; a crop moves data without touching it.
+fn crop_full(src: &[u8], src_w: u32, x: u32, y: u32, out: ImageSpec) -> Vec<u8> {
+    let row = out.w as usize * 4;
+    let src_stride = src_w as usize * 4;
+    let mut dst = vec![0u8; row * out.h as usize];
+    for r in 0..out.h as usize {
+        let s = (y as usize + r) * src_stride + x as usize * 4;
+        let Some(chunk) = src.get(s..s + row) else {
+            break;
+        };
+        dst[r * row..(r + 1) * row].copy_from_slice(chunk);
+    }
+    dst
 }
 
 fn chromatic_aberration_full(src: &[u8], img_w: u32, img_h: u32, amount: f32) -> Vec<u8> {
@@ -1393,6 +1459,92 @@ mod band_tests {
             m(ModifierKind::GaussianBlur(GaussianBlur { radius: 4.0 })),
         ];
         assert_bands_match_full("blur+blur", &chain, 36, 80, 8);
+    }
+
+    #[test]
+    fn a_crop_copies_exactly_the_pixels_it_names() {
+        use crate::modifiers::kinds::Crop;
+        // Band parity only proves the two paths agree; they could agree on the
+        // wrong region. This pins the pixels against the source directly.
+        let (w, h) = (40u32, 70u32);
+        let src = noise(w, h);
+        let (cx, cy, cw, ch) = (7u32, 11u32, 23u32, 41u32);
+        let chain = vec![m(ModifierKind::Crop(Crop {
+            x: cx as f32,
+            y: cy as f32,
+            width: cw as f32,
+            height: ch as f32,
+        }))];
+
+        let out = render_full(&chain, &[], &[], &src, w, h);
+        assert_eq!(out.len(), (cw * ch * 4) as usize, "wrong output size");
+
+        for r in 0..ch {
+            let s = ((cy + r) * w + cx) as usize * 4;
+            let d = (r * cw) as usize * 4;
+            assert_eq!(
+                &out[d..d + (cw * 4) as usize],
+                &src[s..s + (cw * 4) as usize],
+                "row {r} is not the source row at y={}, x={cx}",
+                cy + r
+            );
+        }
+    }
+
+    #[test]
+    fn bands_match_full_crop_alone() {
+        use crate::modifiers::kinds::Crop;
+        let chain = vec![m(ModifierKind::Crop(Crop {
+            x: 7.0,
+            y: 11.0,
+            width: 23.0,
+            height: 41.0,
+        }))];
+        assert_bands_match_full("crop", &chain, 40, 70, 9);
+    }
+
+    #[test]
+    fn bands_match_full_crop_then_blur_then_crop() {
+        use crate::modifiers::kinds::Crop;
+        // The workflow the stage exists for: reframe, apply something that
+        // reads its own frame, then trim the result.
+        let chain = vec![
+            m(ModifierKind::Crop(Crop {
+                x: 4.0,
+                y: 6.0,
+                width: 30.0,
+                height: 50.0,
+            })),
+            m(ModifierKind::GaussianBlur(GaussianBlur { radius: 3.0 })),
+            m(ModifierKind::Crop(Crop {
+                x: 5.0,
+                y: 8.0,
+                width: 20.0,
+                height: 30.0,
+            })),
+        ];
+        assert_bands_match_full("crop+blur+crop", &chain, 40, 70, 7);
+    }
+
+    #[test]
+    fn bands_match_full_crop_after_resize() {
+        use crate::modifiers::kinds::{Crop, Resize, ResizeFilter, ResizeMode};
+        let chain = vec![
+            m(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: 50.0,
+                height: 50.0,
+                filter: ResizeFilter::Bilinear,
+                lock_aspect: true,
+            })),
+            m(ModifierKind::Crop(Crop {
+                x: 3.0,
+                y: 5.0,
+                width: 12.0,
+                height: 20.0,
+            })),
+        ];
+        assert_bands_match_full("resize+crop", &chain, 40, 70, 6);
     }
 
     #[test]
