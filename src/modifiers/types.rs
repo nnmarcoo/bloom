@@ -6,6 +6,19 @@
 //! Each modifier declares an InputRequest describing how far it reads from its
 //! input. The ROI taxonomy is derived from that declaration rather than
 //! restated, so the two cannot disagree.
+//!
+//! output_spec is the size a modifier produces, identity unless it overrides.
+//! changes_geometry is deliberately separate: it must hold for every input, not
+//! the one a caller happens to have, because a crop currently spanning the whole
+//! image still changes geometry and a plan built at that moment would fuse it
+//! and stop being able to shrink. Anything true there is barred from a fused
+//! run however cheap its per-pixel work is -- fusing a crop made it plan, size,
+//! and then render as a passthrough with the whole suite green.
+//!
+//! tool_target answers which modifier a tool edits when the stack holds several
+//! of a kind: the selected one, else the last. It lives here because the tool's
+//! message handling and the overlay that draws it must reach the same one; when
+//! they disagreed the overlay edited a crop the user had not selected.
 
 use std::collections::hash_map::DefaultHasher;
 
@@ -126,19 +139,10 @@ pub trait ModifierImpl {
         EffectClass::from_input_request(self.input_request())
     }
 
-    /// The size this modifier produces from `input`. Defaults to identity, so
-    /// only a modifier that actually changes dimensions overrides it.
     fn output_spec(&self, input: ImageSpec) -> ImageSpec {
         input
     }
 
-    /// Whether this modifier moves or resizes its output relative to its input.
-    ///
-    /// Kept separate from output_spec because it must hold for *every* input,
-    /// not the one input a caller happens to have: a crop that currently spans
-    /// the whole image still changes geometry, and a plan built while it did
-    /// would otherwise fuse it and stop being able to shrink. Anything true
-    /// here is barred from a fused run, however cheap its per-pixel work is.
     fn changes_geometry(&self) -> bool {
         false
     }
@@ -183,14 +187,6 @@ impl Modifier {
     }
 }
 
-/// Which modifier a tool should edit: the selected one when it is of the right
-/// kind, otherwise the last one of that kind in the stack.
-///
-/// A stack can hold several crops, texts or drawings, so "the one the tool
-/// means" is a real question with one answer. It lives here because the tool's
-/// message handling and the overlay that draws it both have to reach the same
-/// modifier -- when they disagreed, the overlay edited the first crop while the
-/// user had selected another.
 pub fn tool_target(
     modifiers: &[Modifier],
     active: Option<usize>,

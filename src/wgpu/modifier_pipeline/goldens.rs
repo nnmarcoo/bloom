@@ -177,13 +177,6 @@ fn assemble_scaled(
     full
 }
 
-/// Assemble the tile outputs into a document of `dw` x `dh`.
-///
-/// assemble maps each tile back to its position in the *source*, which only
-/// works while the chain keeps the source's size. A crop changes both the
-/// document's size and where each tile's output lands in it, so the placement
-/// has to come from proc_px -- which the executor writes in the chain's output
-/// space for exactly this reason.
 fn assemble_doc(
     device: &Device,
     queue: &Queue,
@@ -509,8 +502,6 @@ fn run_golden_dims(
     let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
     converge(&mut mp, &device, &queue, &source, modifiers, label);
 
-    // A chain that changes the document's size cannot be assembled back into
-    // the source's grid; place the tiles by proc_px in the output document.
     let doc = crate::modifiers::plan::chain_output_spec(
         crate::modifiers::plan::ImageSpec::new(w, h),
         &crate::modifiers::plan::plan_modifiers(modifiers),
@@ -668,12 +659,6 @@ fn golden_crop_single_tile() {
     run_golden("crop/1-tile", &crop_chain(), None, 2);
 }
 
-/// A crop anchored at (0, 0) -- trimming only width and height.
-///
-/// This is the common case and it took a different path through the backward
-/// ROI walk than crop_chain's offset rect: the executor picked its unmap rule
-/// from whether the origin was nonzero, so this one was crossed as a scale and
-/// part of the output went missing.
 fn crop_at_origin_chain() -> Vec<Modifier> {
     use crate::modifiers::kinds::Crop;
     vec![Modifier::new(ModifierKind::Crop(Crop {
@@ -684,13 +669,6 @@ fn crop_at_origin_chain() -> Vec<Modifier> {
     }))]
 }
 
-/// A crop with a restricted ROI must still cover what the ROI asks for.
-///
-/// The full-bounds goldens cannot see this: they give every tile the whole
-/// tile as its ROI, so a region computed too small is still large enough. It
-/// takes a *partial* ROI -- what being zoomed in produces -- for an
-/// under-sized gather to leave part of the picture unrendered, which is the
-/// "it cuts off too much and comes back when you zoom out" report.
 #[test]
 fn a_cropped_chain_covers_its_roi_at_every_zoom() {
     let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -719,7 +697,6 @@ fn a_cropped_chain_covers_its_roi_at_every_zoom() {
             let label = format!("crop-roi/{chain_label}/{frac}");
             converge(&mut mp, &device, &queue, &source, &chain, &label);
 
-            // Every output the executor produced, unioned in the document.
             let mut covered: Option<[f32; 4]> = None;
             for ti in 0..source.tiles.len() {
                 let Some(o) = mp.tile_outputs[ti].as_ref() else {
@@ -738,8 +715,6 @@ fn a_cropped_chain_covers_its_roi_at_every_zoom() {
             }
             let covered = covered.unwrap_or_else(|| panic!("{label}: nothing rendered"));
 
-            // With the whole image visible the outputs must span the whole
-            // cropped document; anything less is picture that never rendered.
             if frac >= 1.0 {
                 assert!(
                     covered[0] <= 0.5
@@ -753,8 +728,6 @@ fn a_cropped_chain_covers_its_roi_at_every_zoom() {
                 );
             }
 
-            // The outputs must also lie inside the document -- a region that
-            // ran past it means the rects were computed in the wrong space.
             assert!(
                 covered[2] <= doc.w as f32 + 0.5 && covered[3] <= doc.h as f32 + 0.5,
                 "{label}: the tiles cover {covered:?}, past the {}x{} document",
@@ -780,8 +753,6 @@ fn golden_crop_at_origin_multi_tile() {
     );
 }
 
-/// The same crop with a blur after it, so the walk has to cross the crop and
-/// then dilate by an apron in the cropped space.
 #[test]
 fn golden_crop_at_origin_then_blur() {
     let mut chain = crop_at_origin_chain();
@@ -796,9 +767,6 @@ fn golden_crop_multi_tile() {
     run_golden("crop/2x2", &crop_chain(), Some(FORCED_TILE_DIM), 2);
 }
 
-/// The workflow the crop stage exists for: reframe, blur what is left, trim.
-/// The blur reads its own frame, so the second crop cannot be folded into the
-/// first and the chain really does need both stages.
 fn crop_blur_crop_chain() -> Vec<Modifier> {
     use crate::modifiers::kinds::Crop;
     vec![
@@ -1571,14 +1539,6 @@ fn tiles_cover_a_resized_odd_sized_document() {
     assert_tiles_cover_document(&mp, &source, out.w, out.h, "cover/resized");
 }
 
-/// A crop on a multi-tile image must still tile its document exactly.
-///
-/// The display path placed each tile with tile_out_rect, which maps a source
-/// rect into the document by *ratio*. A crop translates instead, so every tile
-/// landed in a different wrong place -- the error grows with distance from the
-/// origin, so the further a tile sits from the top-left the further it drifts.
-/// On a large image that is a preview scattered across the viewport that moves
-/// wrongly as it is panned.
 #[test]
 fn tiles_cover_a_cropped_document() {
     use crate::modifiers::kinds::Crop;
@@ -1589,8 +1549,6 @@ fn tiles_cover_a_cropped_document() {
         return;
     };
 
-    // Offset crops are the interesting case: at the origin the ratio and the
-    // translation agree on the top-left corner and the drift is easy to miss.
     for (label, x, y, cw, ch) in [
         ("cover/cropped-origin", 0.0, 0.0, 700.0, 700.0),
         ("cover/cropped-offset", 240.0, 310.0, 700.0, 700.0),
@@ -1635,17 +1593,6 @@ fn tiles_cover_an_upscaled_odd_sized_document() {
     assert_tiles_cover_document(&mp, &source, out.w, out.h, "cover/upscaled");
 }
 
-/// Dragging a crop's position must not reuse outputs from its old position.
-///
-/// A crop that moves without resizing leaves the document's *size* unchanged,
-/// so an output rendered for the previous origin passed the reuse check and
-/// kept its proc_px -- new content placed at the old offset. exec_sig does
-/// notice the change, but only after the tile textures have been sized and
-/// positioned from that stale comparison.
-///
-/// The ROI is partial here because that is when it shows: zoomed in, each tile
-/// renders a window rather than its whole self, so a wrongly-placed region is
-/// wrong everywhere rather than merely redundant.
 #[test]
 fn moving_a_crop_does_not_reuse_outputs_from_its_old_position() {
     use crate::modifiers::kinds::Crop;
@@ -1662,7 +1609,6 @@ fn moving_a_crop_does_not_reuse_outputs_from_its_old_position() {
     set_partial_roi(&mut source, 0.5);
     let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
 
-    // The size never changes; only the origin moves.
     for (x, y) in [
         (0.0f32, 0.0f32),
         (120.0, 40.0),
@@ -1691,14 +1637,6 @@ fn moving_a_crop_does_not_reuse_outputs_from_its_old_position() {
     }
 }
 
-/// Panning must place the quads where a full prepare would.
-///
-/// While the view is moving, view_pipeline defers the chain and calls
-/// refresh_display_transforms, which rebuilds each tile's quad from the output
-/// it already has. proc_px lives in the chain's *output document*, so it has
-/// to normalize against that document -- normalizing against the source made
-/// every quad a fraction of its correct size, so a cropped image collapsed
-/// while dragging and snapped back when the pan settled.
 #[test]
 fn panning_places_a_cropped_documents_quads_where_prepare_does() {
     use crate::modifiers::kinds::Crop;
@@ -1720,13 +1658,10 @@ fn panning_places_a_cropped_documents_quads_where_prepare_does() {
     let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, REAL_W, REAL_H);
     converge(&mut mp, &device, &queue, &source, &chain, "pan/crop");
 
-    // What prepare left behind, per tile.
     let before: Vec<Option<[f32; 4]>> = (0..source.tiles.len())
         .map(|ti| mp.tile_outputs[ti].as_ref().and_then(|o| o.proc_px))
         .collect();
 
-    // The deferred path a pan takes. It must not disturb the geometry: the
-    // outputs are unchanged, so the quads it builds are the same ones.
     mp.refresh_display_transforms(&device, &queue, &source);
 
     for (ti, want) in before.iter().enumerate() {
@@ -1737,7 +1672,6 @@ fn panning_places_a_cropped_documents_quads_where_prepare_does() {
         );
     }
 
-    // The uv each quad was built with must be proc_px over the *document*.
     let doc = crate::modifiers::plan::chain_output_spec(
         crate::modifiers::plan::ImageSpec::new(REAL_W, REAL_H),
         &crate::modifiers::plan::plan_modifiers(&chain),

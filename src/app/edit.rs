@@ -85,16 +85,12 @@ pub fn update(
             state.selected_tool = tool;
             program.crop_tool_active = is_crop;
             if is_crop {
-                // Shared with the overlay in components::viewer, so the tool
-                // and the rectangle it draws always mean the same crop.
                 let existing = tool_target(&program.modifiers, state.active, |m| {
                     m.enabled && m.kind.as_crop().is_some()
                 });
                 if let Some(idx) = existing {
                     state.active = Some(idx);
                 } else {
-                    // A new crop starts spanning the whole image it receives,
-                    // which is the stack's output so far.
                     let idx = program.modifiers.len();
                     let (iw, ih) = program
                         .stage_input_size(idx)
@@ -166,9 +162,6 @@ pub fn update(
                 }
             }
             let kind = if is_crop {
-                // A fresh crop spans the image it will receive -- the stack's
-                // output so far -- not the source, which is a different size
-                // as soon as anything upstream resizes or crops.
                 let (iw, ih) = program
                     .stage_input_size(program.modifiers.len())
                     .or_else(|| program.image_size())
@@ -432,10 +425,6 @@ mod fit_on_resize_tests {
     fn a_second_crop_can_be_added_and_reframes_what_the_first_produced() {
         use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
 
-        // The workflow the stage exists for. Adding a second Crop used to be
-        // refused outright, because a display-time crop is a single window on
-        // the final document and cannot say "the region of what the first crop
-        // produced".
         let mut p = program_with_resize();
         p.modifiers_mut().clear();
         let mut st = EditState::default();
@@ -503,7 +492,6 @@ mod fit_on_resize_tests {
                 filter: ResizeFilter::Lanczos,
                 lock_aspect: false,
             })));
-        // Halve the source with the first resize, so the second receives 400x300.
         let _ = update(
             &mut EditState::default(),
             &mut p,
@@ -511,7 +499,6 @@ mod fit_on_resize_tests {
             EditMsg::Update(0, ModifierParam::ResizeWidth(50.0)),
         );
 
-        // Ask the second resize for more width than its input has.
         let _ = update(
             &mut EditState::default(),
             &mut p,

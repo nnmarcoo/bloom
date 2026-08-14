@@ -62,8 +62,6 @@ pub fn infer_specs(source: ImageSpec, plan: &[PlanItem]) -> Vec<StageSpec> {
     plan.iter()
         .map(|item| {
             let output = match item {
-                // A fused run is pointwise by construction, and pointwise
-                // modifiers take output_spec's identity default.
                 PlanItem::Fused(_) => cur,
                 PlanItem::Step(_, m) => m.kind.output_spec(cur),
             };
@@ -80,14 +78,6 @@ pub fn chain_output_spec(source: ImageSpec, plan: &[PlanItem]) -> ImageSpec {
         .map_or(source, |s| s.output)
 }
 
-/// The input size each modifier in the raw stack sees, indexed by its position
-/// in `modifiers`.
-///
-/// This walks the stack rather than the plan so that every entry has an answer,
-/// including modifiers the planner drops. A disabled modifier still shows a
-/// panel, and that panel must resolve its numbers against the size the modifier
-/// would receive were it switched back on -- which is the size at its position,
-/// with the disabled ones contributing nothing.
 pub fn stage_inputs(source: ImageSpec, modifiers: &[Modifier]) -> Vec<ImageSpec> {
     let mut cur = source;
     modifiers
@@ -102,13 +92,6 @@ pub fn stage_inputs(source: ImageSpec, modifiers: &[Modifier]) -> Vec<ImageSpec>
         .collect()
 }
 
-/// Whether a modifier may be folded into a fused pointwise run.
-///
-/// Being pointwise is necessary but not sufficient: a fused run is evaluated at
-/// one coordinate in one space, so a modifier that *moves* or *resizes* its
-/// output cannot join one however cheap its per-pixel work is. Crop reads a
-/// single sample per output pixel yet changes the geometry, and fusing it made
-/// it silently render as a passthrough -- planned, sized, and then ignored.
 fn is_fusable(m: &Modifier) -> bool {
     m.kind.effect_class().is_pointwise() && !m.kind.changes_geometry()
 }
@@ -221,7 +204,6 @@ mod tests {
             }
             let name = kind.name();
 
-            // Surround it with pointwise modifiers that would happily fuse.
             let mods = vec![exposure(), m(kind), exposure()];
             let plan = plan_modifiers(&mods);
 
@@ -295,7 +277,6 @@ mod tests {
         let plan = plan_modifiers(&mods);
         let specs = infer_specs(SRC, &plan);
 
-        // Every planned Step must see the same input the UI reports for it.
         for (item, spec) in plan.iter().zip(&specs) {
             if let PlanItem::Step(i, _) = item {
                 assert_eq!(

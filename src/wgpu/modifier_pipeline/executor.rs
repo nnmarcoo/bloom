@@ -128,12 +128,6 @@ fn pr_with_roi(
     }
 }
 
-/// Where the chain's output sits inside the source, and how it is scaled.
-///
-/// A resize maps a source rect into the document by ratio; a crop translates it
-/// and clips. A chain can do both, so this walks the stages forward and
-/// accumulates one offset in the *final* document's units -- each crop's origin
-/// is carried through whatever resizes follow it.
 fn chain_doc_offset(specs: &[crate::modifiers::plan::StageSpec], plan: &[PlanItem]) -> (f32, f32) {
     let mut off = (0.0f32, 0.0f32);
     for (k, item) in plan.iter().enumerate() {
@@ -145,7 +139,6 @@ fn chain_doc_offset(specs: &[crate::modifiers::plan::StageSpec], plan: &[PlanIte
             let (ox, oy) = roi::stage_origin(&m.kind, specs[k].input);
             off = (off.0 + ox, off.1 + oy);
         } else if iw > 0.0 && ih > 0.0 {
-            // A size change after a crop scales the offset with everything else.
             off = (off.0 * ow / iw, off.1 * oh / ih);
         }
     }
@@ -299,8 +292,6 @@ impl ModifierPipeline {
                 DocScale {
                     src: (source.full_width, source.full_height),
                     out: (source.full_width, source.full_height),
-                    // A fused pointwise run cannot change geometry, so its
-                    // output sits exactly where its input did.
                     offset: (0.0, 0.0),
                     roi_active: true,
                 },
@@ -327,8 +318,6 @@ impl ModifierPipeline {
         let full_h = source.full_height as f32;
 
         let source_spec_doc = ImageSpec::new(source.full_width, source.full_height);
-        // One walk, used for doc_size here and for every stage's geometry
-        // below; it was being computed twice per prepare.
         let specs = infer_specs(source_spec_doc, plan);
         let doc_spec = specs.last().map_or(source_spec_doc, |s| s.output);
         self.doc_size = (doc_spec.w, doc_spec.h);
@@ -381,9 +370,6 @@ impl ModifierPipeline {
         let out_spec_doc = doc_spec;
         let chain_offset = chain_doc_offset(&specs, plan);
         self.doc_offset = chain_offset;
-        // A crop can move the document without changing its size, so "does the
-        // chain reshape its output" has to include the offset, not just the
-        // dimensions.
         let chain_resizes = out_spec_doc != source_spec_doc || chain_offset != (0.0, 0.0);
         let classes: Vec<StepClass> = plan
             .iter()
@@ -639,12 +625,6 @@ impl ModifierPipeline {
             for k in (0..n).rev() {
                 let (iw, ih) = (specs[k].input.w as f32, specs[k].input.h as f32);
                 let (ow, oh) = (specs[k].output.w as f32, specs[k].output.h as f32);
-                // Crossing a stage backward: a crop translates its output, so
-                // it unmaps by adding the origin; everything else scales.
-                // Which rule applies is a property of the *stage*, not of the
-                // origin it currently has -- a crop anchored at 0 still
-                // translates, and crossing it as a scale widens the region by
-                // the crop's ratio.
                 let crop_origin = match &plan[k] {
                     PlanItem::Step(_, m) if m.kind.as_crop().is_some() => {
                         Some(roi::stage_origin(&m.kind, specs[k].input))
@@ -946,16 +926,10 @@ impl ModifierPipeline {
                         prev = outs;
                     }
                     PlanItem::Step(_, m) if m.kind.as_crop().is_some() => {
-                        // out_r is already in the crop's output space and
-                        // prev.rect in its input, and the backward walk put
-                        // them a whole origin apart. Copying the overlap is
-                        // therefore the entire operation -- a crop moves
-                        // pixels without touching them, so no pass is needed.
                         let origin = roi::stage_origin(&m.kind, specs[k].input);
                         let (ow, oh) = rect_dims(out_r, scale);
                         let outs = self.pooled_stage(device, &mut slab_slot, ow, oh, out_r);
 
-                        // Both rects in the input's space, so they can meet.
                         let want = roi::unmap_offset(origin, out_r);
                         let src = scale_rect(prev.rect, scale);
                         let dst = scale_rect(want, scale);

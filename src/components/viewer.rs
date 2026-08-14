@@ -1,3 +1,15 @@
+//! Assembles the viewer: the shader canvas plus whichever tool overlay is
+//! active.
+//!
+//! A tool picks its target with modifiers::tool_target, shared with the message
+//! handling in app::edit so the overlay and the tool cannot disagree about which
+//! modifier is being edited. Taking the first match instead meant that with
+//! several crops in the stack the overlay edited one the user had not selected.
+//!
+//! An overlay measures its geometry against the space the program reports uv in,
+//! which for the crop overlay is that crop's own stage input. Bounding it by the
+//! source instead scaled every drag by the ratio between the two.
+
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -65,10 +77,6 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
 
     let mut layers: Vec<Element<'_, Message>> = vec![base];
 
-    // tool_target is shared with edit.rs so the overlay and the tool's message
-    // handling cannot disagree about which crop is being edited. Taking the
-    // *first* crop meant that with several in the stack the overlay edited one
-    // the user had not selected.
     if ctx.selected_tool == &Tool::Crop
         && ctx.loading.is_none()
         && let Some(crop_idx) = tool_target(ctx.modifiers, ctx.active_modifier, |m| {
@@ -76,9 +84,6 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
         })
         && let Some(crop) = ctx.modifiers[crop_idx].kind.as_crop()
     {
-        // The overlay converts through the program's uv, so it must be bounded
-        // by the space that uv is a fraction of. Bounding it by the crop's own
-        // stage input instead scaled every drag by the ratio between the two.
         let (stage_w, stage_h) = ctx
             .program
             .crop_overlay_bounds(crop_idx)

@@ -296,39 +296,6 @@ mod tests {
         println!();
     }
 
-    /// What a crop actually saves now that it is a chain stage.
-    ///
-    /// The "crop" columns prepend a real Crop stage to the chain at full source
-    /// size. The "ceiling" column runs the same chain on a genuinely smaller
-    /// source, which is the best a crop could possibly do -- it is what this
-    /// bench measured before the stage existed, and keeping it here says how
-    /// much of the predicted headroom the implementation actually collects.
-    ///
-    /// set_viewport is given the whole image throughout, so the ROI machinery
-    /// is not quietly doing the crop's job and flattering the numbers.
-    ///
-    /// Measured 4096x2731, 100% zoom, best of 5:
-    ///
-    /// ```text
-    /// chain                 no crop    crop 50%      crop 25%   ceiling 25%
-    /// pointwise x1             3.32  2.57 (1.3x)   1.20 (2.8x)         0.84
-    /// blur r=8                 9.08  4.07 (2.2x)  0.90 (10.1x)         0.85
-    /// blur r=32               18.58  6.83 (2.7x)  1.65 (11.3x)         1.73
-    /// blur r=128              20.80  7.10 (2.9x)   2.21 (9.4x)         1.93
-    /// chromatic aberration     5.95  3.79 (1.6x)   0.73 (8.1x)         0.96
-    /// ```
-    ///
-    /// A 25% crop is 16x fewer pixels and the expensive chains collect most of
-    /// that, several of them landing at the ceiling. blur r=8 and chromatic
-    /// aberration read as *faster* than their ceiling, which is measurement
-    /// noise on sub-millisecond numbers rather than a real result -- treat
-    /// anything under about 2ms here as "at the floor", not as a ranking.
-    ///
-    /// An earlier revision of this table had pointwise getting *slower* behind
-    /// a crop (0.6x at 50%) and nothing reaching the ceiling. That was the
-    /// geometry bugs fixed after it: tiles were placed by ratio rather than by
-    /// the crop's offset, so the chain was rendering regions it then threw
-    /// away. The crop's own copy is still real, but it no longer dominates.
     #[test]
     #[ignore = "GPU timing baseline; run with --release --ignored --nocapture"]
     fn gpu_bench_crop_stage() {
@@ -340,8 +307,6 @@ mod tests {
 
         use crate::modifiers::kinds::Crop;
 
-        // Fractions of each axis kept by the crop. 0.5 keeps a quarter of the
-        // pixels, 0.25 a sixteenth.
         const KEEP: [f32; 3] = [1.0, 0.5, 0.25];
 
         let cropped = |chain: &[Modifier], keep: f32| -> Vec<Modifier> {
@@ -371,7 +336,6 @@ mod tests {
             ),
         ];
 
-        // The full-size source, reused for every cropped chain.
         let full_image = ImageData::new(pixels(W, H), W, H);
         let mut full_source = make_source(&device, &queue, &full_image);
         set_viewport(&mut full_source, 1.0, 1.0);
@@ -404,7 +368,6 @@ Crop as a chain stage -- measured saving, best of {RUNS}, 100% zoom"
                 });
             }
 
-            // The ceiling: the same chain on a source that is already small.
             let keep = KEEP[KEEP.len() - 1];
             let (cw, ch) = (
                 ((W as f32 * keep) as u32).max(1),

@@ -16,6 +16,20 @@
 //! document holds the size its textures were built for; deferring across a size
 //! change leaves full-resolution textures on shrunken quads, which reads as
 //! flicker. That is what the doc_size comparison guards.
+//!
+//! doc_region is the source rect the document covers, narrowed by a crop. Three
+//! separate things used to be one field, and collapsing them cost a bug each:
+//! crop_uv is the window the shader samples with and is now always the unit
+//! rect, since the chain has already cropped; doc_region is what the quads are
+//! laid out across, and using the source there stretched the picture; and
+//! last_doc_region keys the per-tile cache, where the constant crop_uv meant the
+//! guard never fired and a tile the crop excluded kept its old placement -- a
+//! fragment of the picture stranded in the viewport.
+//!
+//! place_tile is that layout as a pure function, so the display_harness module
+//! can drive a real multi-tile grid through pan and zoom. Every crop bug that
+//! reached a user lived in this arithmetic, and none were visible to a test
+//! while it was tangled up with the GPU buffers update() writes.
 
 use bytemuck::bytes_of;
 use glam::{Mat4, Vec2, vec2, vec3, vec4};
@@ -54,12 +68,6 @@ pub struct DisplayUniforms {
     pub crop_uv: [f32; 4],
 }
 
-/// The part of `tile` the document actually covers, as [l, t, r, b].
-///
-/// Empty (left >= right, or top >= bottom) when the tile falls entirely
-/// outside the document -- a crop can exclude whole tiles on a large image,
-/// and those must stop being drawn or a fragment of the old picture stays
-/// stranded in the viewport.
 pub(crate) fn tile_doc_intersection(tile: [f32; 4], doc: [f32; 4]) -> [f32; 4] {
     [
         doc[0].max(tile[0]),
@@ -69,16 +77,8 @@ pub(crate) fn tile_doc_intersection(tile: [f32; 4], doc: [f32; 4]) -> [f32; 4] {
     ]
 }
 
-/// Everything the view needs in order to lay a tile out.
-///
-/// Grouped so the placement below can be a pure function of it: the real
-/// update() also owns GPU buffers, which makes the arithmetic that actually
-/// goes wrong impossible to test. Every display bug on the crop work lived in
-/// this computation and none of them were visible to a test until it was
-/// separable from the device.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ViewGeometry {
-    /// The source region the document covers, [l, t, r, b].
     pub doc_region: [f32; 4],
     pub viewport: Vec2,
     pub scale: f32,
@@ -96,22 +96,14 @@ impl ViewGeometry {
     }
 }
 
-/// Where one tile ends up on screen, or None when the document excludes it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct TilePlacement {
     pub transform: Mat4,
-    /// The window the shader samples from this tile's own texture.
     pub crop_uv: [f32; 4],
     pub ndc: (Vec2, Vec2),
-    /// The part of the source this tile contributes, [l, t, r, b].
     pub isec: [f32; 4],
 }
 
-/// Lay out `tile` (a source rect) for the given view.
-///
-/// None when the document does not cover the tile at all -- a crop excludes
-/// whole tiles on a large image, and those must stop being drawn rather than
-/// keep the placement they had when they were still visible.
 pub(crate) fn place_tile(tile: [f32; 4], g: ViewGeometry) -> Option<TilePlacement> {
     let isec = tile_doc_intersection(tile, g.doc_region);
     if isec[0] >= isec[2] || isec[1] >= isec[3] {
@@ -331,13 +323,6 @@ impl ViewPipeline {
         let full_w = source.full_width as f32;
         let full_h = source.full_height as f32;
 
-        // The source region the document stands for. This is *not* crop_uv:
-        // that is the window the shader samples with, and it stays the unit
-        // rect because the chain has already cropped. This says which part of
-        // the source the quads are laid out over, so a cropped document places
-        // its tiles across the crop's extent rather than the whole source --
-        // laying them out over the source while the view scales for the
-        // smaller document is what stretched the picture.
         let geom = ViewGeometry {
             doc_region,
             viewport,
@@ -684,18 +669,6 @@ impl Pipeline for ViewPipeline {
     }
 }
 
-/// A harness for the display layer: where each tile's quad lands on screen.
-///
-/// Every crop bug that reached the user lived here, and none were visible to
-/// the golden tests, which compare the modifier pipeline's *outputs* and stop
-/// before the transforms built from them. Those transforms went straight into
-/// GPU buffers, so a wrong one could only be seen by looking at the screen.
-///
-/// place_tile is pure, so this drives a real multi-tile grid through real pan
-/// and zoom and asserts on the geometry directly. The properties are the ones
-/// the bugs violated: the quads tile the document exactly, they stay put when
-/// the view does not move, and a tile outside the document is dropped rather
-/// than left where it was.
 #[cfg(test)]
 mod display_harness {
     use super::{TilePlacement, ViewGeometry, place_tile};
@@ -704,7 +677,6 @@ mod display_harness {
     pub(super) const SRC: f32 = 30000.0;
     const TILE: f32 = 8192.0;
 
-    /// The tiling of a source image, matching how TiledSource carves one up.
     pub(super) fn tiles(src: f32, tile: f32) -> Vec<[f32; 4]> {
         let mut v = Vec::new();
         let mut y = 0.0;
@@ -729,10 +701,6 @@ mod display_harness {
         }
     }
 
-    /// Where a tile's quad actually lands, as a screen-space rect in NDC.
-    ///
-    /// The transform maps the unit quad, so its corners say where the tile is
-    /// drawn -- which is the thing that was wrong every time.
     fn quad_ndc(p: &TilePlacement) -> [f32; 4] {
         let corners = [
             vec4(-1.0, -1.0, 0.0, 1.0),
@@ -749,11 +717,6 @@ mod display_harness {
         [min.x, min.y, max.x, max.y]
     }
 
-    /// The union of every placed quad, in NDC.
-    ///
-    /// Deliberately *not* filtered by viewport culling: culling drops quads
-    /// that fall off-screen, and asking where the document landed means asking
-    /// about all of it, including the parts currently out of view.
     fn drawn_bounds(doc: [f32; 4], scale: f32, pan: Vec2) -> Option<[f32; 4]> {
         let g = geometry(doc, scale, pan);
         let mut u: Option<[f32; 4]> = None;
@@ -773,13 +736,6 @@ mod display_harness {
         u
     }
 
-    /// The quads must reconstruct the document, not some other rectangle.
-    ///
-    /// A document of `dw` source pixels drawn at `scale` occupies
-    /// `2 * scale * dw / viewport.x` of NDC's two units, and likewise in y.
-    /// Laying the quads out over the *source* while the view scales for a
-    /// cropped document is what stretched the picture, and it shows up here as
-    /// a span computed from the wrong width.
     #[test]
     fn the_quads_reconstruct_the_document_at_every_zoom() {
         for &doc in &[
@@ -805,10 +761,6 @@ mod display_harness {
         }
     }
 
-    /// Two documents of the same shape must be drawn the same shape.
-    ///
-    /// Independent of the absolute span: a crop that keeps the aspect ratio
-    /// must not change how square the picture looks, whatever else moves.
     #[test]
     fn a_crop_does_not_change_the_documents_shape_on_screen() {
         let full = drawn_bounds([0.0, 0.0, SRC, SRC], 0.2, Vec2::ZERO).expect("drawn");
@@ -824,13 +776,6 @@ mod display_harness {
         );
     }
 
-    /// With no pan, the document must sit centred in the viewport.
-    ///
-    /// The union tests above measure the drawn *extent*, which a wrong
-    /// document centre translates without changing -- every quad moves the
-    /// same way, so the union moves with them and the error cancels. This pins
-    /// the absolute position instead: the crop's own centre is what the view
-    /// centres on, not the source's.
     #[test]
     fn the_document_is_centred_when_the_view_is_not_panned() {
         for &doc in &[
@@ -848,7 +793,6 @@ mod display_harness {
         }
     }
 
-    /// Panning must move every quad by the same amount and nothing else.
     #[test]
     fn panning_translates_the_quads_without_reshaping_them() {
         let doc = [5000.0, 5000.0, 15000.0, 15000.0];
@@ -868,8 +812,6 @@ mod display_harness {
                 "pan {pan:?} changed the drawn size from {bw:.4}x{bh:.4} to \
                  {mw:.4}x{mh:.4}; panning must translate, not reshape"
             );
-            // pan_ndc is applied inside the zoom, matching build_transform, so
-            // a pan of p at zoom s shifts the picture by s * p on screen.
             let want = [base[0] + 0.5 * pan.x, base[1] + 0.5 * pan.y];
             assert!(
                 (moved[0] - want[0]).abs() < 1e-3 && (moved[1] - want[1]).abs() < 1e-3,
@@ -878,11 +820,8 @@ mod display_harness {
         }
     }
 
-    /// Neighbouring tiles must meet exactly, with no gap and no overlap.
     #[test]
     fn adjacent_tiles_meet_on_screen() {
-        // Wide enough to touch every column and row, so the grid really has
-        // interior seams rather than just an outer edge.
         let doc = [2000.0, 2000.0, 28000.0, 28000.0];
         let g = geometry(doc, 0.4, vec2(0.1, -0.1));
 
@@ -900,7 +839,6 @@ mod display_harness {
 
         for (a_src, a_q) in &placed {
             for (b_src, b_q) in &placed {
-                // b sits immediately right of a in the source.
                 if (b_src[0] - a_src[2]).abs() > 1e-3 || (b_src[1] - a_src[1]).abs() > 1e-3 {
                     continue;
                 }
@@ -916,7 +854,6 @@ mod display_harness {
         }
     }
 
-    /// A tile the document excludes is dropped, not left where it was.
     #[test]
     fn a_tile_outside_the_document_is_not_placed() {
         let doc = [20000.0, 20000.0, 30000.0, 30000.0];
@@ -933,10 +870,6 @@ mod display_harness {
         );
     }
 
-    /// Holding the view still must produce identical placements.
-    ///
-    /// The tile cache skips work when nothing changed, so a placement that
-    /// drifts frame to frame would either flicker or, worse, be cached wrong.
     #[test]
     fn an_unchanged_view_places_tiles_identically() {
         let g = geometry([5000.0, 5000.0, 15000.0, 15000.0], 0.3, vec2(0.2, 0.1));
@@ -954,7 +887,6 @@ mod display_harness {
 mod tile_culling_tests {
     use super::tile_doc_intersection;
 
-    // A 30000px image in 8192px tiles, cropped to the middle.
     const SRC: f32 = 30000.0;
     const TILE: f32 = 8192.0;
     const DOC: [f32; 4] = [12000.0, 12000.0, 20000.0, 20000.0];
@@ -979,7 +911,6 @@ mod tile_culling_tests {
 
     #[test]
     fn a_tile_outside_the_document_has_an_empty_intersection() {
-        // The top-left tile ends at 8192, well before the crop starts at 12000.
         let outside = tile_doc_intersection([0.0, 0.0, TILE, TILE], DOC);
         assert!(
             is_empty(outside),
@@ -1005,23 +936,12 @@ mod tile_culling_tests {
 
     #[test]
     fn a_tile_the_document_covers_keeps_the_overlapping_part() {
-        // The centre tile spans 8192..16384 and the crop starts at 12000.
         let r = tile_doc_intersection([TILE, TILE, TILE * 2.0, TILE * 2.0], DOC);
         assert_eq!(r, [12000.0, 12000.0, 16384.0, 16384.0]);
     }
 
-    /// The guard around the cull branch must fire when the crop moves.
-    ///
-    /// It used to compare crop_uv, the shader's sampling window, back when
-    /// that also said which part of the source the document covered. crop_uv
-    /// is now always the unit rect -- the chain crops, so the shader must not
-    /// -- so `last != current` went false from the second frame on. The cull
-    /// branch sits behind that guard, so a tile the crop excluded never had
-    /// its placement updated and kept being drawn: a fragment of the old
-    /// picture stranded in the viewport.
     #[test]
     fn moving_the_crop_invalidates_a_tiles_cached_placement() {
-        // The guard as it is written: last recorded region vs the current one.
         fn stale(last: Option<[f32; 4]>, current: [f32; 4]) -> bool {
             last != Some(current)
         }
@@ -1029,18 +949,13 @@ mod tile_culling_tests {
         let first = [12000.0f32, 12000.0, 20000.0, 20000.0];
         let moved = [9000.0f32, 9000.0, 17000.0, 17000.0];
 
-        // First frame: nothing cached, so the tile is updated.
         assert!(stale(None, first));
-        // Held still: no work.
         assert!(!stale(Some(first), first));
-        // Crop moved: the tile must be updated again, which is what the old
-        // key could not express because crop_uv was identical either way.
         assert!(
             stale(Some(first), moved),
             "a tile cached for one crop must be seen as stale under another,              or the cull branch never runs and excluded tiles keep drawing"
         );
 
-        // What the old key did on those same two frames.
         const UNIT_UV: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
         assert!(
             !stale(Some(UNIT_UV), UNIT_UV),

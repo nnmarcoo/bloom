@@ -138,10 +138,6 @@ fn geom_of(data: &ExportData) -> Geom {
     let img_w = processed.w;
     let img_h = processed.h;
 
-    // Crop is a chain stage, so `processed` is already the cropped image and
-    // there is no window left to apply. The fields stay because the rotation
-    // paths in raster.rs index through them; they now describe the whole
-    // buffer. Applying a crop here as well would crop the picture twice.
     let (cx0, cy0, cw, ch) = (0, 0, img_w, img_h);
 
     let (out_w, out_h) = if data.rotation.is_multiple_of(2) {
@@ -426,8 +422,6 @@ mod tests {
         assert_eq!((geom.out_w, geom.out_h), (w, h));
     }
 
-    /// `crop` is a pixel rect (x, y, w, h) appended as a real Crop stage --
-    /// the only way to express a crop now that the chain owns it.
     fn assert_streamed_png_matches_buffered(
         label: &str,
         mut modifiers: Vec<Modifier>,
@@ -683,11 +677,6 @@ mod tests {
             Some((0.0, 0.0, 32.0, 24.0)),
         );
         let geom = geom_of(&data);
-        // The crop is a stage, so the processed buffer *is* the cropped image:
-        // 128x96 halved to 64x48, then cropped to 32x24. Export no longer
-        // carries a window to apply afterwards, and the old assertion that the
-        // buffer stayed 64x48 described the architecture that made a second
-        // crop impossible.
         assert_eq!(
             (geom.img_w, geom.img_h),
             (32, 24),

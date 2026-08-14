@@ -16,6 +16,11 @@
 //! crosses it, and crop_stage_feasibility shows the two together reproduce the
 //! tile culling the display-time crop does today -- which is what a crop stage
 //! would have to preserve.
+//!
+//! stage_origin is where a stage's output sits inside its input, zero for
+//! everything but a crop. The backward walk adds it after unmapping; picking
+//! between the two rules by whether that origin is nonzero is wrong, since a
+//! crop anchored at (0, 0) still translates rather than scales.
 
 use crate::modifiers::{InputRequest, ModifierKind};
 
@@ -44,11 +49,6 @@ pub fn step_class(kind: &ModifierKind) -> StepClass {
     }
 }
 
-/// Where a stage's output sits inside its input, in input pixels.
-///
-/// Zero for everything except a crop, whose output starts at the crop's origin.
-/// The backward walk adds this after unmapping, which is what keeps tile
-/// culling working when a crop moves into the chain.
 pub fn stage_origin(kind: &ModifierKind, input: crate::modifiers::plan::ImageSpec) -> (f32, f32) {
     match kind.as_crop() {
         Some(c) => {
@@ -104,13 +104,6 @@ pub fn unmap_region(from: (f32, f32), to: (f32, f32), r: RegionPx) -> RegionPx {
     [r[0] * sx, r[1] * sy, r[2] * sx, r[3] * sy]
 }
 
-/// Cross a stage that *translates* its input rather than scaling it.
-///
-/// unmap_region carries a scale but no offset, which is all a resize needs. A
-/// crop is the opposite: same scale, pure offset, where output pixel (0, 0)
-/// comes from input pixel (origin). A backward walk that only scales cannot
-/// express it, so a crop stage would report the wrong source region and tile
-/// culling would read the wrong tiles.
 pub fn unmap_offset(origin: (f32, f32), r: RegionPx) -> RegionPx {
     [
         r[0] + origin.0,
@@ -380,16 +373,6 @@ mod tests {
         }
     }
 
-    /// Step 2 of the crop-as-a-stage feasibility check.
-    ///
-    /// Today a crop culls tiles at display time: view_pipeline intersects the
-    /// crop rect with each tile and skips the ones that miss. If crop became a
-    /// chain stage that culling has to fall out of the backward ROI walk
-    /// instead, or large documents would start reading tiles they do not need.
-    ///
-    /// These tests answer whether the walk can reproduce it. They are pure
-    /// geometry -- no crop stage exists yet -- so they gate the feature rather
-    /// than test it.
     mod crop_stage_feasibility {
         use super::*;
 
@@ -397,7 +380,6 @@ mod tests {
         const FULL_H: f32 = 2731.0;
         const TILE: f32 = 1024.0;
 
-        // The crop the user drew, in source pixels.
         const CROP: RegionPx = [1500.0, 800.0, 2600.0, 1900.0];
 
         fn tiles() -> Vec<RegionPx> {
@@ -418,24 +400,18 @@ mod tests {
             a[0].max(b[0]) < a[2].min(b[2]) && a[1].max(b[1]) < a[3].min(b[3])
         }
 
-        /// What view_pipeline does today: intersect the crop with each tile.
         fn culled_today() -> Vec<bool> {
             tiles().iter().map(|t| !intersects(CROP, *t)).collect()
         }
 
-        /// What a crop stage would do: ask the backward walk which source
-        /// region feeds the crop's whole output, then cull against that.
         fn culled_by_walk(chain_after_crop: &[StepClass]) -> Vec<bool> {
             let (cw, ch) = (CROP[2] - CROP[0], CROP[3] - CROP[1]);
 
-            // Start from the crop stage's entire output and walk back through
-            // anything downstream of it, in the cropped space.
             let mut cur = [0.0, 0.0, cw, ch];
             for c in chain_after_crop.iter().rev() {
                 cur = input_needed(*c, cur, cw, ch);
             }
 
-            // Cross the crop itself: pure translation, no scale.
             let src = clamp_region(unmap_offset((CROP[0], CROP[1]), cur), FULL_W, FULL_H);
             tiles().iter().map(|t| !intersects(src, *t)).collect()
         }
@@ -465,8 +441,6 @@ mod tests {
             }]);
             let plain = culled_today();
 
-            // A blur legitimately reads a little outside the crop, so it may
-            // keep tiles the display crop dropped -- but never fewer.
             for (i, (blurred_culls, plain_culls)) in with_blur.iter().zip(&plain).enumerate() {
                 let dropped_a_needed_tile = *blurred_culls && !*plain_culls;
                 assert!(
@@ -487,9 +461,6 @@ mod tests {
 
         #[test]
         fn a_whole_frame_stage_after_the_crop_still_only_reads_the_crop() {
-            // WholeFrame widens to the stage's own frame, which after a crop is
-            // the cropped frame -- not the source. That containment is the
-            // whole point of cropping early.
             assert_eq!(
                 culled_by_walk(&[StepClass::WholeFrame]),
                 culled_today(),
@@ -499,22 +470,12 @@ mod tests {
             );
         }
 
-        /// A crop translates whatever its origin is, including zero.
-        ///
-        /// The executor chose between unmap_offset and unmap_region by asking
-        /// whether the origin was nonzero, so a crop anchored at (0, 0) -- the
-        /// common case of trimming only width or height -- was crossed as a
-        /// *scale* and the region grew by the crop's ratio. The stage rects
-        /// then disagreed and the copy-out intersection clipped, which reads as
-        /// part of the picture vanishing at some zooms.
         #[test]
         fn a_crop_at_the_origin_translates_rather_than_scales() {
             let out = [0.0, 0.0, 400.0, 520.0];
 
-            // What the crop stage must do: nothing, since the origin is zero.
             assert_eq!(unmap_offset((0.0, 0.0), out), out);
 
-            // What crossing it as a size change would do instead.
             let as_scale = unmap_region((400.0, 520.0), (800.0, 1040.0), out);
             assert_eq!(
                 as_scale,
@@ -531,8 +492,6 @@ mod tests {
 
         #[test]
         fn the_offset_unmap_is_what_makes_this_work() {
-            // Without the offset the walk lands at the origin and culls the
-            // wrong tiles -- this is the failure the feature has to avoid.
             let (cw, ch) = (CROP[2] - CROP[0], CROP[3] - CROP[1]);
             let scale_only = clamp_region(
                 unmap_region((cw, ch), (cw, ch), [0.0, 0.0, cw, ch]),

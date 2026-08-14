@@ -85,9 +85,6 @@ pub(crate) fn source_rows_for_band(
             PlanItem::Fused(_) => StepClass::Pointwise,
             PlanItem::Step(_, m) => step_class_for(&m.kind, in_h, out_h),
         };
-        // A crop translates its rows rather than scaling them, so the ratio
-        // mapping in rows_needed does not apply: shift by the origin instead.
-        // Crossing it as a scale would land the band on the wrong rows.
         if let PlanItem::Step(_, m) = item
             && let Some(c) = m.kind.as_crop()
         {
@@ -190,9 +187,6 @@ pub(crate) fn render_band(
             raster_to_doc(ImageSpec::new(img_w, img_h), spec.input),
         );
         if spec.input != spec.output {
-            // A crop shifts its rows by the origin; everything else that
-            // changes height rescales them. Rescaling a crop would move the
-            // band to a row it never produced.
             let crop_origin_y = match item {
                 PlanItem::Step(_, m) => m.kind.as_crop().map(|c| c.rect_in(spec.input).1 as u32),
                 _ => None,
@@ -388,10 +382,6 @@ fn apply_stage_banded(
                 cur = resample_band(&cur, w, h, spec.output.w, &band, r.filter);
             }
             ModifierKind::Crop(c) => {
-                // The band already holds the rows the crop keeps -- the row
-                // walk shifted them by the origin -- so only the horizontal
-                // window and the new width are applied here. Rows above the
-                // crop that the band happens to include are dropped.
                 let (x, y, _, _) = c.rect_in(spec.input);
                 let skip = (y as u32).saturating_sub(y_off) as usize;
                 let rows = hu.saturating_sub(skip).min(spec.output.h as usize);
@@ -554,11 +544,6 @@ fn blur_direct(buf: &mut [u8], w: usize, h: usize, radius: f32) {
     );
 }
 
-/// Copy `rows` rows of `out_w` pixels out of `src`, starting at (`x`, `y`).
-///
-/// Serves both crop paths: the full render takes the crop's whole height, the
-/// banded one takes however much of it the band holds. Rows are copied whole
-/// rather than per pixel, since a crop moves data without touching it.
 fn copy_rect(src: &[u8], src_w: usize, x: usize, y: usize, out_w: usize, rows: usize) -> Vec<u8> {
     let row = out_w * 4;
     let stride = src_w * 4;
@@ -1461,8 +1446,6 @@ mod band_tests {
     #[test]
     fn a_crop_copies_exactly_the_pixels_it_names() {
         use crate::modifiers::kinds::Crop;
-        // Band parity only proves the two paths agree; they could agree on the
-        // wrong region. This pins the pixels against the source directly.
         let (w, h) = (40u32, 70u32);
         let src = noise(w, h);
         let (cx, cy, cw, ch) = (7u32, 11u32, 23u32, 41u32);
@@ -1503,8 +1486,6 @@ mod band_tests {
     #[test]
     fn bands_match_full_crop_then_blur_then_crop() {
         use crate::modifiers::kinds::Crop;
-        // The workflow the stage exists for: reframe, apply something that
-        // reads its own frame, then trim the result.
         let chain = vec![
             m(ModifierKind::Crop(Crop {
                 x: 4.0,

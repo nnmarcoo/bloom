@@ -371,12 +371,6 @@ impl ViewProgram {
         {
             return None;
         }
-        // The grid draws over the document on screen, and that document starts
-        // at its own origin -- the chain has already removed anything before
-        // it. crop_origin answers where the kept region sits inside the picture
-        // the crop *tool* shows, which is a different question; using it here
-        // shifted every line by the crop's offset and ran the bounds past the
-        // image.
         let eff = self.effective_display_size();
         let to_pixels = Mat4::from_translation(vec3(0.5 * eff.x, 0.5 * eff.y, 0.0))
             * Mat4::from_scale(vec3(0.5 * eff.x, -0.5 * eff.y, 1.0));
@@ -534,14 +528,9 @@ impl ViewProgram {
         Some((self.image_size.x as u32, self.image_size.y as u32))
     }
 
-    /// The size the modifier at `index` receives, which is the source only when
-    /// nothing upstream resizes. Parameters resolved against the wrong one of
-    /// those render at a size the panel never showed.
     pub fn stage_input_size(&self, index: usize) -> Option<(u32, u32)> {
         let (w, h) = self.image_size()?;
         let src = ImageSpec::new(w, h);
-        // One past the end is the size a modifier appended now would receive,
-        // which is what the tools ask for before pushing one.
         if index == self.modifiers.len() {
             let out = chain_output_spec(src, &plan_modifiers(&self.modifiers));
             return Some((out.w, out.h));
@@ -550,14 +539,6 @@ impl ViewProgram {
         Some((s.w, s.h))
     }
 
-    /// The image the crop overlay measures its rect against.
-    ///
-    /// The overlay divides its rect by this to get uv and multiplies the
-    /// cursor's uv by it to get pixels back, so it must be the image the rect
-    /// is measured in -- the crop's own stage input. That is also the document
-    /// on screen while the crop tool is open, because the tool renders the
-    /// stack with crops widened, which is what makes screen_to_image_uv's
-    /// fractions line up with it.
     pub fn crop_overlay_bounds(&self, crop_idx: usize) -> Option<(f32, f32)> {
         self.stage_input_size(crop_idx)
             .map(|(w, h)| (w as f32, h as f32))
@@ -571,12 +552,6 @@ impl ViewProgram {
         (!trim.is_full()).then(|| trim.resolve(duration))
     }
 
-    /// The document the view lays out, which is the chain's output.
-    ///
-    /// Crop is a chain stage, so its shrinking is already in that number; there
-    /// is nothing left to apply here. The one exception is the crop tool, which
-    /// has to show the material outside the rect in order to let the user drag
-    /// it back -- see uncropped_chain_size.
     fn effective_display_size(&self) -> Vec2 {
         if self.crop_tool_active {
             self.uncropped_chain_size()
@@ -596,19 +571,10 @@ impl ViewProgram {
         vec2(out.w as f32, out.h as f32)
     }
 
-    /// The chain's output with every crop widened to its full input.
-    ///
-    /// The crop tool needs the picture the crop is cutting *from*, so the user
-    /// can drag the rect back out over material the chain would otherwise have
-    /// discarded. Everything else in the stack still applies.
     fn uncropped_chain_size(&self) -> Vec2 {
         if self.image_size == Vec2::ZERO {
             return self.image_size;
         }
-        // Walk the sizes directly rather than cloning the stack to widen it:
-        // this runs on every cursor move and every frame, and cloning copies
-        // whole Drawing stroke lists and Text bodies to read two numbers.
-        // A widened crop is the identity, so skipping crops *is* the widening.
         let mut cur = ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32);
         for m in self.modifiers.iter() {
             if m.has_visible_effect() && m.kind.as_crop().is_none() {
@@ -618,17 +584,6 @@ impl ViewProgram {
         vec2(cur.w as f32, cur.h as f32)
     }
 
-    /// The stack with every crop opened to its full input.
-    ///
-    /// The crop tool renders this rather than the real stack, so the picture
-    /// on screen is the one the rect is cutting *from* and the user can drag
-    /// back out over material the chain would otherwise have discarded. It has
-    /// to produce the size uncropped_chain_size reports, or the quad and the
-    /// texture disagree about the document and the render stretches --
-    /// the_rendered_stack_matches_the_document_the_view_lays_out pins that.
-    ///
-    /// This one does clone, because the renderer needs real modifiers; the size
-    /// query above walks the specs instead, since it runs far more often.
     fn widen_crops(modifiers: &[Modifier]) -> Vec<Modifier> {
         modifiers
             .iter()
@@ -675,13 +630,6 @@ impl ViewProgram {
         })
     }
 
-    /// A cursor position as a fraction of the document currently on screen.
-    ///
-    /// This is the overlays' space, not the eyedropper's: the overlays measure
-    /// their own geometry against the image being displayed, so their uv has to
-    /// mean the same thing. screen_to_image_coords reports *source* pixels for
-    /// the eyedropper, which is a different question with a different answer as
-    /// soon as the chain resizes or crops.
     pub fn screen_to_image_uv(&self, screen_pos: Vec2) -> Option<Vec2> {
         let viewport = vec2(self.bounds.width, self.bounds.height);
         if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
@@ -703,10 +651,6 @@ impl ViewProgram {
         if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
             return None;
         }
-        // uv is a fraction of the document on screen, which is exactly what the
-        // transform maps, so it projects directly and is the exact inverse of
-        // screen_to_image_uv. There is no crop window: the chain has already
-        // cropped, and applying one here too stretched what was left.
         let img_ndc = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
         let screen_ndc = self.build_transform(viewport) * img_ndc;
         Some(vec2(
@@ -731,15 +675,6 @@ impl ViewProgram {
         let eff = self.effective_display_size();
         let local_px = (img_ndc + 1.0) * 0.5 * vec2(eff.x, -eff.y) + vec2(0.0, eff.y);
 
-        // local_px is in the document on screen. Getting back to source pixels
-        // undoes the chain's two effects in the order it applied them: a resize
-        // scaled the picture, a crop moved its origin. Scaling by
-        // image_size/displayed alone ignores the offset, so with a crop in the
-        // stack the eyedropper read a pixel shifted by the crop's origin.
-        //
-        // With the crop tool open the view already shows the uncropped chain,
-        // so there is no offset left to undo -- adding one there shifted every
-        // reading the other way.
         let displayed = if self.crop_tool_active {
             self.uncropped_chain_size()
         } else {
@@ -752,16 +687,6 @@ impl ViewProgram {
         Some(local_px * scale + origin)
     }
 
-    /// How to get from the displayed document back to source pixels.
-    ///
-    /// Returns the scale to divide out and the origin to add, in that order.
-    /// The two cannot be collapsed into one ratio: a resize scales the picture
-    /// while a crop only moves its origin, so `image_size / displayed` -- which
-    /// mixes both into a single factor -- reads the wrong pixel as soon as a
-    /// crop is in the stack.
-    ///
-    /// `widened` skips the crops, for the crop tool: it displays the uncropped
-    /// chain, so there is no offset left to undo.
     fn doc_to_source(&self, widened: bool) -> (Vec2, Vec2) {
         let mut cur = ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32);
         let mut scale = Vec2::ONE;
@@ -775,8 +700,6 @@ impl ViewProgram {
                     continue;
                 }
                 let (x, y, _, _) = c.rect_in(cur);
-                // The offset is in this stage's space; carry it out through the
-                // scale accumulated so far to land in source pixels.
                 origin += vec2(x, y) * scale;
                 cur = m.kind.output_spec(cur);
                 continue;
@@ -790,19 +713,11 @@ impl ViewProgram {
         (scale, origin)
     }
 
-    /// The source region the displayed document stands for, [l, t, r, b].
-    ///
-    /// The whole source unless a crop narrowed it. The tiler lays each tile's
-    /// quad out across this region, so a cropped document places its tiles
-    /// over the crop's extent; laying them over the full source while the view
-    /// scales for the smaller document stretches the picture.
     fn doc_region(&self) -> [f32; 4] {
         let src = self.image_size;
         if src == Vec2::ZERO {
             return [0.0, 0.0, 1.0, 1.0];
         }
-        // The crop tool shows the uncropped chain, so the document is the whole
-        // source and there is no region to narrow.
         let (scale, origin) = self.doc_to_source(self.crop_tool_active);
         let doc = self.effective_display_size();
         let far = origin + doc * scale;
@@ -1350,9 +1265,6 @@ impl Program<Message> for ViewProgram {
         ViewPrimitive {
             uniforms: DisplayUniforms {
                 transform: self.build_transform(viewport),
-                // No display-time window: the chain's output is already
-                // cropped. Passing one here windows an image that has
-                // already been cropped, which stretches what is left.
                 crop_uv: [0.0, 0.0, 1.0, 1.0],
             },
             image: self.image.clone(),
@@ -1365,10 +1277,6 @@ impl Program<Message> for ViewProgram {
             grid: self.grid_uniforms(bounds),
             mipmap_zoom_out: self.mipmap_zoom_out,
             smooth_zoom_in: self.smooth_zoom_in,
-            // The crop tool shows the picture the rect is cutting from, so it
-            // renders the stack with crops widened. This must match what
-            // effective_display_size reports, or a cropped texture is drawn
-            // onto an uncropped quad and the render stretches.
             doc_region: self.doc_region(),
             modifiers: if self.crop_tool_active {
                 Arc::new(Self::widen_crops(&self.modifiers))
@@ -1770,12 +1678,6 @@ mod crop_tests {
         program
     }
 
-    /// The exported document's size, which is what the crop now controls.
-    ///
-    /// Export used to carry a separate crop uv and apply it after the chain.
-    /// The crop is a stage, so the chain's output *is* the cropped image and
-    /// its size is the thing to assert -- a stronger check than the uv, which
-    /// could be right while the render ignored it.
     fn exported_size(p: &ViewProgram) -> (u32, u32) {
         let d = p.export_frame_data().expect("image is loaded");
         let out = chain_output_spec(
@@ -1787,8 +1689,6 @@ mod crop_tests {
 
     #[test]
     fn the_crop_is_exported_whether_or_not_the_tool_is_open() {
-        // The tool only changes what the *view* shows; the export is the
-        // stack, and the stack says crop.
         let mut program = program_with_crop();
         assert_eq!(exported_size(&program), (50, 25));
 
@@ -1802,14 +1702,6 @@ mod crop_tests {
         );
     }
 
-    /// A crop must not be applied twice: once by the chain, once by the
-    /// display window.
-    ///
-    /// The chain's output is already cropped, so passing a crop_uv to the
-    /// display pass windows an image that has already been windowed. The
-    /// shader remaps uv into that window, so the surviving strip is stretched
-    /// across the whole quad -- on an 800x1040 image, moving x to ~268 lost
-    /// half the picture and smeared the rest horizontally.
     #[test]
     fn a_cropped_document_keeps_its_shape_on_screen() {
         let (w, h) = (800u32, 1040u32);
@@ -1833,12 +1725,8 @@ mod crop_tests {
             });
             p.fit();
 
-            // The document really is the cropped size.
             assert_eq!(p.effective_display_size(), vec2(cw, h as f32));
 
-            // Its corners on screen must keep the document's aspect ratio. A
-            // second crop applied at display time stretches one axis only, so
-            // the drawn aspect stops matching the document's.
             let tl = p.image_uv_to_screen(vec2(0.0, 0.0)).expect("top left");
             let br = p.image_uv_to_screen(vec2(1.0, 1.0)).expect("bottom right");
             let drawn = (br - tl).abs();
@@ -1856,19 +1744,6 @@ mod crop_tests {
         }
     }
 
-    /// The quad the view lays out and the texture the pipeline renders must be
-    /// the same document, with the crop tool open as well as closed.
-    ///
-    /// The tool shows the uncropped picture so the rect can be dragged back
-    /// out. If the pipeline still renders the *cropped* stack, a small texture
-    /// is drawn onto a large quad and the picture stretches -- the same defect
-    /// as the display-time crop window, arriving by a different route.
-    /// The overlay turns its rect into uv by dividing by the bounds it is
-    /// given, and turns the cursor back into pixels by multiplying by them, so
-    /// those bounds have to be the image the rect is measured in *and* the
-    /// space the program reports uv against. When the two disagree every drag
-    /// is scaled by the ratio between them, which is what made dragging the
-    /// crop rectangle unusable.
     #[test]
     fn the_overlay_bounds_are_the_space_the_program_reports_uv_in() {
         use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
@@ -1876,8 +1751,6 @@ mod crop_tests {
         let (w, h) = (800u32, 1040u32);
         let mut p = ViewProgram::default();
         p.set_image(ImageData::new(vec![0u8; (w * h * 4) as usize], w, h));
-        // A resize upstream is what makes the source and the crop's stage
-        // differ at all; without one the bug is invisible.
         p.modifiers_mut()
             .push(Modifier::new(ModifierKind::Resize(Resize {
                 mode: ResizeMode::Percent,
@@ -1929,10 +1802,6 @@ mod crop_tests {
         }
     }
 
-    /// The eyedropper reports source pixels, and the crop tool must not move
-    /// them. With the tool open the view shows the *uncropped* chain, so
-    /// effective_display_size already spans the whole picture and adding
-    /// crop_origin on top shifts every reading by the crop's offset.
     #[test]
     fn the_crop_tool_does_not_shift_what_the_eyedropper_reads() {
         let (w, h) = (800u32, 1040u32);
@@ -1958,9 +1827,6 @@ mod crop_tests {
             let got = p
                 .screen_to_image_coords(vec2(500.0, 400.0))
                 .expect("the viewport centre is over the image");
-            // Closed, the document is the 400x500 crop and its centre is the
-            // crop's centre in source pixels. Open, the whole 800x1040 source
-            // is on screen and the centre is the source's centre.
             let want = if tool_open {
                 vec2(400.0, 520.0)
             } else {
@@ -1974,15 +1840,6 @@ mod crop_tests {
         }
     }
 
-    /// The region the tiler lays quads over must be the region the document
-    /// actually covers, in source pixels.
-    ///
-    /// The tiler positions each tile's quad within this region and the view
-    /// scales for effective_display_size, so if the region spans the whole
-    /// source while the document is a crop of it, every quad is laid out over
-    /// an area larger than the document and the picture stretches. That is
-    /// only visible on a multi-tile image, which is why a 30000px source
-    /// showed it and a small one did not.
     #[test]
     fn the_tiler_lays_quads_over_the_region_the_document_covers() {
         use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
@@ -2004,8 +1861,6 @@ mod crop_tests {
             "the document is the crop, so the quads span the crop's extent"
         );
 
-        // A resize after the crop scales the document but not the region it
-        // came from: the same source pixels are still on screen.
         p.modifiers_mut()
             .push(Modifier::new(ModifierKind::Resize(Resize {
                 mode: ResizeMode::Percent,
@@ -2016,7 +1871,6 @@ mod crop_tests {
             })));
         assert_eq!(p.doc_region(), [5000.0, 5000.0, 15000.0, 15000.0]);
 
-        // With the crop tool open the whole source is displayed.
         p.crop_tool_active = true;
         assert_eq!(p.doc_region(), [0.0, 0.0, w as f32, h as f32]);
     }
@@ -2029,14 +1883,6 @@ mod crop_tests {
         assert_eq!(p.doc_region(), [0.0, 0.0, w as f32, h as f32]);
     }
 
-    /// The pixel grid overlays the document on screen, so its bounds are that
-    /// document -- which always starts at its own origin.
-    ///
-    /// crop_origin says where the kept region sits inside the picture the crop
-    /// *tool* displays, which is a different question. Feeding it to the grid
-    /// shifted every line by the crop's offset and ran the bounds past the
-    /// image: with the tool open on an 800x1040 source cropped at (100, 200),
-    /// the grid claimed [100, 200, 900, 1240].
     #[test]
     fn the_pixel_grid_covers_the_document_it_draws_over() {
         use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
@@ -2121,9 +1967,6 @@ mod crop_tests {
         }
     }
 
-    /// The crop overlay drags in uv and draws in uv, so the two conversions
-    /// must be inverses. When they are not, the rect lands somewhere other
-    /// than the cursor and the handles jump while panning.
     #[test]
     fn the_screen_and_uv_conversions_round_trip_with_the_crop_tool_open() {
         let (w, h) = (800u32, 1040u32);
@@ -2145,9 +1988,6 @@ mod crop_tests {
         p.crop_tool_active = true;
         p.fit();
 
-        // Panning and zooming must not break the round trip either -- the
-        // handles jumped *while panning*, so the pan offset is part of the
-        // reported symptom.
         for (pan, zoom) in [
             (Vec2::ZERO, 1.0f32),
             (vec2(120.0, -60.0), 1.0),
@@ -2178,10 +2018,6 @@ mod crop_tests {
     fn the_overlay_is_bounded_by_the_crops_own_stage() {
         use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
 
-        // The overlay clamps its handles to stage_input_size(crop_idx). With a
-        // half resize upstream the crop sees 50x25, not the 100x50 source, so
-        // bounding it by the source would let the rect be dragged out over
-        // pixels the crop never receives.
         let mut program = ViewProgram::default();
         program.set_image(ImageData::new(vec![0u8; 100 * 50 * 4], 100, 50));
         program
@@ -2315,7 +2151,6 @@ mod eyedropper_resize_tests {
             "the second resize sits after a half resize, so it receives 400x400"
         );
 
-        // Drive the second resize the way the panel does.
         let img_size = program.stage_input_size(1);
         program.modifiers_mut()[1].apply_param(ModifierParam::ResizeWidth(50.0), img_size);
 
@@ -2860,9 +2695,6 @@ mod document_size_tests {
 
     #[test]
     fn crop_applies_to_the_resized_document() {
-        // 50% leaves 400x300, and the crop asks for 400x300 of it -- all of it.
-        // Under the old display-time crop this was read as a fraction of the
-        // source and cut the document to 200x150, halving it a second time.
         let p = program(
             vec![resize_pct(50.0), crop_of(0.0, 0.0, 400.0, 300.0)],
             800,
@@ -2875,7 +2707,6 @@ mod document_size_tests {
              the whole thing"
         );
 
-        // Half of the resized document is what asking for half of it looks like.
         let half = program(
             vec![resize_pct(50.0), crop_of(0.0, 0.0, 200.0, 150.0)],
             800,
@@ -2886,10 +2717,6 @@ mod document_size_tests {
 
     #[test]
     fn a_crop_takes_the_pixels_it_names_from_the_stage_it_sits_at() {
-        // Crop is a chain stage, so its rect is measured in the image it
-        // receives rather than being a scale-free fraction of the document.
-        // A 400x300 crop after a resize takes 400x300 of the resized image,
-        // and is clamped when the resize left less than that.
         for (pct, want) in [
             (25.0f32, vec2(200.0, 150.0)),
             (50.0, vec2(400.0, 300.0)),
@@ -2911,8 +2738,6 @@ mod document_size_tests {
 
     #[test]
     fn a_crop_clamps_to_an_input_smaller_than_its_rect() {
-        // 25% leaves a 200x150 image; a 400x300 rect cannot take more than
-        // exists, and must not report a document larger than its input.
         let p = program(
             vec![resize_pct(25.0), crop_of(0.0, 0.0, 400.0, 300.0)],
             800,
@@ -2923,9 +2748,6 @@ mod document_size_tests {
 
     #[test]
     fn the_crop_tool_shows_the_picture_the_rect_cuts_from() {
-        // Open, the view is the uncropped chain so the rect can be dragged back
-        // out; closed, it is what the chain actually produces. 50% leaves a
-        // 400x300 image and the crop keeps 200x150 of it.
         let mut p = program(
             vec![resize_pct(50.0), crop_of(100.0, 60.0, 200.0, 150.0)],
             800,

@@ -132,11 +132,6 @@ struct TileOutput {
     height: u32,
     proc_px: Option<[f32; 4]>,
     quality_scale: f32,
-    /// The document this output was built for: its size *and* where it sits in
-    /// the source. Size alone is not enough -- moving a crop's origin leaves
-    /// the size identical, so an output rendered for the old position looked
-    /// reusable and its proc_px was kept, placing new content at the old
-    /// offset.
     doc: DocId,
 }
 
@@ -232,11 +227,6 @@ use crate::modifiers::gpu::UvRect;
 pub(super) struct DocScale {
     pub src: (u32, u32),
     pub out: (u32, u32),
-    /// Where the chain's output starts inside the source, in source pixels.
-    ///
-    /// Only a crop makes this nonzero, and without it a tile's placement is
-    /// computed by ratio alone -- which puts every tile in the wrong place by
-    /// a different amount, since the error grows with distance from the origin.
     pub offset: (f32, f32),
     pub roi_active: bool,
 }
@@ -255,11 +245,6 @@ pub struct ModifierPipeline {
     tile_display_bgs_nearest: Vec<Option<BindGroup>>,
 
     roi_display_uniforms: Vec<Option<iced::wgpu::Buffer>>,
-    /// The proc UV each tile's display quad was last built with.
-    ///
-    /// Kept so a test can see what the display path computed: the transforms
-    /// themselves go straight into GPU buffers, so a wrong normalization is
-    /// otherwise invisible until it is on screen.
     tile_display_uv: Vec<Option<UvRect>>,
     reprocess_pending: bool,
 
@@ -597,12 +582,6 @@ impl ModifierPipeline {
         queue: &Queue,
         source: &TiledSource,
     ) {
-        // proc_px lives in the chain's output document, so it normalizes
-        // against that document -- not the source. They differ as soon as a
-        // crop or resize is in the stack, and this path runs on every frame of
-        // a pan: with a 3x crop the quads collapsed to a third of their size
-        // while dragging and snapped back when the pan settled and prepare()
-        // rebuilt them properly.
         let (doc_w, doc_h) = (self.doc_size.0 as f32, self.doc_size.1 as f32);
         for ti in 0..source.tiles.len() {
             let tile = &source.tiles[ti];
@@ -627,9 +606,6 @@ impl ModifierPipeline {
                 DocScale {
                     src: (source.full_width, source.full_height),
                     out: self.doc_size,
-                    // Recorded by the last prepare, for the same reason
-                    // doc_size is: this path moves quads without the modifier
-                    // list, so it cannot recompute the chain's geometry.
                     offset: self.doc_offset,
                     roi_active,
                 },
@@ -649,10 +625,6 @@ impl ModifierPipeline {
         let display_uniform: &iced::wgpu::Buffer = if doc.roi_active
             && let (Some(isec), Some(base)) = (tile.isec_px, tile.last_transform)
         {
-            // Same mapping the executor used to place this tile's output: the
-            // offset first, then the ratio. Mapping by ratio alone put every
-            // tile in a different wrong place, which on a large multi-tile
-            // image reads as the preview being scattered and moving wrong.
             let isec = to_doc(isec, doc.src.0, doc.src.1, doc.out, doc.offset);
             let t = inscribe_transform(base, isec, pr.px);
             if self.roi_display_uniforms[ti].is_none() {

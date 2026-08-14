@@ -79,13 +79,6 @@ pub(super) fn tile_out_rect(
     ]
 }
 
-/// Carry a source-space rect into the chain's output document.
-///
-/// The offset comes first and the ratio second, matching the order the stages
-/// apply them. The edges are then mapped through grid_edge exactly as
-/// tile_out_rect does, because neighbouring tiles must still land on the same
-/// integer boundary -- mapping the span directly rounds them apart and leaves
-/// seams between tiles.
 pub(super) fn to_doc(
     r: RegionPx,
     src_w: u32,
@@ -93,7 +86,6 @@ pub(super) fn to_doc(
     doc: (u32, u32),
     offset: (f32, f32),
 ) -> RegionPx {
-    // What the source looks like once the crops have removed their margins.
     let kept_w = ((src_w as f32 - offset.0).max(1.0)).round() as u32;
     let kept_h = ((src_h as f32 - offset.1).max(1.0)).round() as u32;
     let shifted = [
@@ -238,27 +230,15 @@ pub(super) fn tex_copy_info(
 mod to_doc_tests {
     use super::to_doc;
 
-    /// A crop's tiles are placed by translating, not by scaling.
-    ///
-    /// Both the executor (which sizes each tile's output) and the display path
-    /// (which places its quad) map source rects into the document, and they
-    /// must use the same rule. The display path used tile_out_rect, which maps
-    /// by ratio alone: correct for a resize, and for a crop it puts every tile
-    /// in a different wrong place, since the error grows with distance from
-    /// the origin. On a 30000px image that is a preview scattered across the
-    /// viewport that moves wrongly when panned.
     #[test]
     fn a_crop_translates_its_tiles_instead_of_scaling_them() {
         const SRC: u32 = 30000;
         let doc = (10000u32, 10000u32);
         let offset = (5000.0f32, 5000.0f32);
 
-        // A tile in the middle of a large source.
         let tile = [8192.0, 8192.0, 16384.0, 16384.0];
         let mapped = to_doc(tile, SRC, SRC, doc, offset);
 
-        // The crop kept everything from 5000 on, and the document is that
-        // region, so the tile lands at its source position minus the origin.
         let kept = (SRC as f32 - offset.0) as u32;
         let expect = |v: f32| ((v - offset.0) * doc.0 as f32 / kept as f32).round();
         assert_eq!(
@@ -271,8 +251,6 @@ mod to_doc_tests {
             ]
         );
 
-        // Ratio alone -- what the display path did -- lands somewhere else
-        // entirely, and by an amount that differs per tile.
         let by_ratio = super::tile_out_rect(tile, SRC, SRC, doc.0, doc.1);
         assert_ne!(
             mapped, by_ratio,

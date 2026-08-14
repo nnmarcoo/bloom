@@ -34,10 +34,6 @@ pub struct Crop {
 
 impl Default for Crop {
     fn default() -> Self {
-        // f32::MAX rather than a real size: a fresh crop has no image yet, and
-        // rect_in clamps to whatever input it is eventually given, so the
-        // default means "all of it" at any size. A small literal would instead
-        // mean "crop to a few pixels" the moment the crop became a real stage.
         Self {
             x: 0.0,
             y: 0.0,
@@ -48,11 +44,6 @@ impl Default for Crop {
 }
 
 impl Crop {
-    /// The crop rect clamped to `input`, as (x, y, w, h) in that stage's pixels.
-    ///
-    /// The stored rect is whatever the user dragged; it is resolved against the
-    /// stage's real input here so a crop that outlives an upstream size change
-    /// still names a region that exists.
     pub fn rect_in(&self, input: ImageSpec) -> (f32, f32, f32, f32) {
         let (iw, ih) = (input.w as f32, input.h as f32);
         let x = self.x.max(0.0).min((iw - 1.0).max(0.0));

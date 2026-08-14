@@ -1,3 +1,10 @@
+//! The prepared frame handed to the renderer.
+//!
+//! doc_region is the source rect the document stands for, the whole image unless
+//! a crop narrowed it. The tiler lays each tile's quad out across that region
+//! rather than the full source: laying them over the source while the view
+//! scales for a smaller document stretches the picture.
+
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -31,9 +38,6 @@ pub struct ViewPrimitive {
     pub mipmap_zoom_out: bool,
     pub smooth_zoom_in: bool,
     pub modifiers: Arc<Vec<Modifier>>,
-    /// The source region the document stands for, as [l, t, r, b] in source
-    /// pixels. The whole source unless a crop narrowed it; the tiler lays its
-    /// quads out over this rather than over the full image.
     pub doc_region: [f32; 4],
     pub dirty: bool,
     pub pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
