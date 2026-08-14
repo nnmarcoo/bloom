@@ -74,14 +74,12 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
             .find(|(_, m)| m.enabled && m.kind.as_crop().is_some())
         && let Some(crop) = crop_m.kind.as_crop()
     {
-        // The rect is in the crop's own stage space, so the overlay must be
-        // bounded by that stage's input rather than the source. They differ as
-        // soon as anything upstream resizes, and the handles would then clamp
-        // against an image the crop never sees.
+        // The overlay converts through the program's uv, so it must be bounded
+        // by the space that uv is a fraction of. Bounding it by the crop's own
+        // stage input instead scaled every drag by the ratio between the two.
         let (stage_w, stage_h) = ctx
             .program
-            .stage_input_size(crop_idx)
-            .map(|(w, h)| (w as f32, h as f32))
+            .crop_overlay_bounds(crop_idx)
             .unwrap_or((img_w, img_h));
         layers.push(
             CropOverlay::new(

@@ -539,6 +539,19 @@ impl ViewProgram {
         Some((s.w, s.h))
     }
 
+    /// The image the crop overlay measures its rect against.
+    ///
+    /// The overlay divides its rect by this to get uv and multiplies the
+    /// cursor's uv by it to get pixels back, so it must be the image the rect
+    /// is measured in -- the crop's own stage input. That is also the document
+    /// on screen while the crop tool is open, because the tool renders the
+    /// stack with crops widened, which is what makes screen_to_image_uv's
+    /// fractions line up with it.
+    pub fn crop_overlay_bounds(&self, crop_idx: usize) -> Option<(f32, f32)> {
+        self.stage_input_size(crop_idx)
+            .map(|(w, h)| (w as f32, h as f32))
+    }
+
     pub fn active_trim(&self, duration: Duration) -> Option<(Duration, Duration)> {
         let trim = self
             .modifiers
@@ -667,9 +680,27 @@ impl ViewProgram {
         })
     }
 
+    /// A cursor position as a fraction of the document currently on screen.
+    ///
+    /// This is the overlays' space, not the eyedropper's: the overlays measure
+    /// their own geometry against the image being displayed, so their uv has to
+    /// mean the same thing. screen_to_image_coords reports *source* pixels for
+    /// the eyedropper, which is a different question with a different answer as
+    /// soon as the chain resizes or crops.
     pub fn screen_to_image_uv(&self, screen_pos: Vec2) -> Option<Vec2> {
-        let coords = self.screen_to_image_coords(screen_pos)?;
-        Some(coords / self.image_size)
+        let viewport = vec2(self.bounds.width, self.bounds.height);
+        if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
+            return None;
+        }
+        let screen_ndc = vec2(
+            (screen_pos.x / viewport.x) * 2.0 - 1.0,
+            1.0 - (screen_pos.y / viewport.y) * 2.0,
+        );
+        let img_ndc = (self.build_transform(viewport).inverse()
+            * vec4(screen_ndc.x, screen_ndc.y, 0.0, 1.0))
+        .truncate()
+        .truncate();
+        Some(vec2((img_ndc.x + 1.0) * 0.5, (1.0 - img_ndc.y) * 0.5))
     }
 
     pub fn image_uv_to_screen(&self, uv: Vec2) -> Option<Vec2> {
@@ -677,23 +708,11 @@ impl ViewProgram {
         if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
             return None;
         }
-        // uv is a fraction of the *source*, matching screen_to_image_uv, so it
-        // is carried into the document actually on screen before projecting.
-        // There is no crop window: the chain has already cropped, and applying
-        // one here as well stretched what was left.
-        let displayed = if self.crop_tool_active {
-            self.uncropped_chain_size()
-        } else {
-            self.chain_output_size()
-        };
-        let local = if displayed == Vec2::ZERO || displayed == self.image_size {
-            uv * self.image_size
-        } else {
-            uv * displayed
-        } - self.crop_origin();
-        let eff = self.effective_display_size();
-        let display_uv = local / vec2(eff.x.max(1e-6), eff.y.max(1e-6));
-        let img_ndc = vec4(display_uv.x * 2.0 - 1.0, 1.0 - display_uv.y * 2.0, 0.0, 1.0);
+        // uv is a fraction of the document on screen, which is exactly what the
+        // transform maps, so it projects directly and is the exact inverse of
+        // screen_to_image_uv. There is no crop window: the chain has already
+        // cropped, and applying one here too stretched what was left.
+        let img_ndc = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
         let screen_ndc = self.build_transform(viewport) * img_ndc;
         Some(vec2(
             (screen_ndc.x + 1.0) * 0.5 * viewport.x,
@@ -1783,6 +1802,72 @@ mod crop_tests {
     /// out. If the pipeline still renders the *cropped* stack, a small texture
     /// is drawn onto a large quad and the picture stretches -- the same defect
     /// as the display-time crop window, arriving by a different route.
+    /// The overlay turns its rect into uv by dividing by the bounds it is
+    /// given, and turns the cursor back into pixels by multiplying by them, so
+    /// those bounds have to be the image the rect is measured in *and* the
+    /// space the program reports uv against. When the two disagree every drag
+    /// is scaled by the ratio between them, which is what made dragging the
+    /// crop rectangle unusable.
+    #[test]
+    fn the_overlay_bounds_are_the_space_the_program_reports_uv_in() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        let (w, h) = (800u32, 1040u32);
+        let mut p = ViewProgram::default();
+        p.set_image(ImageData::new(vec![0u8; (w * h * 4) as usize], w, h));
+        // A resize upstream is what makes the source and the crop's stage
+        // differ at all; without one the bug is invisible.
+        p.modifiers_mut()
+            .push(Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: 50.0,
+                height: 50.0,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            })));
+        p.modifiers_mut()
+            .push(Modifier::new(ModifierKind::Crop(Crop {
+                x: 40.0,
+                y: 60.0,
+                width: 200.0,
+                height: 300.0,
+            })));
+        p.set_bounds(Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: 1000.0,
+            height: 800.0,
+        });
+        p.crop_tool_active = true;
+        p.fit();
+
+        let bounds = p
+            .crop_overlay_bounds(1)
+            .map(|(bw, bh)| vec2(bw, bh))
+            .expect("an image is loaded");
+        assert_eq!(
+            bounds,
+            vec2(400.0, 520.0),
+            "the rect is in the crop's stage pixels, so the overlay's bounds \
+             must be that stage's input -- the 50% resize leaves 400x520"
+        );
+
+        for px in [vec2(40.0, 60.0), vec2(140.0, 210.0), vec2(240.0, 360.0)] {
+            let uv = px / bounds;
+            let Some(screen) = p.image_uv_to_screen(uv) else {
+                continue;
+            };
+            let back_px = p.screen_to_image_uv(screen).expect("back to uv") * bounds;
+            assert!(
+                (back_px - px).length() <= 1.0,
+                "overlay pixel {px:?} -> uv {uv:?} -> screen {screen:?} -> \
+                 {back_px:?}. The overlay measures against {bounds:?} but the \
+                 program reports uv against a different image, so every drag \
+                 is scaled by the ratio between them."
+            );
+        }
+    }
+
     #[test]
     fn the_rendered_stack_matches_the_document_the_view_lays_out() {
         let (w, h) = (800u32, 1040u32);
