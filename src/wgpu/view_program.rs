@@ -606,8 +606,23 @@ impl ViewProgram {
         if self.image_size == Vec2::ZERO {
             return self.image_size;
         }
-        let mods: Vec<Modifier> = self
-            .modifiers
+        let mods = Self::widen_crops(&self.modifiers);
+        let out = chain_output_spec(
+            ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32),
+            &plan_modifiers(&mods),
+        );
+        vec2(out.w as f32, out.h as f32)
+    }
+
+    /// The stack with every crop opened to its full input.
+    ///
+    /// The crop tool renders this rather than the real stack, so the picture
+    /// on screen is the one the rect is cutting *from* and the user can drag
+    /// back out over material the chain would otherwise have discarded. It has
+    /// to be the same widening effective_display_size reports, or the quad and
+    /// the texture disagree about the document's size and the render stretches.
+    fn widen_crops(modifiers: &[Modifier]) -> Vec<Modifier> {
+        modifiers
             .iter()
             .map(|m| {
                 let mut m = m.clone();
@@ -616,12 +631,7 @@ impl ViewProgram {
                 }
                 m
             })
-            .collect();
-        let out = chain_output_spec(
-            ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32),
-            &plan_modifiers(&mods),
-        );
-        vec2(out.w as f32, out.h as f32)
+            .collect()
     }
 
     pub fn animation_info(&self) -> Option<(usize, usize)> {
@@ -667,10 +677,23 @@ impl ViewProgram {
         if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
             return None;
         }
-        // uv is in the displayed document, which is the chain's output and is
-        // already cropped. Remapping through a crop window here would apply it
-        // a second time.
-        let img_ndc = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
+        // uv is a fraction of the *source*, matching screen_to_image_uv, so it
+        // is carried into the document actually on screen before projecting.
+        // There is no crop window: the chain has already cropped, and applying
+        // one here as well stretched what was left.
+        let displayed = if self.crop_tool_active {
+            self.uncropped_chain_size()
+        } else {
+            self.chain_output_size()
+        };
+        let local = if displayed == Vec2::ZERO || displayed == self.image_size {
+            uv * self.image_size
+        } else {
+            uv * displayed
+        } - self.crop_origin();
+        let eff = self.effective_display_size();
+        let display_uv = local / vec2(eff.x.max(1e-6), eff.y.max(1e-6));
+        let img_ndc = vec4(display_uv.x * 2.0 - 1.0, 1.0 - display_uv.y * 2.0, 0.0, 1.0);
         let screen_ndc = self.build_transform(viewport) * img_ndc;
         Some(vec2(
             (screen_ndc.x + 1.0) * 0.5 * viewport.x,
@@ -695,11 +718,21 @@ impl ViewProgram {
         let local_px = (img_ndc + 1.0) * 0.5 * vec2(eff.x, -eff.y) + vec2(0.0, eff.y);
         let doc_px = local_px + self.crop_origin();
 
-        let doc = self.chain_output_size();
-        if doc == Vec2::ZERO || doc == self.image_size {
+        // eff is the document actually on screen, so doc_px is already in it.
+        // Report source pixels by rescaling from that same document -- with the
+        // crop tool open that is the uncropped chain, not the cropped output.
+        // Rescaling from the cropped size while displaying the uncropped one
+        // sent the viewport centre well outside the image, which is what made
+        // the overlay's handles jump.
+        let displayed = if self.crop_tool_active {
+            self.uncropped_chain_size()
+        } else {
+            self.chain_output_size()
+        };
+        if displayed == Vec2::ZERO || displayed == self.image_size {
             return Some(doc_px);
         }
-        Some(doc_px * self.image_size / doc)
+        Some(doc_px * self.image_size / displayed)
     }
 
     fn with_rasters<R>(
@@ -1253,7 +1286,15 @@ impl Program<Message> for ViewProgram {
             grid: self.grid_uniforms(bounds),
             mipmap_zoom_out: self.mipmap_zoom_out,
             smooth_zoom_in: self.smooth_zoom_in,
-            modifiers: self.modifiers.clone(),
+            // The crop tool shows the picture the rect is cutting from, so it
+            // renders the stack with crops widened. This must match what
+            // effective_display_size reports, or a cropped texture is drawn
+            // onto an uncropped quad and the render stretches.
+            modifiers: if self.crop_tool_active {
+                Arc::new(Self::widen_crops(&self.modifiers))
+            } else {
+                self.modifiers.clone()
+            },
             dirty: self.dirty.swap(false, std::sync::atomic::Ordering::AcqRel),
             pre_clear_gpu: Arc::clone(&self.pre_clear_gpu),
             reprocess_pending: Arc::clone(&self.reprocess_pending),
@@ -1732,6 +1773,102 @@ mod crop_tests {
                 drawn.x,
                 drawn.y
             );
+        }
+    }
+
+    /// The quad the view lays out and the texture the pipeline renders must be
+    /// the same document, with the crop tool open as well as closed.
+    ///
+    /// The tool shows the uncropped picture so the rect can be dragged back
+    /// out. If the pipeline still renders the *cropped* stack, a small texture
+    /// is drawn onto a large quad and the picture stretches -- the same defect
+    /// as the display-time crop window, arriving by a different route.
+    #[test]
+    fn the_rendered_stack_matches_the_document_the_view_lays_out() {
+        let (w, h) = (800u32, 1040u32);
+        for tool_open in [false, true] {
+            let mut p = ViewProgram::default();
+            p.set_image(ImageData::new(vec![0u8; (w * h * 4) as usize], w, h));
+            p.modifiers_mut()
+                .push(Modifier::new(ModifierKind::Crop(Crop {
+                    x: 100.0,
+                    y: 200.0,
+                    width: 400.0,
+                    height: 500.0,
+                })));
+            p.crop_tool_active = tool_open;
+
+            let rendered = if p.crop_tool_active {
+                ViewProgram::widen_crops(&p.modifiers)
+            } else {
+                p.modifiers.to_vec()
+            };
+            let doc = chain_output_spec(ImageSpec::new(w, h), &plan_modifiers(&rendered));
+            let laid_out = p.effective_display_size();
+
+            assert_eq!(
+                (doc.w as f32, doc.h as f32),
+                (laid_out.x, laid_out.y),
+                "crop tool {}: the pipeline renders a {}x{} document while the \
+                 view lays out {laid_out:?}. The texture is drawn onto a quad \
+                 of the wrong size, so the picture stretches.",
+                if tool_open { "open" } else { "closed" },
+                doc.w,
+                doc.h
+            );
+        }
+    }
+
+    /// The crop overlay drags in uv and draws in uv, so the two conversions
+    /// must be inverses. When they are not, the rect lands somewhere other
+    /// than the cursor and the handles jump while panning.
+    #[test]
+    fn the_screen_and_uv_conversions_round_trip_with_the_crop_tool_open() {
+        let (w, h) = (800u32, 1040u32);
+        let mut p = ViewProgram::default();
+        p.set_image(ImageData::new(vec![0u8; (w * h * 4) as usize], w, h));
+        p.modifiers_mut()
+            .push(Modifier::new(ModifierKind::Crop(Crop {
+                x: 100.0,
+                y: 200.0,
+                width: 400.0,
+                height: 500.0,
+            })));
+        p.set_bounds(Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: 1000.0,
+            height: 800.0,
+        });
+        p.crop_tool_active = true;
+        p.fit();
+
+        // Panning and zooming must not break the round trip either -- the
+        // handles jumped *while panning*, so the pan offset is part of the
+        // reported symptom.
+        for (pan, zoom) in [
+            (Vec2::ZERO, 1.0f32),
+            (vec2(120.0, -60.0), 1.0),
+            (Vec2::ZERO, 2.5),
+            (vec2(-200.0, 90.0), 0.6),
+        ] {
+            p.set_scale(zoom, Vec2::ZERO);
+            p.offset = pan;
+            for probe in [vec2(500.0, 400.0), vec2(420.0, 300.0), vec2(560.0, 520.0)] {
+                let Some(uv) = p.screen_to_image_uv(probe) else {
+                    continue;
+                };
+                let back = p
+                    .image_uv_to_screen(uv)
+                    .expect("uv maps back to the screen");
+                assert!(
+                    (back - probe).length() <= 1.0,
+                    "pan {pan:?} zoom {zoom}: screen {probe:?} -> uv {uv:?} -> \
+                     screen {back:?}. The two conversions disagree about which \
+                     space uv is in, so a drag reads one space and draws in \
+                     another and the rect jumps."
+                );
+            }
         }
     }
 
