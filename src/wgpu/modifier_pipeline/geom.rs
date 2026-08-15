@@ -314,10 +314,9 @@ mod to_doc_tests {
         // A crop selects pixels; it never resamples them. A source pixel inside
         // the crop must land on the document pixel at the same offset from the
         // crop's origin, whatever the crop's size or position.
-        const SRC: u32 = 30000;
         for (ox, oy, dw, dh) in [
             (0.0f32, 0.0f32, 10000u32, 10000u32),
-            (5000.0, 5000.0, 10000.0 as u32, 10000),
+            (5000.0, 5000.0, 10000, 10000),
             (0.0, 0.0, 25000, 20000),
             (1000.0, 2000.0, 4000, 3000),
         ] {
