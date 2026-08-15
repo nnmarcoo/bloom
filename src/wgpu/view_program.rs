@@ -528,6 +528,12 @@ impl ViewProgram {
         Some((self.image_size.x as u32, self.image_size.y as u32))
     }
 
+    pub fn document_size(&self) -> Option<(u32, u32)> {
+        let (w, h) = self.image_size()?;
+        let out = chain_output_spec(ImageSpec::new(w, h), &plan_modifiers(&self.modifiers));
+        Some((out.w, out.h))
+    }
+
     pub fn stage_input_size(&self, index: usize) -> Option<(u32, u32)> {
         let (w, h) = self.image_size()?;
         let src = ImageSpec::new(w, h);

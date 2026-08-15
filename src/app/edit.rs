@@ -14,6 +14,18 @@
 //! product decision but a consequence of crop being a single display-time
 //! window; as a chain stage each crop reframes whatever the one before it
 //! produced, which is what makes crop, effect, crop possible.
+//!
+//! update refits the view by comparing document_size across the edit, rather
+//! than listing the messages that resize. The list form only named Resize's
+//! width and height, so editing a crop, dragging the crop overlay, disabling a
+//! resize, or removing one all left the view scaled for the previous document.
+//! Any new geometry-changing modifier would have joined them. Comparing sizes
+//! also leaves a size-preserving edit alone, which matters because a refit
+//! fights a user who zoomed in deliberately.
+//!
+//! Opening and closing the crop tool is the one refit this cannot see: it
+//! switches the view between the cropped and uncropped extents while the
+//! document keeps its size, so SelectTool refits explicitly.
 
 use iced::Task;
 
@@ -71,6 +83,20 @@ impl Default for EditState {
 }
 
 pub fn update(
+    state: &mut EditState,
+    program: &mut ViewProgram,
+    timed: bool,
+    msg: EditMsg,
+) -> Task<Message> {
+    let doc_before = program.document_size();
+    let task = update_inner(state, program, timed, msg);
+    if program.document_size() != doc_before {
+        program.fit();
+    }
+    task
+}
+
+fn update_inner(
     state: &mut EditState,
     program: &mut ViewProgram,
     timed: bool,
@@ -216,19 +242,12 @@ pub fn update(
                 param,
                 ModifierParam::DrawingStrokeStart(_) | ModifierParam::DrawingStrokeExtend(_)
             );
-            let resizes = matches!(
-                param,
-                ModifierParam::ResizeWidth(_) | ModifierParam::ResizeHeight(_)
-            );
             let img_size = program.stage_input_size(i);
             if let Some(m) = program.modifiers_mut().get_mut(i) {
                 m.apply_param(param, img_size);
             }
             if !stroke_edit {
                 program.mark_dirty();
-            }
-            if resizes {
-                program.fit();
             }
         }
         EditMsg::SetActive(i) => {
@@ -374,11 +393,16 @@ mod fit_on_resize_tests {
 
     #[test]
     fn every_edit_that_changes_the_document_refits() {
+        // Both families that can resize the document, not just Resize's own
+        // params: a list holding one kind is what let the crop and toggle
+        // paths ship without a refit.
         let cases: Vec<(&str, ModifierParam)> = vec![
             ("width", ModifierParam::ResizeWidth(37.0)),
             ("height", ModifierParam::ResizeHeight(37.0)),
-            ("mode", ModifierParam::ResizeMode(ResizeMode::Pixels)),
-            ("lock-aspect", ModifierParam::ResizeLockAspect(false)),
+            ("crop-width", ModifierParam::CropWidth(120.0)),
+            ("crop-height", ModifierParam::CropHeight(90.0)),
+            ("crop-x", ModifierParam::CropX(40.0)),
+            ("crop-y", ModifierParam::CropY(30.0)),
         ];
 
         let doc_of = |p: &ViewProgram| -> Vec2 {
@@ -390,20 +414,28 @@ mod fit_on_resize_tests {
         };
 
         for (label, param) in cases {
-            let mut p = program_with_resize();
+            let is_crop = label.starts_with("crop-");
+            let mut p = if is_crop {
+                program_with_crop()
+            } else {
+                program_with_resize()
+            };
             let before_doc = doc_of(&p);
             let before_scale = p.scale();
 
             edit(&mut p, param);
 
             let after_doc = doc_of(&p);
-            if after_doc == before_doc {
-                continue;
-            }
+            assert_ne!(
+                after_doc, before_doc,
+                "{label}: the document did not change, so this case proves \
+                 nothing about refitting. Fix the case, do not skip it."
+            );
 
             let on_screen = after_doc * p.scale();
+            let filled = (on_screen.x / 1000.0).max(on_screen.y / 800.0);
             assert!(
-                on_screen.x <= 1000.0 + 1.0 && on_screen.y <= 800.0 + 1.0,
+                on_screen.x <= 1000.0 + 1.0 && on_screen.y <= 800.0 + 1.0 && filled > 0.99,
                 "{label}: the document changed from {before_doc:?} to \
                  {after_doc:?} but the view was not refitted (scale stayed \
                  {before_scale}), so it now renders {on_screen:?} inside the \
@@ -549,6 +581,107 @@ mod fit_on_resize_tests {
         );
     }
 
+    fn fits_the_viewport(p: &ViewProgram, bounds: Vec2) -> bool {
+        use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
+        let doc = chain_output_spec(ImageSpec::new(SRC_W, SRC_H), &plan_modifiers(&p.modifiers));
+        let on_screen = Vec2::new(doc.w as f32, doc.h as f32) * p.scale();
+        let filled = (on_screen.x / bounds.x).max(on_screen.y / bounds.y);
+        on_screen.x <= bounds.x * 1.01 && on_screen.y <= bounds.y * 1.01 && filled > 0.99
+    }
+
+    fn program_with_crop() -> ViewProgram {
+        let mut p = ViewProgram::default();
+        p.set_image(ImageData::new(
+            vec![255u8; (SRC_W * SRC_H * 4) as usize],
+            SRC_W,
+            SRC_H,
+        ));
+        p.set_bounds(Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: 1000.0,
+            height: 800.0,
+        });
+        p.modifiers_mut().push(Modifier::new(ModifierKind::Crop(
+            crate::modifiers::kinds::Crop {
+                x: 0.0,
+                y: 0.0,
+                width: SRC_W as f32,
+                height: SRC_H as f32,
+            },
+        )));
+        p.fit();
+        p
+    }
+
+    #[test]
+    fn editing_a_crop_refits_the_view() {
+        let mut p = program_with_crop();
+        edit(&mut p, ModifierParam::CropWidth(200.0));
+        edit(&mut p, ModifierParam::CropHeight(150.0));
+
+        assert!(
+            fits_the_viewport(&p, Vec2::new(1000.0, 800.0)),
+            "a 200x150 crop is not fitted to the viewport; scale is {} so the \
+             document draws at {}x{} inside 1000x800",
+            p.scale(),
+            200.0 * p.scale(),
+            150.0 * p.scale()
+        );
+    }
+
+    #[test]
+    fn dragging_the_crop_overlay_refits_the_view() {
+        let mut p = program_with_crop();
+        let _ = update(
+            &mut EditState::default(),
+            &mut p,
+            false,
+            EditMsg::SetCropRect(0, 0.0, 0.0, 200.0, 150.0),
+        );
+
+        assert!(
+            fits_the_viewport(&p, Vec2::new(1000.0, 800.0)),
+            "dragging the crop overlay left the view at scale {}",
+            p.scale()
+        );
+    }
+
+    #[test]
+    fn disabling_a_resize_refits_the_view() {
+        let mut p = program_with_resize();
+        edit(&mut p, ModifierParam::ResizeWidth(25.0));
+
+        let _ = update(
+            &mut EditState::default(),
+            &mut p,
+            false,
+            EditMsg::ToggleEnabled(0),
+        );
+
+        assert!(
+            fits_the_viewport(&p, Vec2::new(1000.0, 800.0)),
+            "disabling the resize restored the 800x600 document but the view \
+             stayed at scale {}, which was fitted to the 200x150 one",
+            p.scale()
+        );
+    }
+
+    #[test]
+    fn removing_a_resize_refits_the_view() {
+        let mut p = program_with_resize();
+        edit(&mut p, ModifierParam::ResizeWidth(25.0));
+
+        let _ = update(&mut EditState::default(), &mut p, false, EditMsg::Remove(0));
+
+        assert!(
+            fits_the_viewport(&p, Vec2::new(1000.0, 800.0)),
+            "removing the resize restored the 800x600 document but the view \
+             stayed at scale {}",
+            p.scale()
+        );
+    }
+
     #[test]
     fn changing_the_filter_leaves_the_view_alone() {
         let mut p = program_with_resize();
@@ -562,5 +695,52 @@ mod fit_on_resize_tests {
             "changing the filter refit the view, which would fight a user who \
              zoomed in to compare filters"
         );
+    }
+
+    #[test]
+    fn opening_the_crop_tool_refits_even_though_the_document_is_unchanged() {
+        // The tool shows the uncropped extent, so the displayed size changes
+        // while document_size() does not. The refit in SelectTool carries this
+        // case; the document-size comparison in update cannot see it.
+        let mut p = program_with_crop();
+        let mut state = EditState::default();
+        let _ = update(
+            &mut state,
+            &mut p,
+            false,
+            EditMsg::Update(0, ModifierParam::CropWidth(200.0)),
+        );
+        let cropped_scale = p.scale();
+
+        let _ = update(&mut state, &mut p, false, EditMsg::SelectTool(Tool::Crop));
+
+        assert_ne!(
+            p.scale(),
+            cropped_scale,
+            "opening the crop tool switched the view to the uncropped extent \
+             but left the scale fitted to the cropped one"
+        );
+    }
+
+    #[test]
+    fn a_size_preserving_edit_leaves_the_view_alone() {
+        // Mode conversion restates the same document in other units and
+        // lock_aspect only sets a flag, so neither may disturb a manual zoom.
+        for (label, param) in [
+            ("mode", ModifierParam::ResizeMode(ResizeMode::Pixels)),
+            ("lock-aspect", ModifierParam::ResizeLockAspect(false)),
+        ] {
+            let mut p = program_with_resize();
+            p.set_scale(4.0, Vec2::ZERO);
+
+            edit(&mut p, param);
+
+            assert_eq!(
+                p.scale(),
+                4.0,
+                "{label}: the document kept its size but the view refit anyway, \
+                 which would fight a user who zoomed in"
+            );
+        }
     }
 }
