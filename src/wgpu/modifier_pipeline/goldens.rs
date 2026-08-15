@@ -801,6 +801,33 @@ fn golden_crop_blur_crop_multi_tile() {
     );
 }
 
+#[test]
+fn a_crop_whose_slab_already_fits_skips_the_texture_copy() {
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+
+    let (w, h) = (GOLDEN_W, GOLDEN_H);
+    for (label, chain) in [
+        ("at-origin", crop_at_origin_chain()),
+        ("offset", crop_chain()),
+        ("crop-blur-crop", crop_blur_crop_chain()),
+    ] {
+        let image = ImageData::new(test_pixels(w, h), w, h);
+        let source = make_source(&device, &queue, &image, None);
+        let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
+        converge(&mut mp, &device, &queue, &source, &chain, label);
+
+        assert!(
+            mp.elided_crop_copies > 0,
+            "{label}: no crop copy was elided, so the fast path is dead code. \
+             The ROI walk hands each crop a slab that already holds its rect; \
+             if that stopped being true the copy is back at full cost."
+        );
+    }
+}
+
 fn mixed_chain() -> Vec<Modifier> {
     use crate::modifiers::kinds::Invert;
     vec![
