@@ -26,6 +26,15 @@
 //! guard never fired and a tile the crop excluded kept its old placement -- a
 //! fragment of the picture stranded in the viewport.
 //!
+//! doc_region is in source pixels, but the view's scale is chosen against the
+//! *document* -- fit is viewport/document. A resize keeps every source pixel,
+//! so the two spaces differ by exactly the resize ratio, and quads measured in
+//! source pixels came out that much too large: a document resized to 25% drew
+//! at 4x the size fit had chosen, which reads as the image refusing to shrink.
+//! ViewGeometry carries doc_size so inv_tile_vp can divide it back out. Without
+//! a resize the ratio is 1 and nothing changes, which is why only a resized
+//! document showed it.
+//!
 //! place_tile is that layout as a pure function, so the display_harness module
 //! can drive a real multi-tile grid through pan and zoom. Every crop bug that
 //! reached a user lived in this arithmetic, and none were visible to a test
@@ -80,6 +89,12 @@ pub(crate) fn tile_doc_intersection(tile: [f32; 4], doc: [f32; 4]) -> [f32; 4] {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ViewGeometry {
     pub doc_region: [f32; 4],
+    /// The document's size in its own pixels. doc_region is in *source* pixels
+    /// and a resize keeps every source pixel, so the two differ by exactly the
+    /// resize ratio. scale is chosen against the document (fit is
+    /// viewport/document), so quads measured in source pixels must be divided
+    /// back down by this or a downscaled document draws at its old size.
+    pub doc_size: Vec2,
     pub viewport: Vec2,
     pub scale: f32,
     pub pan_ndc: Vec2,
@@ -87,11 +102,20 @@ pub(crate) struct ViewGeometry {
 }
 
 impl ViewGeometry {
+    /// Source pixels per document pixel, per axis.
+    fn src_per_doc(&self) -> Vec2 {
+        let [l, t, r, b] = self.doc_region;
+        let region = vec2((r - l).max(1e-6), (b - t).max(1e-6));
+        let doc = vec2(self.doc_size.x.max(1e-6), self.doc_size.y.max(1e-6));
+        region / doc
+    }
+
     fn inv_tile_vp(&self) -> Vec2 {
+        let k = self.src_per_doc();
         if self.rotation.is_multiple_of(2) {
-            vec2(1.0 / self.viewport.x, 1.0 / self.viewport.y)
+            vec2(1.0 / (self.viewport.x * k.x), 1.0 / (self.viewport.y * k.y))
         } else {
-            vec2(1.0 / self.viewport.y, 1.0 / self.viewport.x)
+            vec2(1.0 / (self.viewport.y * k.y), 1.0 / (self.viewport.x * k.x))
         }
     }
 }
@@ -299,6 +323,7 @@ impl ViewPipeline {
         pan_ndc: Vec2,
         rotation: u8,
         doc_region: [f32; 4],
+        doc_size: Vec2,
     ) {
         if self.last_view != Some(*uniforms) {
             self.last_view = Some(*uniforms);
@@ -342,6 +367,7 @@ impl ViewPipeline {
 
         let geom = ViewGeometry {
             doc_region,
+            doc_size,
             viewport,
             scale,
             pan_ndc,
@@ -707,8 +733,19 @@ mod display_harness {
     }
 
     pub(super) fn geometry(doc_region: [f32; 4], scale: f32, pan: Vec2) -> ViewGeometry {
+        let doc_size = vec2(doc_region[2] - doc_region[0], doc_region[3] - doc_region[1]);
+        geometry_sized(doc_region, doc_size, scale, pan)
+    }
+
+    pub(super) fn geometry_sized(
+        doc_region: [f32; 4],
+        doc_size: Vec2,
+        scale: f32,
+        pan: Vec2,
+    ) -> ViewGeometry {
         ViewGeometry {
             doc_region,
+            doc_size,
             viewport: vec2(1600.0, 900.0),
             scale,
             pan_ndc: pan,
@@ -733,7 +770,17 @@ mod display_harness {
     }
 
     fn drawn_bounds(doc: [f32; 4], scale: f32, pan: Vec2) -> Option<[f32; 4]> {
-        let g = geometry(doc, scale, pan);
+        let doc_size = vec2(doc[2] - doc[0], doc[3] - doc[1]);
+        drawn_bounds_sized(doc, doc_size, scale, pan)
+    }
+
+    fn drawn_bounds_sized(
+        doc: [f32; 4],
+        doc_size: Vec2,
+        scale: f32,
+        pan: Vec2,
+    ) -> Option<[f32; 4]> {
+        let g = geometry_sized(doc, doc_size, scale, pan);
         let mut u: Option<[f32; 4]> = None;
         for t in tiles(SRC, TILE) {
             let Some(p) = place_tile(t, g) else { continue };
@@ -816,6 +863,44 @@ mod display_harness {
              aspect on screen is {want:.4}. Dragging a crop slider on a tiled \
              image stretches the picture."
         );
+    }
+
+    #[test]
+    fn a_downscaled_document_is_drawn_at_the_size_fit_chose() {
+        // fit picks scale = viewport / document. place_tile sizes quads from
+        // doc_region, which is in source pixels: a resize keeps every pixel, so
+        // doc_region stays the whole source while the document shrinks. The
+        // drawn result must still be the document at the fitted scale.
+        let viewport = vec2(1600.0, 900.0);
+        for pct in [1.0f32, 0.25, 0.5, 1.0, 2.0] {
+            let doc_len = SRC * pct;
+            let fit_scale = (viewport.x / doc_len).min(viewport.y / doc_len);
+
+            // A resize keeps every source pixel, so doc_region stays the whole
+            // source while the document itself shrinks to doc_len.
+            let b = drawn_bounds_sized(
+                [0.0, 0.0, SRC, SRC],
+                vec2(doc_len, doc_len),
+                fit_scale,
+                Vec2::ZERO,
+            )
+            .expect("drawn");
+            let drawn_px = vec2(
+                (b[2] - b[0]) * 0.5 * viewport.x,
+                (b[3] - b[1]) * 0.5 * viewport.y,
+            );
+
+            assert!(
+                (drawn_px.x - doc_len * fit_scale).abs() < 2.0,
+                "resize to {}%: fit chose scale {fit_scale:.5} for a {doc_len}px \
+                 document, so it should draw {:.1}px wide, but the quads span \
+                 {:.1}px. The document shrank while doc_region stayed the whole \
+                 source, so the picture keeps its old size.",
+                pct * 100.0,
+                doc_len * fit_scale,
+                drawn_px.x
+            );
+        }
     }
 
     #[test]

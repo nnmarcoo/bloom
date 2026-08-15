@@ -1284,6 +1284,7 @@ impl Program<Message> for ViewProgram {
             mipmap_zoom_out: self.mipmap_zoom_out,
             smooth_zoom_in: self.smooth_zoom_in,
             doc_region: self.doc_region(),
+            doc_size: self.effective_display_size(),
             modifiers: if self.crop_tool_active {
                 Arc::new(Self::widen_crops(&self.modifiers))
             } else {
