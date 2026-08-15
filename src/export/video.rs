@@ -431,7 +431,7 @@ mod tests {
     use std::time::Duration;
 
     use crate::export::{ExportData, ExportSource, VideoExportInfo, do_export};
-    use crate::modifiers::kinds::Exposure;
+    use crate::modifiers::kinds::{Crop, Exposure};
     use crate::modifiers::{Modifier, ModifierKind};
     use crate::wgpu::media::video::probe_video;
 
@@ -476,7 +476,6 @@ mod tests {
             width: info.width,
             height: info.height,
             modifiers: vec![],
-            crop: None,
             rotation: 0,
             trim: None,
         };
@@ -529,8 +528,12 @@ mod tests {
             }),
             width: info.width,
             height: info.height,
-            modifiers: vec![],
-            crop: Some([0.25, 0.25, 0.75, 0.75]),
+            modifiers: vec![Modifier::new(ModifierKind::Crop(Crop {
+                x: 16.0,
+                y: 12.0,
+                width: 32.0,
+                height: 24.0,
+            }))],
             rotation: 1,
             trim: None,
         };
@@ -569,7 +572,6 @@ mod tests {
             modifiers: vec![Modifier::new(ModifierKind::Exposure(Exposure {
                 exposure: -10.0,
             }))],
-            crop: None,
             rotation: 0,
             trim: None,
         };
@@ -637,7 +639,6 @@ mod tests {
             width: info.width,
             height: info.height,
             modifiers: Vec::new(),
-            crop: None,
             rotation: 0,
             trim: Some((Duration::from_secs(1), Duration::from_secs(3))),
         };
@@ -717,7 +718,6 @@ mod tests {
             width: info.width,
             height: info.height,
             modifiers: Vec::new(),
-            crop: None,
             rotation: 0,
             trim: Some((Duration::from_secs(2), Duration::from_secs(3))),
         };
