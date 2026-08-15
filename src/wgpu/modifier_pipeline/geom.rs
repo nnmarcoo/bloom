@@ -241,6 +241,71 @@ pub(super) fn tex_copy_info(
 }
 
 #[cfg(test)]
+mod inscribe_tests {
+    use super::{inscribe_transform, to_doc};
+    use glam::{Mat4, Vec4, vec3};
+
+    fn corners(m: Mat4) -> [f32; 4] {
+        let p: Vec<Vec4> = [
+            Vec4::new(-1.0, -1.0, 0.0, 1.0),
+            Vec4::new(1.0, 1.0, 0.0, 1.0),
+        ]
+        .iter()
+        .map(|c| m * *c)
+        .collect();
+        [
+            p[0].x.min(p[1].x),
+            p[0].y.min(p[1].y),
+            p[0].x.max(p[1].x),
+            p[0].y.max(p[1].y),
+        ]
+    }
+
+    #[test]
+    fn a_full_coverage_sub_rect_reproduces_the_tiles_own_quad() {
+        // pr.px covering the whole intersection means the processed texture is
+        // the tile's whole visible part, so the quad must not move at all.
+        let base = Mat4::from_scale(vec3(0.4, 0.7, 1.0));
+        for isec in [
+            [0.0f32, 0.0, 8192.0, 8192.0],
+            [1000.0, 2000.0, 9192.0, 10192.0],
+        ] {
+            let got = corners(inscribe_transform(base, isec, isec));
+            let want = corners(base);
+            for i in 0..4 {
+                assert!(
+                    (got[i] - want[i]).abs() < 1e-4,
+                    "isec {isec:?}: inscribing the full rect moved the quad from \
+                     {want:?} to {got:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_resized_document_inscribes_where_the_roi_actually_is() {
+        // A 30000px source resized to 15000, tiled at 8192. The second tile
+        // covers source 8192..16384, i.e. document 4096..8192. A ROI covering
+        // the left half of that must occupy the left half of the tile's quad.
+        let kept = (30000u32, 30000u32);
+        let doc = (15000u32, 15000u32);
+        let isec_src = [8192.0f32, 0.0, 16384.0, 8192.0];
+        let isec = to_doc(isec_src, kept, doc, (0.0, 0.0));
+
+        let half = [isec[0], isec[1], (isec[0] + isec[2]) * 0.5, isec[3]];
+        let base = Mat4::IDENTITY;
+        let got = corners(inscribe_transform(base, isec, half));
+
+        assert!(
+            (got[0] - -1.0).abs() < 1e-3 && (got[2] - 0.0).abs() < 1e-3,
+            "a ROI over the left half of the tile should span NDC -1..0, got \
+             {got:?}. The processed texture is placed at the wrong scale, so a \
+             resized document draws zoomed in."
+        );
+    }
+}
+
+#[cfg(test)]
 mod to_doc_tests {
     use super::to_doc;
 

@@ -357,7 +357,12 @@ impl ModifierPipeline {
         let source_spec_doc = ImageSpec::new(source.full_width, source.full_height);
         let specs = infer_specs(source_spec_doc, plan);
         let doc_spec = specs.last().map_or(source_spec_doc, |s| s.output);
+        // Recorded before any culling, for the reason in the header: these
+        // describe the chain, not what happened to be on screen, and the
+        // all-tiles-culled return below would otherwise leave them stale.
         self.doc_size = (doc_spec.w, doc_spec.h);
+        self.doc_offset = chain_doc_offset(&specs, plan);
+        self.doc_kept = chain_kept_extent(&specs, plan, (source.full_width, source.full_height));
 
         let n_tiles = source.tiles.len();
         let mut visible: Vec<usize> = Vec::new();
@@ -405,10 +410,8 @@ impl ModifierPipeline {
         }
 
         let out_spec_doc = doc_spec;
-        let chain_offset = chain_doc_offset(&specs, plan);
-        let chain_kept = chain_kept_extent(&specs, plan, (source.full_width, source.full_height));
-        self.doc_offset = chain_offset;
-        self.doc_kept = chain_kept;
+        let chain_offset = self.doc_offset;
+        let chain_kept = self.doc_kept;
         let chain_resizes = out_spec_doc != source_spec_doc || chain_offset != (0.0, 0.0);
         let classes: Vec<StepClass> = plan
             .iter()

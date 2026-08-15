@@ -104,6 +104,23 @@ pub(crate) struct TilePlacement {
     pub isec: [f32; 4],
 }
 
+/// Whether this frame may defer reprocessing, and what must be remembered.
+///
+/// Deferring postpones the work; it must never consume the request for it. The
+/// caller has already taken `dirty` out of its holding field, so a deferred
+/// frame has to hand it back or the reprocess is lost entirely: the pipeline
+/// keeps whatever it last rendered, and nothing marks it again once the view
+/// settles.
+pub(crate) fn defer_decision(
+    has_expensive: bool,
+    doc_changed: bool,
+    interacting: bool,
+    dirty: bool,
+) -> (bool, bool) {
+    let defer = has_expensive && !doc_changed && interacting;
+    (defer, defer && dirty)
+}
+
 pub(crate) fn place_tile(tile: [f32; 4], g: ViewGeometry) -> Option<TilePlacement> {
     let isec = tile_doc_intersection(tile, g.doc_region);
     if isec[0] >= isec[2] || isec[1] >= isec[3] {
@@ -436,11 +453,9 @@ impl ViewPipeline {
         let has_expensive = modifiers
             .iter()
             .any(|m| m.has_visible_effect() && !m.kind.effect_class().is_pointwise());
-        if has_expensive
-            && !doc_changed
-            && self.interacting()
-            && let Some(mp) = self.modifier_pipeline.as_mut()
-        {
+        let (defer, carry) = defer_decision(has_expensive, doc_changed, self.interacting(), dirty);
+        if defer && let Some(mp) = self.modifier_pipeline.as_mut() {
+            self.pending_source_dirty |= carry;
             mp.refresh_display_transforms(device, queue, source);
             return;
         }
@@ -801,6 +816,32 @@ mod display_harness {
              aspect on screen is {want:.4}. Dragging a crop slider on a tiled \
              image stretches the picture."
         );
+    }
+
+    #[test]
+    fn deferring_never_swallows_the_reprocess_it_postpones() {
+        use super::defer_decision;
+
+        let (defer, carry) = defer_decision(true, false, true, true);
+        assert!(defer, "an expensive chain mid-interaction should defer");
+        assert!(
+            carry,
+            "the dirty frame was deferred but not carried, so the reprocess is \
+             lost: the pipeline keeps its last render once the view settles"
+        );
+
+        let (defer, carry) = defer_decision(true, false, true, false);
+        assert!(defer && !carry, "nothing to carry when the frame is clean");
+
+        for (label, he, dc, it) in [
+            ("cheap chain", false, false, true),
+            ("document changed", true, true, true),
+            ("settled", true, false, false),
+        ] {
+            let (defer, carry) = defer_decision(he, dc, it, true);
+            assert!(!defer, "{label}: must not defer");
+            assert!(!carry, "{label}: must not carry, the work runs now");
+        }
     }
 
     #[test]
