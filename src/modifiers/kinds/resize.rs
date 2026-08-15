@@ -152,6 +152,10 @@ impl ModifierImpl for Resize {
         self.output_for(input)
     }
 
+    fn changes_geometry(&self) -> bool {
+        true
+    }
+
     fn apply_param(&mut self, param: ModifierParam, _img_size: Option<(u32, u32)>) {
         match param {
             ModifierParam::ResizeWidth(v) => {

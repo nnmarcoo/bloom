@@ -81,7 +81,6 @@ mod tests {
             width: W,
             height: H,
             modifiers,
-            crop: None,
             rotation: 0,
             trim: None,
         };

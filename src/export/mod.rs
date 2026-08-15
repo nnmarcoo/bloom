@@ -59,7 +59,6 @@ pub struct ExportData {
     pub width: u32,
     pub height: u32,
     pub modifiers: Vec<Modifier>,
-    pub crop: Option<[f32; 4]>,
     pub rotation: u8,
     pub trim: Option<(Duration, Duration)>,
 }
@@ -139,16 +138,7 @@ fn geom_of(data: &ExportData) -> Geom {
     let img_w = processed.w;
     let img_h = processed.h;
 
-    let (cx0, cy0, cw, ch) = match data.crop {
-        Some([min_u, min_v, max_u, max_v]) => {
-            let cx0 = (min_u * img_w as f32).round() as u32;
-            let cy0 = (min_v * img_h as f32).round() as u32;
-            let cw = ((max_u - min_u) * img_w as f32).round() as u32;
-            let ch = ((max_v - min_v) * img_h as f32).round() as u32;
-            (cx0, cy0, cw.max(1), ch.max(1))
-        }
-        None => (0, 0, img_w, img_h),
-    };
+    let (cx0, cy0, cw, ch) = (0, 0, img_w, img_h);
 
     let (out_w, out_h) = if data.rotation.is_multiple_of(2) {
         (cw, ch)
@@ -335,7 +325,6 @@ mod trim_tests {
             width: 1,
             height: 1,
             modifiers: Vec::new(),
-            crop: None,
             rotation: 0,
             trim,
         }
@@ -418,7 +407,6 @@ mod tests {
             modifiers: vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
                 radius: 3.0,
             }))],
-            crop: None,
             rotation: 0,
             trim: None,
         };
@@ -436,12 +424,21 @@ mod tests {
 
     fn assert_streamed_png_matches_buffered(
         label: &str,
-        modifiers: Vec<Modifier>,
-        crop: Option<[f32; 4]>,
+        mut modifiers: Vec<Modifier>,
+        crop: Option<(f32, f32, f32, f32)>,
         rotation: u8,
         w: u32,
         h: u32,
     ) {
+        if let Some((x, y, cw, ch)) = crop {
+            use crate::modifiers::kinds::Crop;
+            modifiers.push(Modifier::new(ModifierKind::Crop(Crop {
+                x,
+                y,
+                width: cw,
+                height: ch,
+            })));
+        }
         let mut px = vec![0u8; (w * h * 4) as usize];
         let mut s = 0x1234567u32;
         for b in px.chunks_mut(4) {
@@ -463,7 +460,6 @@ mod tests {
             width: w,
             height: h,
             modifiers,
-            crop,
             rotation,
             trim: None,
         };
@@ -534,7 +530,7 @@ mod tests {
             vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
                 radius: 3.0,
             }))],
-            Some([0.2, 0.3, 0.8, 0.9]),
+            Some((16.0, 30.0, 48.0, 60.0)),
             0,
             80,
             100,
@@ -584,7 +580,6 @@ mod tests {
             width: 16,
             height: 16,
             modifiers: mods,
-            crop: None,
             rotation,
             trim: None,
         };
@@ -613,7 +608,21 @@ mod tests {
         assert!(can_stream_bands(&mk(blur, 0)), "plain blur should stream");
     }
 
-    fn resize_data(w: u32, h: u32, modifiers: Vec<Modifier>, crop: Option<[f32; 4]>) -> ExportData {
+    fn resize_data(
+        w: u32,
+        h: u32,
+        mut modifiers: Vec<Modifier>,
+        crop: Option<(f32, f32, f32, f32)>,
+    ) -> ExportData {
+        if let Some((x, y, cw, ch)) = crop {
+            use crate::modifiers::kinds::Crop;
+            modifiers.push(Modifier::new(ModifierKind::Crop(Crop {
+                x,
+                y,
+                width: cw,
+                height: ch,
+            })));
+        }
         ExportData {
             source: ExportSource::Frames {
                 frames: vec![ExportFrame {
@@ -625,7 +634,6 @@ mod tests {
             width: w,
             height: h,
             modifiers,
-            crop,
             rotation: 0,
             trim: None,
         }
@@ -666,15 +674,20 @@ mod tests {
                 filter: ResizeFilter::Lanczos,
                 lock_aspect: true,
             }))],
-            Some([0.0, 0.0, 0.5, 0.5]),
+            Some((0.0, 0.0, 32.0, 24.0)),
         );
         let geom = geom_of(&data);
         assert_eq!(
             (geom.img_w, geom.img_h),
-            (64, 48),
-            "crop must not change the processed buffer size"
+            (32, 24),
+            "the chain's output is already cropped"
         );
         assert_eq!((geom.out_w, geom.out_h), (32, 24));
+        assert_eq!(
+            (geom.cx0, geom.cy0),
+            (0, 0),
+            "nothing is left for export to offset by"
+        );
     }
 
     #[test]
@@ -704,7 +717,6 @@ mod tests {
             width: w,
             height: h,
             modifiers: vec![Modifier::new(ModifierKind::Text(text))],
-            crop: None,
             rotation: 0,
             trim: None,
         };
@@ -744,7 +756,6 @@ mod tests {
             width: w,
             height: h,
             modifiers: vec![Modifier::new(ModifierKind::Drawing(drawing))],
-            crop: None,
             rotation: 0,
             trim: None,
         };
@@ -796,7 +807,6 @@ mod tests {
                 Modifier::new(ModifierKind::Text(text)),
                 Modifier::new(ModifierKind::ChromaticAberration(ca)),
             ],
-            crop: None,
             rotation: 0,
             trim: None,
         };
@@ -853,7 +863,6 @@ mod tests {
             modifiers: vec![Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
                 radius: 4.0,
             }))],
-            crop: None,
             rotation: 0,
             trim: None,
         };
@@ -916,7 +925,6 @@ mod tests {
                 })),
                 Modifier::new(ModifierKind::Posterize(Posterize { levels: 6 })),
             ],
-            crop: None,
             rotation: 0,
             trim: None,
         };

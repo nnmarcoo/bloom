@@ -1,3 +1,15 @@
+//! Assembles the viewer: the shader canvas plus whichever tool overlay is
+//! active.
+//!
+//! A tool picks its target with modifiers::tool_target, shared with the message
+//! handling in app::edit so the overlay and the tool cannot disagree about which
+//! modifier is being edited. Taking the first match instead meant that with
+//! several crops in the stack the overlay edited one the user had not selected.
+//!
+//! An overlay measures its geometry against the space the program reports uv in,
+//! which for the crop overlay is that crop's own stage input. Bounding it by the
+//! source instead scaled every drag by the ratio between the two.
+
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -12,7 +24,7 @@ use crate::{
     components::{edit_panel, info_panel, notifications},
     gallery::Gallery,
     keybinds::Keymap,
-    modifiers::{MediaTiming, Modifier, ViewCtx, kinds::Text},
+    modifiers::{MediaTiming, Modifier, ViewCtx, kinds::Text, tool_target},
     styles::{PAD, spinner_bg_style},
     wgpu::view_program::{Histogram, ViewProgram},
     widgets::{
@@ -67,13 +79,15 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
 
     if ctx.selected_tool == &Tool::Crop
         && ctx.loading.is_none()
-        && let Some((crop_idx, crop_m)) = ctx
-            .modifiers
-            .iter()
-            .enumerate()
-            .find(|(_, m)| m.enabled && m.kind.as_crop().is_some())
-        && let Some(crop) = crop_m.kind.as_crop()
+        && let Some(crop_idx) = tool_target(ctx.modifiers, ctx.active_modifier, |m| {
+            m.enabled && m.kind.as_crop().is_some()
+        })
+        && let Some(crop) = ctx.modifiers[crop_idx].kind.as_crop()
     {
+        let (stage_w, stage_h) = ctx
+            .program
+            .crop_overlay_bounds(crop_idx)
+            .unwrap_or((img_w, img_h));
         layers.push(
             CropOverlay::new(
                 ctx.program.clone(),
@@ -82,8 +96,8 @@ pub fn view(ctx: ViewerCtx<'_>) -> Element<'_, Message> {
                 crop.y,
                 crop.width,
                 crop.height,
-                img_w,
-                img_h,
+                stage_w,
+                stage_h,
             )
             .into(),
         );

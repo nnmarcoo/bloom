@@ -128,6 +128,23 @@ fn pr_with_roi(
     }
 }
 
+fn chain_doc_offset(specs: &[crate::modifiers::plan::StageSpec], plan: &[PlanItem]) -> (f32, f32) {
+    let mut off = (0.0f32, 0.0f32);
+    for (k, item) in plan.iter().enumerate() {
+        let (iw, ih) = (specs[k].input.w as f32, specs[k].input.h as f32);
+        let (ow, oh) = (specs[k].output.w as f32, specs[k].output.h as f32);
+        if let PlanItem::Step(_, m) = item
+            && m.kind.as_crop().is_some()
+        {
+            let (ox, oy) = roi::stage_origin(&m.kind, specs[k].input);
+            off = (off.0 + ox, off.1 + oy);
+        } else if iw > 0.0 && ih > 0.0 {
+            off = (off.0 * ow / iw, off.1 * oh / ih);
+        }
+    }
+    off
+}
+
 fn full_tile_info(source: &TiledSource) -> TileInfo {
     TileInfo {
         tile_x: 0,
@@ -207,7 +224,10 @@ impl ModifierPipeline {
                     height: pr.h,
                     proc_px: Some(pr.px),
                     quality_scale: cur_scale,
-                    doc: (source.full_width, source.full_height),
+                    doc: DocId {
+                        size: (source.full_width, source.full_height),
+                        origin: (0.0, 0.0),
+                    },
                 });
                 self.tile_display_bgs_linear[ti] = None;
                 self.tile_display_bgs_nearest[ti] = None;
@@ -272,6 +292,7 @@ impl ModifierPipeline {
                 DocScale {
                     src: (source.full_width, source.full_height),
                     out: (source.full_width, source.full_height),
+                    offset: (0.0, 0.0),
                     roi_active: true,
                 },
             );
@@ -297,9 +318,8 @@ impl ModifierPipeline {
         let full_h = source.full_height as f32;
 
         let source_spec_doc = ImageSpec::new(source.full_width, source.full_height);
-        let doc_spec = infer_specs(source_spec_doc, plan)
-            .last()
-            .map_or(source_spec_doc, |s| s.output);
+        let specs = infer_specs(source_spec_doc, plan);
+        let doc_spec = specs.last().map_or(source_spec_doc, |s| s.output);
         self.doc_size = (doc_spec.w, doc_spec.h);
 
         let n_tiles = source.tiles.len();
@@ -347,9 +367,10 @@ impl ModifierPipeline {
             }
         }
 
-        let specs = infer_specs(source_spec_doc, plan);
         let out_spec_doc = doc_spec;
-        let chain_resizes = out_spec_doc != source_spec_doc;
+        let chain_offset = chain_doc_offset(&specs, plan);
+        self.doc_offset = chain_offset;
+        let chain_resizes = out_spec_doc != source_spec_doc || chain_offset != (0.0, 0.0);
         let classes: Vec<StepClass> = plan
             .iter()
             .zip(&specs)
@@ -414,12 +435,17 @@ impl ModifierPipeline {
                 self.tile_display_bgs_nearest[ti] = None;
                 continue;
             }
-            let doc = (out_spec_doc.w, out_spec_doc.h);
-            let roi_doc = if chain_resizes {
-                tile_out_rect(roi, source.full_width, source.full_height, doc.0, doc.1)
-            } else {
-                roi
+            let doc = DocId {
+                size: (out_spec_doc.w, out_spec_doc.h),
+                origin: chain_offset,
             };
+            let roi_doc = to_doc(
+                roi,
+                source.full_width,
+                source.full_height,
+                doc.size,
+                chain_offset,
+            );
             let reuse = self.tile_outputs[ti].as_ref().is_some_and(|o| {
                 o.doc == doc
                     && o.proc_px.is_some_and(|p| rect_contains(p, roi_doc))
@@ -430,8 +456,8 @@ impl ModifierPipeline {
                 proc_rect_from_px(
                     o.proc_px,
                     tile,
-                    doc.0 as f32,
-                    doc.1 as f32,
+                    doc.size.0 as f32,
+                    doc.size.1 as f32,
                     o.width,
                     o.height,
                 )
@@ -439,12 +465,12 @@ impl ModifierPipeline {
                 pr_with_roi(tile, full_w, full_h, scale, downscale, roi, pitch)
             };
             let pr = if chain_resizes && !reuse {
-                let px = tile_out_rect(
+                let px = to_doc(
                     pr.px,
                     source.full_width,
                     source.full_height,
-                    out_spec_doc.w,
-                    out_spec_doc.h,
+                    (out_spec_doc.w, out_spec_doc.h),
+                    chain_offset,
                 );
                 let (w, h) = device_dims(px, scale);
                 ProcRect {
@@ -599,32 +625,32 @@ impl ModifierPipeline {
             for k in (0..n).rev() {
                 let (iw, ih) = (specs[k].input.w as f32, specs[k].input.h as f32);
                 let (ow, oh) = (specs[k].output.w as f32, specs[k].output.h as f32);
-                if matches!(classes[k], StepClass::Scanline { .. }) {
-                    cur = snap_region(
-                        roi::input_needed(
-                            classes[k],
-                            roi::unmap_region((ow, oh), (iw, ih), cur),
-                            iw,
-                            ih,
-                        ),
+                let crop_origin = match &plan[k] {
+                    PlanItem::Step(_, m) if m.kind.as_crop().is_some() => {
+                        Some(roi::stage_origin(&m.kind, specs[k].input))
+                    }
+                    _ => None,
+                };
+                let to_input = |r: RegionPx| -> RegionPx {
+                    match crop_origin {
+                        Some(o) => roi::unmap_offset(o, r),
+                        None => roi::unmap_region((ow, oh), (iw, ih), r),
+                    }
+                };
+                let back = |r: RegionPx| -> RegionPx {
+                    snap_region(
+                        roi::input_needed(classes[k], to_input(r), iw, ih),
                         pitch,
                         iw,
                         ih,
-                    );
+                    )
+                };
+                if matches!(classes[k], StepClass::Scanline { .. }) {
+                    cur = back(cur);
                     out_rects[k] = cur;
                 } else {
                     out_rects[k] = cur;
-                    cur = snap_region(
-                        roi::input_needed(
-                            classes[k],
-                            roi::unmap_region((ow, oh), (iw, ih), cur),
-                            iw,
-                            ih,
-                        ),
-                        pitch,
-                        iw,
-                        ih,
-                    );
+                    cur = back(cur);
                 }
             }
             let src_rect = cur;
@@ -899,6 +925,47 @@ impl ModifierPipeline {
                         }
                         prev = outs;
                     }
+                    PlanItem::Step(_, m) if m.kind.as_crop().is_some() => {
+                        let origin = roi::stage_origin(&m.kind, specs[k].input);
+                        let (ow, oh) = rect_dims(out_r, scale);
+                        let outs = self.pooled_stage(device, &mut slab_slot, ow, oh, out_r);
+
+                        let want = roi::unmap_offset(origin, out_r);
+                        let src = scale_rect(prev.rect, scale);
+                        let dst = scale_rect(want, scale);
+                        let i = [
+                            dst[0].max(src[0]),
+                            dst[1].max(src[1]),
+                            dst[2].min(src[2]),
+                            dst[3].min(src[3]),
+                        ];
+                        if i[2] > i[0] && i[3] > i[1] {
+                            encoder.copy_texture_to_texture(
+                                tex_copy_info(
+                                    &prev.tex,
+                                    iced::wgpu::Origin3d {
+                                        x: i[0] - src[0],
+                                        y: i[1] - src[1],
+                                        z: 0,
+                                    },
+                                ),
+                                tex_copy_info(
+                                    &outs.tex,
+                                    iced::wgpu::Origin3d {
+                                        x: i[0] - dst[0],
+                                        y: i[1] - dst[1],
+                                        z: 0,
+                                    },
+                                ),
+                                iced::wgpu::Extent3d {
+                                    width: (i[2] - i[0]).min(ow.saturating_sub(i[0] - dst[0])),
+                                    height: (i[3] - i[1]).min(oh.saturating_sub(i[1] - dst[1])),
+                                    depth_or_array_layers: 1,
+                                },
+                            );
+                        }
+                        prev = outs;
+                    }
                     PlanItem::Step(_, m)
                         if m.kind.as_resize().is_some() && specs[k].input == specs[k].output => {}
                     PlanItem::Step(_, m) if m.kind.as_resize().is_some() => {
@@ -1117,6 +1184,7 @@ impl ModifierPipeline {
                 DocScale {
                     src: (source.full_width, source.full_height),
                     out: (out_spec_doc.w, out_spec_doc.h),
+                    offset: chain_offset,
                     roi_active: true,
                 },
             );

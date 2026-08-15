@@ -16,6 +16,20 @@
 //! document holds the size its textures were built for; deferring across a size
 //! change leaves full-resolution textures on shrunken quads, which reads as
 //! flicker. That is what the doc_size comparison guards.
+//!
+//! doc_region is the source rect the document covers, narrowed by a crop. Three
+//! separate things used to be one field, and collapsing them cost a bug each:
+//! crop_uv is the window the shader samples with and is now always the unit
+//! rect, since the chain has already cropped; doc_region is what the quads are
+//! laid out across, and using the source there stretched the picture; and
+//! last_doc_region keys the per-tile cache, where the constant crop_uv meant the
+//! guard never fired and a tile the crop excluded kept its old placement -- a
+//! fragment of the picture stranded in the viewport.
+//!
+//! place_tile is that layout as a pure function, so the display_harness module
+//! can drive a real multi-tile grid through pan and zoom. Every crop bug that
+//! reached a user lived in this arithmetic, and none were visible to a test
+//! while it was tangled up with the GPU buffers update() writes.
 
 use bytemuck::bytes_of;
 use glam::{Mat4, Vec2, vec2, vec3, vec4};
@@ -52,6 +66,79 @@ use crate::{
 pub struct DisplayUniforms {
     pub transform: Mat4,
     pub crop_uv: [f32; 4],
+}
+
+pub(crate) fn tile_doc_intersection(tile: [f32; 4], doc: [f32; 4]) -> [f32; 4] {
+    [
+        doc[0].max(tile[0]),
+        doc[1].max(tile[1]),
+        doc[2].min(tile[2]),
+        doc[3].min(tile[3]),
+    ]
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ViewGeometry {
+    pub doc_region: [f32; 4],
+    pub viewport: Vec2,
+    pub scale: f32,
+    pub pan_ndc: Vec2,
+    pub rotation: u8,
+}
+
+impl ViewGeometry {
+    fn inv_tile_vp(&self) -> Vec2 {
+        if self.rotation.is_multiple_of(2) {
+            vec2(1.0 / self.viewport.x, 1.0 / self.viewport.y)
+        } else {
+            vec2(1.0 / self.viewport.y, 1.0 / self.viewport.x)
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TilePlacement {
+    pub transform: Mat4,
+    pub crop_uv: [f32; 4],
+    pub ndc: (Vec2, Vec2),
+    pub isec: [f32; 4],
+}
+
+pub(crate) fn place_tile(tile: [f32; 4], g: ViewGeometry) -> Option<TilePlacement> {
+    let isec = tile_doc_intersection(tile, g.doc_region);
+    if isec[0] >= isec[2] || isec[1] >= isec[3] {
+        return None;
+    }
+
+    let [dl, dt, dr, db] = g.doc_region;
+    let doc_c = vec2((dl + dr) * 0.5, (dt + db) * 0.5);
+    let isec_c = vec2((isec[0] + isec[2]) * 0.5, (isec[1] + isec[3]) * 0.5);
+    let inv = g.inv_tile_vp();
+
+    let offset = 2.0 * vec2(isec_c.x - doc_c.x, doc_c.y - isec_c.y) * inv;
+    let aspect = vec2(isec[2] - isec[0], isec[3] - isec[1]) * inv;
+    let angle = -(g.rotation as f32) * std::f32::consts::FRAC_PI_2;
+
+    let transform = Mat4::from_scale(vec3(g.scale, g.scale, 1.0))
+        * Mat4::from_translation(vec3(g.pan_ndc.x, g.pan_ndc.y, 0.0))
+        * Mat4::from_rotation_z(angle)
+        * Mat4::from_translation(vec3(offset.x, offset.y, 0.0))
+        * Mat4::from_scale(vec3(aspect.x, aspect.y, 1.0));
+
+    let (tx, ty) = (tile[0], tile[1]);
+    let (tw, th) = ((tile[2] - tile[0]).max(1e-6), (tile[3] - tile[1]).max(1e-6));
+
+    Some(TilePlacement {
+        transform,
+        crop_uv: [
+            (isec[0] - tx) / tw,
+            (isec[1] - ty) / th,
+            (isec[2] - tx) / tw,
+            (isec[3] - ty) / th,
+        ],
+        ndc: ndc_rect_of_transform(&transform),
+        isec,
+    })
 }
 
 pub(crate) fn tile_ndc_culled(rect: Option<(Vec2, Vec2)>) -> bool {
@@ -194,6 +281,7 @@ impl ViewPipeline {
         viewport: Vec2,
         pan_ndc: Vec2,
         rotation: u8,
+        doc_region: [f32; 4],
     ) {
         if self.last_view != Some(*uniforms) {
             self.last_view = Some(*uniforms);
@@ -222,32 +310,26 @@ impl ViewPipeline {
         if source.tiles.len() == 1 {
             let tile = &mut source.tiles[0];
             if tile.last_transform != Some(uniforms.transform)
-                || tile.last_crop_uv != Some(uniforms.crop_uv)
+                || tile.last_doc_region != Some(doc_region)
             {
                 queue.write_buffer(&tile.uniform_buffer, 0, bytes_of(uniforms));
                 tile.last_ndc_rect = Some(ndc_rect_of_transform(&uniforms.transform));
                 tile.last_transform = Some(uniforms.transform);
-                tile.last_crop_uv = Some(uniforms.crop_uv);
+                tile.last_doc_region = Some(doc_region);
             }
             return;
         }
 
         let full_w = source.full_width as f32;
         let full_h = source.full_height as f32;
-        let angle = -(rotation as f32) * std::f32::consts::FRAC_PI_2;
-        let inv_tile_vp = if rotation.is_multiple_of(2) {
-            vec2(1.0 / viewport.x, 1.0 / viewport.y)
-        } else {
-            vec2(1.0 / viewport.y, 1.0 / viewport.x)
-        };
 
-        let [cu0, cv0, cu1, cv1] = uniforms.crop_uv;
-        let crop_left = cu0 * full_w;
-        let crop_right = cu1 * full_w;
-        let crop_top = cv0 * full_h;
-        let crop_bottom = cv1 * full_h;
-        let crop_cx = (crop_left + crop_right) * 0.5;
-        let crop_cy = (crop_top + crop_bottom) * 0.5;
+        let geom = ViewGeometry {
+            doc_region,
+            viewport,
+            scale,
+            pan_ndc,
+            rotation,
+        };
 
         for tile in &mut source.tiles {
             let tx = tile.x as f32;
@@ -255,50 +337,25 @@ impl ViewPipeline {
             let tw = tile.width as f32;
             let th = tile.height as f32;
 
-            let isec_left = crop_left.max(tx);
-            let isec_right = crop_right.min(tx + tw);
-            let isec_top = crop_top.max(ty);
-            let isec_bottom = crop_bottom.min(ty + th);
-
-            if isec_left >= isec_right || isec_top >= isec_bottom {
-                if tile.last_crop_uv != Some(uniforms.crop_uv) {
+            let Some(p) = place_tile([tx, ty, tx + tw, ty + th], geom) else {
+                if tile.last_doc_region != Some(doc_region) {
                     tile.last_ndc_rect = Some((vec2(2.0, 2.0), vec2(3.0, 3.0)));
                     tile.last_transform = None;
-                    tile.last_crop_uv = Some(uniforms.crop_uv);
+                    tile.last_doc_region = Some(doc_region);
                 }
                 continue;
-            }
+            };
+            let (transform, ndc) = (p.transform, p.ndc);
+            let [isec_left, isec_top, isec_right, isec_bottom] = p.isec;
 
-            let isec_cx = (isec_left + isec_right) * 0.5;
-            let isec_cy = (isec_top + isec_bottom) * 0.5;
-            let isec_w = isec_right - isec_left;
-            let isec_h = isec_bottom - isec_top;
-
-            let tile_offset = 2.0 * vec2(isec_cx - crop_cx, crop_cy - isec_cy) * inv_tile_vp;
-            let tile_aspect = vec2(isec_w, isec_h) * inv_tile_vp;
-
-            let per_tile_crop_uv = [
-                (isec_left - tx) / tw,
-                (isec_top - ty) / th,
-                (isec_right - tx) / tw,
-                (isec_bottom - ty) / th,
-            ];
-
-            let transform = Mat4::from_scale(vec3(scale, scale, 1.0))
-                * Mat4::from_translation(vec3(pan_ndc.x, pan_ndc.y, 0.0))
-                * Mat4::from_rotation_z(angle)
-                * Mat4::from_translation(vec3(tile_offset.x, tile_offset.y, 0.0))
-                * Mat4::from_scale(vec3(tile_aspect.x, tile_aspect.y, 1.0));
-
-            let ndc = ndc_rect_of_transform(&transform);
             let roi = if rotation == 0 {
-                roi_from_ndc_clip(ndc, [isec_left, isec_top, isec_right, isec_bottom])
+                roi_from_ndc_clip(ndc, p.isec)
             } else {
                 None
             };
 
             if tile.last_transform != Some(transform)
-                || tile.last_crop_uv != Some(uniforms.crop_uv)
+                || tile.last_doc_region != Some(doc_region)
                 || tile.proc_rect_px != roi
             {
                 queue.write_buffer(
@@ -306,12 +363,12 @@ impl ViewPipeline {
                     0,
                     bytes_of(&DisplayUniforms {
                         transform,
-                        crop_uv: per_tile_crop_uv,
+                        crop_uv: p.crop_uv,
                     }),
                 );
                 tile.last_ndc_rect = Some(ndc);
                 tile.last_transform = Some(transform);
-                tile.last_crop_uv = Some(uniforms.crop_uv);
+                tile.last_doc_region = Some(doc_region);
 
                 tile.proc_rect_px = roi;
                 tile.proc_rect_uv =
@@ -608,6 +665,313 @@ impl Pipeline for ViewPipeline {
             last_view: None,
             view_changed_at: std::time::Instant::now() - VIEW_SETTLE * 2,
             format,
+        }
+    }
+}
+
+#[cfg(test)]
+mod display_harness {
+    use super::{TilePlacement, ViewGeometry, place_tile};
+    use glam::{Vec2, vec2, vec4};
+
+    pub(super) const SRC: f32 = 30000.0;
+    const TILE: f32 = 8192.0;
+
+    pub(super) fn tiles(src: f32, tile: f32) -> Vec<[f32; 4]> {
+        let mut v = Vec::new();
+        let mut y = 0.0;
+        while y < src {
+            let mut x = 0.0;
+            while x < src {
+                v.push([x, y, (x + tile).min(src), (y + tile).min(src)]);
+                x += tile;
+            }
+            y += tile;
+        }
+        v
+    }
+
+    pub(super) fn geometry(doc_region: [f32; 4], scale: f32, pan: Vec2) -> ViewGeometry {
+        ViewGeometry {
+            doc_region,
+            viewport: vec2(1600.0, 900.0),
+            scale,
+            pan_ndc: pan,
+            rotation: 0,
+        }
+    }
+
+    fn quad_ndc(p: &TilePlacement) -> [f32; 4] {
+        let corners = [
+            vec4(-1.0, -1.0, 0.0, 1.0),
+            vec4(1.0, -1.0, 0.0, 1.0),
+            vec4(-1.0, 1.0, 0.0, 1.0),
+            vec4(1.0, 1.0, 0.0, 1.0),
+        ];
+        let pts: Vec<Vec2> = corners
+            .iter()
+            .map(|c| (p.transform * *c).truncate().truncate())
+            .collect();
+        let min = pts.iter().copied().fold(pts[0], Vec2::min);
+        let max = pts.iter().copied().fold(pts[0], Vec2::max);
+        [min.x, min.y, max.x, max.y]
+    }
+
+    fn drawn_bounds(doc: [f32; 4], scale: f32, pan: Vec2) -> Option<[f32; 4]> {
+        let g = geometry(doc, scale, pan);
+        let mut u: Option<[f32; 4]> = None;
+        for t in tiles(SRC, TILE) {
+            let Some(p) = place_tile(t, g) else { continue };
+            let q = quad_ndc(&p);
+            u = Some(match u {
+                Some(a) => [
+                    a[0].min(q[0]),
+                    a[1].min(q[1]),
+                    a[2].max(q[2]),
+                    a[3].max(q[3]),
+                ],
+                None => q,
+            });
+        }
+        u
+    }
+
+    #[test]
+    fn the_quads_reconstruct_the_document_at_every_zoom() {
+        for &doc in &[
+            [0.0, 0.0, SRC, SRC],
+            [5000.0, 5000.0, 15000.0, 15000.0],
+            [0.0, 0.0, 10000.0, 10000.0],
+            [20000.0, 20000.0, 30000.0, 30000.0],
+        ] {
+            for &scale in &[0.05f32, 0.2, 1.0] {
+                let b = drawn_bounds(doc, scale, Vec2::ZERO).expect("something is drawn");
+                let (w, h) = (b[2] - b[0], b[3] - b[1]);
+                let (dw, dh) = (doc[2] - doc[0], doc[3] - doc[1]);
+                let vp = geometry(doc, scale, Vec2::ZERO).viewport;
+                let (want_w, want_h) = (2.0 * scale * dw / vp.x, 2.0 * scale * dh / vp.y);
+
+                assert!(
+                    (w - want_w).abs() < 1e-2 && (h - want_h).abs() < 1e-2,
+                    "doc {doc:?} at scale {scale}: the quads span                      {w:.4}x{h:.4} of NDC, not the {want_w:.4}x{want_h:.4} a                      {dw}x{dh} document occupies in a {}x{} viewport. The                      picture is stretched.",
+                    vp.x,
+                    vp.y
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_crop_does_not_change_the_documents_shape_on_screen() {
+        let full = drawn_bounds([0.0, 0.0, SRC, SRC], 0.2, Vec2::ZERO).expect("drawn");
+        let cropped =
+            drawn_bounds([5000.0, 5000.0, 15000.0, 15000.0], 0.2, Vec2::ZERO).expect("drawn");
+
+        let shape = |b: [f32; 4]| (b[2] - b[0]) / (b[3] - b[1]);
+        assert!(
+            (shape(full) - shape(cropped)).abs() < 1e-3,
+            "a square crop of a square image is drawn {:.4} wide per unit tall              while the whole image is drawn {:.4}; the crop changed the shape",
+            shape(cropped),
+            shape(full)
+        );
+    }
+
+    #[test]
+    fn the_document_is_centred_when_the_view_is_not_panned() {
+        for &doc in &[
+            [0.0, 0.0, SRC, SRC],
+            [5000.0, 5000.0, 15000.0, 15000.0],
+            [0.0, 0.0, 10000.0, 10000.0],
+            [20000.0, 20000.0, 30000.0, 30000.0],
+        ] {
+            let b = drawn_bounds(doc, 0.2, Vec2::ZERO).expect("drawn");
+            let centre = vec2((b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5);
+            assert!(
+                centre.length() < 1e-3,
+                "doc {doc:?} is drawn centred on {centre:?} rather than the                  middle of the viewport; the layout is centring on some other                  region than the document"
+            );
+        }
+    }
+
+    #[test]
+    fn panning_translates_the_quads_without_reshaping_them() {
+        let doc = [5000.0, 5000.0, 15000.0, 15000.0];
+        let base = drawn_bounds(doc, 0.5, Vec2::ZERO).expect("drawn");
+
+        for pan in [
+            vec2(0.1, 0.0),
+            vec2(-0.3, 0.2),
+            vec2(0.0, -0.45),
+            vec2(0.6, 0.6),
+        ] {
+            let moved = drawn_bounds(doc, 0.5, pan).expect("drawn");
+            let (bw, bh) = (base[2] - base[0], base[3] - base[1]);
+            let (mw, mh) = (moved[2] - moved[0], moved[3] - moved[1]);
+            assert!(
+                (bw - mw).abs() < 1e-3 && (bh - mh).abs() < 1e-3,
+                "pan {pan:?} changed the drawn size from {bw:.4}x{bh:.4} to \
+                 {mw:.4}x{mh:.4}; panning must translate, not reshape"
+            );
+            let want = [base[0] + 0.5 * pan.x, base[1] + 0.5 * pan.y];
+            assert!(
+                (moved[0] - want[0]).abs() < 1e-3 && (moved[1] - want[1]).abs() < 1e-3,
+                "pan {pan:?} at zoom 0.5 moved the quads to {moved:?}, not                  {want:?}; panning must be a pure translation"
+            );
+        }
+    }
+
+    #[test]
+    fn adjacent_tiles_meet_on_screen() {
+        let doc = [2000.0, 2000.0, 28000.0, 28000.0];
+        let g = geometry(doc, 0.4, vec2(0.1, -0.1));
+
+        let mut placed: Vec<([f32; 4], [f32; 4])> = Vec::new();
+        for t in tiles(SRC, TILE) {
+            if let Some(p) = place_tile(t, g) {
+                placed.push((p.isec, quad_ndc(&p)));
+            }
+        }
+        assert!(
+            placed.len() >= 16,
+            "need a real grid with interior seams, got {}",
+            placed.len()
+        );
+
+        for (a_src, a_q) in &placed {
+            for (b_src, b_q) in &placed {
+                if (b_src[0] - a_src[2]).abs() > 1e-3 || (b_src[1] - a_src[1]).abs() > 1e-3 {
+                    continue;
+                }
+                assert!(
+                    (b_q[0] - a_q[2]).abs() < 2e-3,
+                    "tiles meeting at source x={} land at {} and {} on screen, \
+                     leaving a seam or an overlap",
+                    a_src[2],
+                    a_q[2],
+                    b_q[0]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_tile_outside_the_document_is_not_placed() {
+        let doc = [20000.0, 20000.0, 30000.0, 30000.0];
+        let g = geometry(doc, 1.0, Vec2::ZERO);
+
+        let excluded = tiles(SRC, TILE)
+            .into_iter()
+            .filter(|t| place_tile(*t, g).is_none())
+            .count();
+        assert!(
+            excluded > 0,
+            "a crop of the bottom-right corner must exclude whole tiles, or \
+             this proves nothing about culling"
+        );
+    }
+
+    #[test]
+    fn an_unchanged_view_places_tiles_identically() {
+        let g = geometry([5000.0, 5000.0, 15000.0, 15000.0], 0.3, vec2(0.2, 0.1));
+        for t in tiles(SRC, TILE) {
+            assert_eq!(
+                place_tile(t, g),
+                place_tile(t, g),
+                "placement is not a function of the geometry alone"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tile_culling_tests {
+    use super::tile_doc_intersection;
+
+    const SRC: f32 = 30000.0;
+    const TILE: f32 = 8192.0;
+    const DOC: [f32; 4] = [12000.0, 12000.0, 20000.0, 20000.0];
+
+    fn tiles() -> Vec<[f32; 4]> {
+        let mut v = Vec::new();
+        let mut y = 0.0;
+        while y < SRC {
+            let mut x = 0.0;
+            while x < SRC {
+                v.push([x, y, (x + TILE).min(SRC), (y + TILE).min(SRC)]);
+                x += TILE;
+            }
+            y += TILE;
+        }
+        v
+    }
+
+    fn is_empty(r: [f32; 4]) -> bool {
+        r[0] >= r[2] || r[1] >= r[3]
+    }
+
+    #[test]
+    fn a_tile_outside_the_document_has_an_empty_intersection() {
+        let outside = tile_doc_intersection([0.0, 0.0, TILE, TILE], DOC);
+        assert!(
+            is_empty(outside),
+            "a tile the crop excludes must intersect the document in nothing, \
+             or it keeps being drawn and strands a fragment of the old picture \
+             in the viewport"
+        );
+    }
+
+    #[test]
+    fn a_crop_excludes_whole_tiles_on_a_large_image() {
+        let excluded = tiles()
+            .into_iter()
+            .filter(|t| is_empty(tile_doc_intersection(*t, DOC)))
+            .count();
+        assert!(
+            excluded > 0,
+            "this crop should fall entirely outside several of the {} tiles; \
+             without that the culling path is never exercised",
+            tiles().len()
+        );
+    }
+
+    #[test]
+    fn a_tile_the_document_covers_keeps_the_overlapping_part() {
+        let r = tile_doc_intersection([TILE, TILE, TILE * 2.0, TILE * 2.0], DOC);
+        assert_eq!(r, [12000.0, 12000.0, 16384.0, 16384.0]);
+    }
+
+    #[test]
+    fn moving_the_crop_invalidates_a_tiles_cached_placement() {
+        fn stale(last: Option<[f32; 4]>, current: [f32; 4]) -> bool {
+            last != Some(current)
+        }
+
+        let first = [12000.0f32, 12000.0, 20000.0, 20000.0];
+        let moved = [9000.0f32, 9000.0, 17000.0, 17000.0];
+
+        assert!(stale(None, first));
+        assert!(!stale(Some(first), first));
+        assert!(
+            stale(Some(first), moved),
+            "a tile cached for one crop must be seen as stale under another,              or the cull branch never runs and excluded tiles keep drawing"
+        );
+
+        const UNIT_UV: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
+        assert!(
+            !stale(Some(UNIT_UV), UNIT_UV),
+            "crop_uv is constant now, so keying on it reports every frame as              cached no matter how the crop moves"
+        );
+    }
+
+    #[test]
+    fn an_uncropped_document_keeps_every_tile_whole() {
+        let full = [0.0, 0.0, SRC, SRC];
+        for t in tiles() {
+            assert_eq!(
+                tile_doc_intersection(t, full),
+                t,
+                "without a crop a tile is entirely inside the document"
+            );
         }
     }
 }

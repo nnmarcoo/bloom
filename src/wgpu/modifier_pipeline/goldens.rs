@@ -177,6 +177,35 @@ fn assemble_scaled(
     full
 }
 
+fn assemble_doc(
+    device: &Device,
+    queue: &Queue,
+    mp: &ModifierPipeline,
+    source: &TiledSource,
+    dw: u32,
+    dh: u32,
+) -> Vec<u8> {
+    let mut full = vec![0u8; (dw * dh * 4) as usize];
+    for ti in 0..source.tiles.len() {
+        let Some(o) = mp.tile_outputs[ti].as_ref() else {
+            continue;
+        };
+        let px = o.proc_px.expect("executor outputs always carry proc_px");
+        let (x0, y0) = (px[0].round() as u32, px[1].round() as u32);
+        if x0 >= dw || y0 >= dh {
+            continue;
+        }
+        let data = read_texture(device, queue, &o._tex, o.width, o.height);
+        let cols = o.width.min(dw - x0);
+        for r in 0..o.height.min(dh - y0) {
+            let d = (((y0 + r) * dw + x0) * 4) as usize;
+            let s = (r * o.width * 4) as usize;
+            full[d..d + (cols * 4) as usize].copy_from_slice(&data[s..s + (cols * 4) as usize]);
+        }
+    }
+    full
+}
+
 fn set_partial_roi(source: &mut TiledSource, frac: f32) {
     let (fw, fh) = (source.full_width as f32, source.full_height as f32);
     let (half_w, half_h) = (fw * frac * 0.5, fh * frac * 0.5);
@@ -473,8 +502,21 @@ fn run_golden_dims(
     let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
     converge(&mut mp, &device, &queue, &source, modifiers, label);
 
-    let gpu_img = assemble(&device, &queue, &mp, &source);
+    let doc = crate::modifiers::plan::chain_output_spec(
+        crate::modifiers::plan::ImageSpec::new(w, h),
+        &crate::modifiers::plan::plan_modifiers(modifiers),
+    );
+    let gpu_img = if (doc.w, doc.h) == (w, h) {
+        assemble(&device, &queue, &mp, &source)
+    } else {
+        assemble_doc(&device, &queue, &mp, &source, doc.w, doc.h)
+    };
     let cpu_img = crate::modifiers::cpu::render_full(modifiers, &[], &[], &pixels, w, h);
+    assert_eq!(
+        cpu_img.len(),
+        (doc.w * doc.h * 4) as usize,
+        "{label}: the CPU oracle did not produce the planned document size"
+    );
     let (max_d, pct_over) = diff_stats(&gpu_img, &cpu_img, tol);
     assert!(
         max_d <= tol,
@@ -602,6 +644,163 @@ fn golden_blur_multi_tile() {
     run_golden("blur/2x2", &blur_chain(), Some(FORCED_TILE_DIM), 4);
 }
 
+fn crop_chain() -> Vec<Modifier> {
+    use crate::modifiers::kinds::Crop;
+    vec![Modifier::new(ModifierKind::Crop(Crop {
+        x: 13.0,
+        y: 9.0,
+        width: 51.0,
+        height: 37.0,
+    }))]
+}
+
+#[test]
+fn golden_crop_single_tile() {
+    run_golden("crop/1-tile", &crop_chain(), None, 2);
+}
+
+fn crop_at_origin_chain() -> Vec<Modifier> {
+    use crate::modifiers::kinds::Crop;
+    vec![Modifier::new(ModifierKind::Crop(Crop {
+        x: 0.0,
+        y: 0.0,
+        width: 61.0,
+        height: 43.0,
+    }))]
+}
+
+#[test]
+fn a_cropped_chain_covers_its_roi_at_every_zoom() {
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+
+    let (w, h) = (GOLDEN_W, GOLDEN_H);
+    for chain_label in ["at-origin", "offset"] {
+        let chain = if chain_label == "at-origin" {
+            crop_at_origin_chain()
+        } else {
+            crop_chain()
+        };
+        let doc = crate::modifiers::plan::chain_output_spec(
+            crate::modifiers::plan::ImageSpec::new(w, h),
+            &crate::modifiers::plan::plan_modifiers(&chain),
+        );
+
+        for frac in [1.0f32, 0.75, 0.5, 0.35] {
+            let pixels = test_pixels(w, h);
+            let image = ImageData::new(pixels, w, h);
+            let mut source = make_source(&device, &queue, &image, Some(FORCED_TILE_DIM));
+            set_partial_roi(&mut source, frac);
+            let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
+            let label = format!("crop-roi/{chain_label}/{frac}");
+            converge(&mut mp, &device, &queue, &source, &chain, &label);
+
+            let mut covered: Option<[f32; 4]> = None;
+            for ti in 0..source.tiles.len() {
+                let Some(o) = mp.tile_outputs[ti].as_ref() else {
+                    continue;
+                };
+                let p = o.proc_px.expect("outputs carry proc_px");
+                covered = Some(match covered {
+                    Some(c) => [
+                        c[0].min(p[0]),
+                        c[1].min(p[1]),
+                        c[2].max(p[2]),
+                        c[3].max(p[3]),
+                    ],
+                    None => p,
+                });
+            }
+            let covered = covered.unwrap_or_else(|| panic!("{label}: nothing rendered"));
+
+            if frac >= 1.0 {
+                assert!(
+                    covered[0] <= 0.5
+                        && covered[1] <= 0.5
+                        && covered[2] >= doc.w as f32 - 0.5
+                        && covered[3] >= doc.h as f32 - 0.5,
+                    "{label}: the tiles cover {covered:?} of a {}x{} document, \
+                     so part of the picture was never rendered",
+                    doc.w,
+                    doc.h
+                );
+            }
+
+            assert!(
+                covered[2] <= doc.w as f32 + 0.5 && covered[3] <= doc.h as f32 + 0.5,
+                "{label}: the tiles cover {covered:?}, past the {}x{} document",
+                doc.w,
+                doc.h
+            );
+        }
+    }
+}
+
+#[test]
+fn golden_crop_at_origin_single_tile() {
+    run_golden("crop-at-origin/1-tile", &crop_at_origin_chain(), None, 2);
+}
+
+#[test]
+fn golden_crop_at_origin_multi_tile() {
+    run_golden(
+        "crop-at-origin/2x2",
+        &crop_at_origin_chain(),
+        Some(FORCED_TILE_DIM),
+        2,
+    );
+}
+
+#[test]
+fn golden_crop_at_origin_then_blur() {
+    let mut chain = crop_at_origin_chain();
+    chain.push(Modifier::new(ModifierKind::GaussianBlur(GaussianBlur {
+        radius: 3.0,
+    })));
+    run_golden("crop-at-origin-blur/2x2", &chain, Some(FORCED_TILE_DIM), 4);
+}
+
+#[test]
+fn golden_crop_multi_tile() {
+    run_golden("crop/2x2", &crop_chain(), Some(FORCED_TILE_DIM), 2);
+}
+
+fn crop_blur_crop_chain() -> Vec<Modifier> {
+    use crate::modifiers::kinds::Crop;
+    vec![
+        Modifier::new(ModifierKind::Crop(Crop {
+            x: 8.0,
+            y: 6.0,
+            width: 70.0,
+            height: 50.0,
+        })),
+        Modifier::new(ModifierKind::GaussianBlur(GaussianBlur { radius: 3.0 })),
+        Modifier::new(ModifierKind::Crop(Crop {
+            x: 11.0,
+            y: 7.0,
+            width: 40.0,
+            height: 30.0,
+        })),
+    ]
+}
+
+#[test]
+fn golden_crop_blur_crop_single_tile() {
+    run_golden("crop-blur-crop/1-tile", &crop_blur_crop_chain(), None, 4);
+}
+
+#[test]
+fn golden_crop_blur_crop_multi_tile() {
+    run_golden(
+        "crop-blur-crop/2x2",
+        &crop_blur_crop_chain(),
+        Some(FORCED_TILE_DIM),
+        4,
+    );
+}
+
 fn mixed_chain() -> Vec<Modifier> {
     use crate::modifiers::kinds::Invert;
     vec![
@@ -710,7 +909,6 @@ fn golden_drawing_multi_tile() {
         width: GOLDEN_W,
         height: GOLDEN_H,
         modifiers: chain,
-        crop: None,
         rotation: 0,
         trim: None,
     };
@@ -1342,6 +1540,35 @@ fn tiles_cover_a_resized_odd_sized_document() {
 }
 
 #[test]
+fn tiles_cover_a_cropped_document() {
+    use crate::modifiers::kinds::Crop;
+    use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+
+    for (label, x, y, cw, ch) in [
+        ("cover/cropped-origin", 0.0, 0.0, 700.0, 700.0),
+        ("cover/cropped-offset", 240.0, 310.0, 700.0, 700.0),
+    ] {
+        let (source, _image) = real_source(&device, &queue);
+        let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, REAL_W, REAL_H);
+        let chain = vec![Modifier::new(ModifierKind::Crop(Crop {
+            x,
+            y,
+            width: cw,
+            height: ch,
+        }))];
+
+        let out = chain_output_spec(ImageSpec::new(REAL_W, REAL_H), &plan_modifiers(&chain));
+        assert_geometry_is_stable(&mut mp, &device, &queue, &source, &chain, label);
+        assert_tiles_cover_document(&mp, &source, out.w, out.h, label);
+    }
+}
+
+#[test]
 fn tiles_cover_an_upscaled_odd_sized_document() {
     use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
     use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
@@ -1364,6 +1591,113 @@ fn tiles_cover_an_upscaled_odd_sized_document() {
     let out = chain_output_spec(ImageSpec::new(REAL_W, REAL_H), &plan_modifiers(&chain));
     assert_geometry_is_stable(&mut mp, &device, &queue, &source, &chain, "cover/upscaled");
     assert_tiles_cover_document(&mp, &source, out.w, out.h, "cover/upscaled");
+}
+
+#[test]
+fn moving_a_crop_does_not_reuse_outputs_from_its_old_position() {
+    use crate::modifiers::kinds::Crop;
+    use crate::modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers};
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let (w, h) = (1024u32, 1024u32);
+    let pixels = test_pixels(w, h);
+    let image = ImageData::new(pixels.clone(), w, h);
+    let mut source = make_source(&device, &queue, &image, Some(512));
+    set_partial_roi(&mut source, 0.5);
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, w, h);
+
+    for (x, y) in [
+        (0.0f32, 0.0f32),
+        (120.0, 40.0),
+        (300.0, 260.0),
+        (60.0, 380.0),
+        (0.0, 0.0),
+    ] {
+        let chain = vec![Modifier::new(ModifierKind::Crop(Crop {
+            x,
+            y,
+            width: 500.0,
+            height: 500.0,
+        }))];
+        converge(&mut mp, &device, &queue, &source, &chain, "crop-drag");
+
+        let out = chain_output_spec(ImageSpec::new(w, h), &plan_modifiers(&chain));
+        let cpu = crate::modifiers::cpu::render_full(&chain, &[], &[], &pixels, w, h);
+        let gpu = assemble_doc(&device, &queue, &mp, &source, out.w, out.h);
+        let (max_d, pct) = diff_stats(&gpu, &cpu, 2);
+        assert!(
+            max_d <= 2,
+            "crop at ({x}, {y}): GPU diverges from the oracle by {max_d} \
+             ({pct:.2}% of channels over). The document is the same size at \
+             every position, so an output from the previous origin was reused."
+        );
+    }
+}
+
+#[test]
+fn panning_places_a_cropped_documents_quads_where_prepare_does() {
+    use crate::modifiers::kinds::Crop;
+
+    let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let (source, _image) = real_source(&device, &queue);
+    assert!(source.tiles.len() > 1, "the defect needs multiple tiles");
+
+    let chain = vec![Modifier::new(ModifierKind::Crop(Crop {
+        x: 240.0,
+        y: 310.0,
+        width: 700.0,
+        height: 700.0,
+    }))];
+
+    let mut mp = ModifierPipeline::new(&device, TextureFormat::Rgba8Unorm, REAL_W, REAL_H);
+    converge(&mut mp, &device, &queue, &source, &chain, "pan/crop");
+
+    let before: Vec<Option<[f32; 4]>> = (0..source.tiles.len())
+        .map(|ti| mp.tile_outputs[ti].as_ref().and_then(|o| o.proc_px))
+        .collect();
+
+    mp.refresh_display_transforms(&device, &queue, &source);
+
+    for (ti, want) in before.iter().enumerate() {
+        let got = mp.tile_outputs[ti].as_ref().and_then(|o| o.proc_px);
+        assert_eq!(
+            got, *want,
+            "tile {ti}: refreshing the display transforms changed its region"
+        );
+    }
+
+    let doc = crate::modifiers::plan::chain_output_spec(
+        crate::modifiers::plan::ImageSpec::new(REAL_W, REAL_H),
+        &crate::modifiers::plan::plan_modifiers(&chain),
+    );
+    assert_ne!(
+        (doc.w, doc.h),
+        (REAL_W, REAL_H),
+        "the crop must actually shrink the document, or this proves nothing"
+    );
+
+    let mut checked = 0;
+    for (ti, want) in before.iter().enumerate() {
+        let (Some(px), Some(uv)) = (want, mp.tile_display_uv(ti)) else {
+            continue;
+        };
+        let expect = [px[0] / doc.w as f32, px[1] / doc.h as f32];
+        assert!(
+            (uv.origin[0] - expect[0]).abs() < 1e-4 && (uv.origin[1] - expect[1]).abs() < 1e-4,
+            "tile {ti}: the quad uv origin is {:?} but proc_px {px:?} over the              {}x{} document is {expect:?}. Normalizing against the source              makes every quad a fraction of its size, which is a cropped              image collapsing while it is dragged.",
+            uv.origin,
+            doc.w,
+            doc.h
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "no tile carried both a region and a uv");
 }
 
 #[test]

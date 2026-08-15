@@ -62,8 +62,6 @@ pub fn infer_specs(source: ImageSpec, plan: &[PlanItem]) -> Vec<StageSpec> {
     plan.iter()
         .map(|item| {
             let output = match item {
-                // A fused run is pointwise by construction, and pointwise
-                // modifiers take output_spec's identity default.
                 PlanItem::Fused(_) => cur,
                 PlanItem::Step(_, m) => m.kind.output_spec(cur),
             };
@@ -80,14 +78,6 @@ pub fn chain_output_spec(source: ImageSpec, plan: &[PlanItem]) -> ImageSpec {
         .map_or(source, |s| s.output)
 }
 
-/// The input size each modifier in the raw stack sees, indexed by its position
-/// in `modifiers`.
-///
-/// This walks the stack rather than the plan so that every entry has an answer,
-/// including modifiers the planner drops. A disabled modifier still shows a
-/// panel, and that panel must resolve its numbers against the size the modifier
-/// would receive were it switched back on -- which is the size at its position,
-/// with the disabled ones contributing nothing.
 pub fn stage_inputs(source: ImageSpec, modifiers: &[Modifier]) -> Vec<ImageSpec> {
     let mut cur = source;
     modifiers
@@ -102,6 +92,10 @@ pub fn stage_inputs(source: ImageSpec, modifiers: &[Modifier]) -> Vec<ImageSpec>
         .collect()
 }
 
+fn is_fusable(m: &Modifier) -> bool {
+    m.kind.effect_class().is_pointwise() && !m.kind.changes_geometry()
+}
+
 pub fn plan_modifiers(modifiers: &[Modifier]) -> Vec<PlanItem<'_>> {
     let mut plan: Vec<PlanItem> = Vec::new();
     let mut current: Vec<&Modifier> = Vec::new();
@@ -109,7 +103,7 @@ pub fn plan_modifiers(modifiers: &[Modifier]) -> Vec<PlanItem<'_>> {
         if !m.has_visible_effect() {
             continue;
         }
-        if !m.kind.effect_class().is_pointwise() {
+        if !is_fusable(m) {
             if !current.is_empty() {
                 plan.push(PlanItem::Fused(std::mem::take(&mut current)));
             }
@@ -199,6 +193,39 @@ mod tests {
     }
 
     #[test]
+    fn a_geometry_changing_modifier_is_never_fused() {
+        use crate::modifiers::ModifierType;
+
+        let src = ImageSpec::new(800, 600);
+        for t in ModifierType::ALL {
+            let kind = ModifierKind::from(t.clone());
+            if !kind.changes_geometry() {
+                continue;
+            }
+            let name = kind.name();
+
+            let mods = vec![exposure(), m(kind), exposure()];
+            let plan = plan_modifiers(&mods);
+
+            assert_eq!(
+                shape(&plan),
+                ["F(1)", "S(1)", "F(1)"],
+                "{name} changes geometry but was folded into a fused run. A \
+                 fused run is evaluated at one coordinate in one space, so a \
+                 stage that moves or resizes its output cannot join one -- it \
+                 would be planned and sized and then silently rendered as a \
+                 passthrough."
+            );
+
+            let specs = infer_specs(src, &plan);
+            assert_eq!(
+                specs[1].input, src,
+                "{name}: the fused run before it must not have changed the size"
+            );
+        }
+    }
+
+    #[test]
     fn a_modifier_that_declares_a_new_size_needs_no_planner_change() {
         let src = ImageSpec::new(800, 600);
         let half = m(ModifierKind::Resize(Resize {
@@ -250,7 +277,6 @@ mod tests {
         let plan = plan_modifiers(&mods);
         let specs = infer_specs(SRC, &plan);
 
-        // Every planned Step must see the same input the UI reports for it.
         for (item, spec) in plan.iter().zip(&specs) {
             if let PlanItem::Step(i, _) = item {
                 assert_eq!(

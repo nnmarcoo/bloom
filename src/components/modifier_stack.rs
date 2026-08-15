@@ -1,3 +1,10 @@
+//! The modifier stack panel: one card per modifier, reorderable by drag.
+//!
+//! Each card's panel resolves its numbers against the size that modifier
+//! actually receives -- plan::stage_inputs at its position -- not the source.
+//! The two differ as soon as anything upstream resizes or crops, and resolving
+//! against the wrong one shows a value the render will not honor.
+
 use iced::alignment::Vertical;
 use iced::widget::rule;
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -34,8 +41,6 @@ pub fn view<'a>(
         let show_indicator = matches!((dragging, drag_target),
             (Some(src), Some(tgt)) if tgt == i && src != i);
         stack_col = stack_col.push(gap(show_indicator));
-        // Each panel resolves its numbers against the size that modifier
-        // actually receives, not the source, so what it shows is what renders.
         let ctx = ViewCtx {
             image_size: stage_sizes
                 .as_ref()

@@ -6,17 +6,25 @@
 //! dimensions while reporting coordinates in source pixels, since that is what
 //! the user is pointing at.
 //!
-//! effective_display_size and crop_origin are both in the resized document, and
-//! crop fractions multiply the resized size, not the source -- mixing the two
-//! put the pixel grid's transform in one space and its bounds in another.
-//! Resize is applied before crop, matching export::geom_of, or the preview and
-//! the file would disagree.
+//! Crop is a chain stage, so the document the view lays out is simply the
+//! chain's output and there is no display-time crop window at all. Keeping one
+//! meant the crop was applied twice -- once by the chain, once by the shader
+//! remapping uv into the window -- so the surviving strip was stretched across
+//! the whole quad. crop_uv is now always the unit rect, and
+//! a_cropped_document_keeps_its_shape_on_screen pins that.
 //!
-//! Crop itself stores source pixels, so crop() divides by the source to get a
-//! fraction. The fraction carries no scale, which is what lets the display path
-//! resolve it against source-space tiles while the size math resolves it
-//! against the document. Dividing by the document there would exceed 1.0 under
-//! a downscale and sample past the tile.
+//! The exception is the crop tool: while it is open the view shows the
+//! *uncropped* chain, so the rect can be dragged back out over material the
+//! chain would otherwise discard. That is effective_display_size branching on
+//! crop_tool_active, and the renderer is handed the same widened stack so the
+//! quad and the texture agree about the document.
+//!
+//! Everything that overlays the view -- the pixel grid, the overlays' uv --
+//! therefore measures against effective_display_size, which starts at its own
+//! origin. Only screen_to_image_coords needs to get back to *source* pixels,
+//! and it undoes the chain's scale and offset separately: a resize scales the
+//! picture, a crop moves its origin, and collapsing the two into one ratio
+//! reads the wrong pixel.
 //!
 //! The histogram renders on a *bounded* source, not the document. Rendering
 //! the whole document costs time proportional to its area and is paid on every
@@ -364,15 +372,13 @@ impl ViewProgram {
             return None;
         }
         let eff = self.effective_display_size();
-        let origin = self.crop_origin();
-        let to_pixels =
-            Mat4::from_translation(vec3(0.5 * eff.x + origin.x, 0.5 * eff.y + origin.y, 0.0))
-                * Mat4::from_scale(vec3(0.5 * eff.x, -0.5 * eff.y, 1.0));
+        let to_pixels = Mat4::from_translation(vec3(0.5 * eff.x, 0.5 * eff.y, 0.0))
+            * Mat4::from_scale(vec3(0.5 * eff.x, -0.5 * eff.y, 1.0));
         let screen_to_img = to_pixels * self.build_transform(viewport).inverse();
         Some(PixelGridUniforms {
             screen_to_img,
             viewport: [bounds.x, bounds.y, viewport.x, viewport.y],
-            bounds_img: [origin.x, origin.y, origin.x + eff.x, origin.y + eff.y],
+            bounds_img: [0.0, 0.0, eff.x, eff.y],
         })
     }
 
@@ -522,38 +528,20 @@ impl ViewProgram {
         Some((self.image_size.x as u32, self.image_size.y as u32))
     }
 
-    /// The size the modifier at `index` receives, which is the source only when
-    /// nothing upstream resizes. Parameters resolved against the wrong one of
-    /// those render at a size the panel never showed.
     pub fn stage_input_size(&self, index: usize) -> Option<(u32, u32)> {
         let (w, h) = self.image_size()?;
-        let inputs = stage_inputs(ImageSpec::new(w, h), &self.modifiers);
-        let s = inputs.get(index).copied()?;
+        let src = ImageSpec::new(w, h);
+        if index == self.modifiers.len() {
+            let out = chain_output_spec(src, &plan_modifiers(&self.modifiers));
+            return Some((out.w, out.h));
+        }
+        let s = stage_inputs(src, &self.modifiers).get(index).copied()?;
         Some((s.w, s.h))
     }
 
-    fn crop(&self) -> Option<[f32; 4]> {
-        if self.image_size == Vec2::ZERO {
-            return None;
-        }
-        self.modifiers.iter().find_map(|m| {
-            if !m.enabled {
-                return None;
-            }
-            let crop = m.kind.as_crop()?;
-            let iw = self.image_size.x;
-            let ih = self.image_size.y;
-            Some([
-                crop.x / iw,
-                crop.y / ih,
-                (crop.x + crop.width) / iw,
-                (crop.y + crop.height) / ih,
-            ])
-        })
-    }
-
-    fn displayed_crop(&self) -> Option<[f32; 4]> {
-        self.crop().filter(|_| !self.crop_tool_active)
+    pub fn crop_overlay_bounds(&self, crop_idx: usize) -> Option<(f32, f32)> {
+        self.stage_input_size(crop_idx)
+            .map(|(w, h)| (w as f32, h as f32))
     }
 
     pub fn active_trim(&self, duration: Duration) -> Option<(Duration, Duration)> {
@@ -565,21 +553,10 @@ impl ViewProgram {
     }
 
     fn effective_display_size(&self) -> Vec2 {
-        let resized = self.chain_output_size();
-        if let Some([min_u, min_v, max_u, max_v]) = self.displayed_crop() {
-            vec2((max_u - min_u) * resized.x, (max_v - min_v) * resized.y)
+        if self.crop_tool_active {
+            self.uncropped_chain_size()
         } else {
-            resized
-        }
-    }
-
-    fn crop_origin(&self) -> Vec2 {
-        match self.displayed_crop() {
-            Some([min_u, min_v, ..]) => {
-                let doc = self.chain_output_size();
-                vec2(min_u * doc.x, min_v * doc.y)
-            }
-            None => Vec2::ZERO,
+            self.chain_output_size()
         }
     }
 
@@ -592,6 +569,32 @@ impl ViewProgram {
             &plan_modifiers(&self.modifiers),
         );
         vec2(out.w as f32, out.h as f32)
+    }
+
+    fn uncropped_chain_size(&self) -> Vec2 {
+        if self.image_size == Vec2::ZERO {
+            return self.image_size;
+        }
+        let mut cur = ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32);
+        for m in self.modifiers.iter() {
+            if m.has_visible_effect() && m.kind.as_crop().is_none() {
+                cur = m.kind.output_spec(cur);
+            }
+        }
+        vec2(cur.w as f32, cur.h as f32)
+    }
+
+    fn widen_crops(modifiers: &[Modifier]) -> Vec<Modifier> {
+        modifiers
+            .iter()
+            .map(|m| {
+                let mut m = m.clone();
+                if let Some(c) = m.kind.as_crop_mut() {
+                    *c = crate::modifiers::kinds::Crop::default();
+                }
+                m
+            })
+            .collect()
     }
 
     pub fn animation_info(&self) -> Option<(usize, usize)> {
@@ -628,8 +631,19 @@ impl ViewProgram {
     }
 
     pub fn screen_to_image_uv(&self, screen_pos: Vec2) -> Option<Vec2> {
-        let coords = self.screen_to_image_coords(screen_pos)?;
-        Some(coords / self.image_size)
+        let viewport = vec2(self.bounds.width, self.bounds.height);
+        if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
+            return None;
+        }
+        let screen_ndc = vec2(
+            (screen_pos.x / viewport.x) * 2.0 - 1.0,
+            1.0 - (screen_pos.y / viewport.y) * 2.0,
+        );
+        let img_ndc = (self.build_transform(viewport).inverse()
+            * vec4(screen_ndc.x, screen_ndc.y, 0.0, 1.0))
+        .truncate()
+        .truncate();
+        Some(vec2((img_ndc.x + 1.0) * 0.5, (1.0 - img_ndc.y) * 0.5))
     }
 
     pub fn image_uv_to_screen(&self, uv: Vec2) -> Option<Vec2> {
@@ -637,13 +651,7 @@ impl ViewProgram {
         if self.image_size == Vec2::ZERO || viewport.x < 1.0 || viewport.y < 1.0 {
             return None;
         }
-        let display_uv = if let Some([min_u, min_v, max_u, max_v]) = self.displayed_crop() {
-            let span = vec2((max_u - min_u).max(1e-6), (max_v - min_v).max(1e-6));
-            vec2((uv.x - min_u) / span.x, (uv.y - min_v) / span.y)
-        } else {
-            uv
-        };
-        let img_ndc = vec4(display_uv.x * 2.0 - 1.0, 1.0 - display_uv.y * 2.0, 0.0, 1.0);
+        let img_ndc = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
         let screen_ndc = self.build_transform(viewport) * img_ndc;
         Some(vec2(
             (screen_ndc.x + 1.0) * 0.5 * viewport.x,
@@ -666,13 +674,59 @@ impl ViewProgram {
         .truncate();
         let eff = self.effective_display_size();
         let local_px = (img_ndc + 1.0) * 0.5 * vec2(eff.x, -eff.y) + vec2(0.0, eff.y);
-        let doc_px = local_px + self.crop_origin();
 
-        let doc = self.chain_output_size();
-        if doc == Vec2::ZERO || doc == self.image_size {
-            return Some(doc_px);
+        let displayed = if self.crop_tool_active {
+            self.uncropped_chain_size()
+        } else {
+            self.chain_output_size()
+        };
+        if displayed == Vec2::ZERO {
+            return Some(local_px);
         }
-        Some(doc_px * self.image_size / doc)
+        let (scale, origin) = self.doc_to_source(self.crop_tool_active);
+        Some(local_px * scale + origin)
+    }
+
+    fn doc_to_source(&self, widened: bool) -> (Vec2, Vec2) {
+        let mut cur = ImageSpec::new(self.image_size.x as u32, self.image_size.y as u32);
+        let mut scale = Vec2::ONE;
+        let mut origin = Vec2::ZERO;
+        for m in self.modifiers.iter() {
+            if !m.has_visible_effect() {
+                continue;
+            }
+            if let Some(c) = m.kind.as_crop() {
+                if widened {
+                    continue;
+                }
+                let (x, y, _, _) = c.rect_in(cur);
+                origin += vec2(x, y) * scale;
+                cur = m.kind.output_spec(cur);
+                continue;
+            }
+            let out = m.kind.output_spec(cur);
+            if out != cur && cur.w > 0 && cur.h > 0 {
+                scale *= vec2(cur.w as f32 / out.w as f32, cur.h as f32 / out.h as f32);
+            }
+            cur = out;
+        }
+        (scale, origin)
+    }
+
+    fn doc_region(&self) -> [f32; 4] {
+        let src = self.image_size;
+        if src == Vec2::ZERO {
+            return [0.0, 0.0, 1.0, 1.0];
+        }
+        let (scale, origin) = self.doc_to_source(self.crop_tool_active);
+        let doc = self.effective_display_size();
+        let far = origin + doc * scale;
+        [
+            origin.x.clamp(0.0, src.x),
+            origin.y.clamp(0.0, src.y),
+            far.x.clamp(0.0, src.x),
+            far.y.clamp(0.0, src.y),
+        ]
     }
 
     fn with_rasters<R>(
@@ -914,7 +968,6 @@ impl ViewProgram {
             width,
             height,
             modifiers: self.modifiers.as_ref().clone(),
-            crop: self.crop(),
             rotation: self.rotation,
             trim: self.active_trim(duration),
         }
@@ -931,7 +984,6 @@ impl ViewProgram {
             width: info.width,
             height: info.height,
             modifiers: self.modifiers.as_ref().clone(),
-            crop: self.crop(),
             rotation: self.rotation,
             trim: self.active_trim(info.duration),
         }
@@ -1213,7 +1265,7 @@ impl Program<Message> for ViewProgram {
         ViewPrimitive {
             uniforms: DisplayUniforms {
                 transform: self.build_transform(viewport),
-                crop_uv: self.displayed_crop().unwrap_or([0.0, 0.0, 1.0, 1.0]),
+                crop_uv: [0.0, 0.0, 1.0, 1.0],
             },
             image: self.image.clone(),
             scale: s,
@@ -1225,7 +1277,12 @@ impl Program<Message> for ViewProgram {
             grid: self.grid_uniforms(bounds),
             mipmap_zoom_out: self.mipmap_zoom_out,
             smooth_zoom_in: self.smooth_zoom_in,
-            modifiers: self.modifiers.clone(),
+            doc_region: self.doc_region(),
+            modifiers: if self.crop_tool_active {
+                Arc::new(Self::widen_crops(&self.modifiers))
+            } else {
+                self.modifiers.clone()
+            },
             dirty: self.dirty.swap(false, std::sync::atomic::Ordering::AcqRel),
             pre_clear_gpu: Arc::clone(&self.pre_clear_gpu),
             reprocess_pending: Arc::clone(&self.reprocess_pending),
@@ -1621,38 +1678,382 @@ mod crop_tests {
         program
     }
 
+    fn exported_size(p: &ViewProgram) -> (u32, u32) {
+        let d = p.export_frame_data().expect("image is loaded");
+        let out = chain_output_spec(
+            ImageSpec::new(d.width, d.height),
+            &plan_modifiers(&d.modifiers),
+        );
+        (out.w, out.h)
+    }
+
     #[test]
-    fn crop_is_exported_while_the_crop_tool_is_active() {
+    fn the_crop_is_exported_whether_or_not_the_tool_is_open() {
         let mut program = program_with_crop();
+        assert_eq!(exported_size(&program), (50, 25));
+
         program.crop_tool_active = true;
-
-        assert_eq!(program.displayed_crop(), None);
-        assert_eq!(program.crop(), Some([0.1, 0.4, 0.6, 0.9]));
+        assert_eq!(exported_size(&program), (50, 25));
         assert_eq!(
-            program.export_frame_data().expect("image is loaded").crop,
-            Some([0.1, 0.4, 0.6, 0.9]),
+            program.effective_display_size(),
+            vec2(100.0, 50.0),
+            "the tool shows the uncropped picture so the rect can be dragged \
+             back out, but that must not change what is exported"
         );
     }
 
     #[test]
-    fn crop_applies_to_view_and_export_when_the_tool_is_inactive() {
-        let program = program_with_crop();
-        assert_eq!(program.displayed_crop(), program.crop());
-        assert_eq!(
-            program.export_frame_data().expect("image is loaded").crop,
-            Some([0.1, 0.4, 0.6, 0.9]),
-        );
+    fn a_cropped_document_keeps_its_shape_on_screen() {
+        let (w, h) = (800u32, 1040u32);
+        let viewport = vec2(1000.0, 800.0);
+
+        for (cx, cw) in [(0.0f32, 800.0f32), (268.0, 532.0), (400.0, 400.0)] {
+            let mut p = ViewProgram::default();
+            p.set_image(ImageData::new(vec![0u8; (w * h * 4) as usize], w, h));
+            p.modifiers_mut()
+                .push(Modifier::new(ModifierKind::Crop(Crop {
+                    x: cx,
+                    y: 0.0,
+                    width: cw,
+                    height: h as f32,
+                })));
+            p.set_bounds(Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: viewport.x,
+                height: viewport.y,
+            });
+            p.fit();
+
+            assert_eq!(p.effective_display_size(), vec2(cw, h as f32));
+
+            let tl = p.image_uv_to_screen(vec2(0.0, 0.0)).expect("top left");
+            let br = p.image_uv_to_screen(vec2(1.0, 1.0)).expect("bottom right");
+            let drawn = (br - tl).abs();
+            let want = cw / h as f32;
+            let got = drawn.x / drawn.y;
+            assert!(
+                (got - want).abs() < 0.01,
+                "crop x={cx} w={cw}: the document is {cw}x{h} (aspect {want:.3}) \
+                 but it is drawn {:.1}x{:.1} (aspect {got:.3}). The crop is \
+                 being applied twice -- once by the chain and once by the \
+                 display window -- so the kept strip is stretched.",
+                drawn.x,
+                drawn.y
+            );
+        }
     }
 
     #[test]
-    fn disabled_crop_is_neither_shown_nor_exported() {
+    fn the_overlay_bounds_are_the_space_the_program_reports_uv_in() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        let (w, h) = (800u32, 1040u32);
+        let mut p = ViewProgram::default();
+        p.set_image(ImageData::new(vec![0u8; (w * h * 4) as usize], w, h));
+        p.modifiers_mut()
+            .push(Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: 50.0,
+                height: 50.0,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            })));
+        p.modifiers_mut()
+            .push(Modifier::new(ModifierKind::Crop(Crop {
+                x: 40.0,
+                y: 60.0,
+                width: 200.0,
+                height: 300.0,
+            })));
+        p.set_bounds(Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: 1000.0,
+            height: 800.0,
+        });
+        p.crop_tool_active = true;
+        p.fit();
+
+        let bounds = p
+            .crop_overlay_bounds(1)
+            .map(|(bw, bh)| vec2(bw, bh))
+            .expect("an image is loaded");
+        assert_eq!(
+            bounds,
+            vec2(400.0, 520.0),
+            "the rect is in the crop's stage pixels, so the overlay's bounds \
+             must be that stage's input -- the 50% resize leaves 400x520"
+        );
+
+        for px in [vec2(40.0, 60.0), vec2(140.0, 210.0), vec2(240.0, 360.0)] {
+            let uv = px / bounds;
+            let Some(screen) = p.image_uv_to_screen(uv) else {
+                continue;
+            };
+            let back_px = p.screen_to_image_uv(screen).expect("back to uv") * bounds;
+            assert!(
+                (back_px - px).length() <= 1.0,
+                "overlay pixel {px:?} -> uv {uv:?} -> screen {screen:?} -> \
+                 {back_px:?}. The overlay measures against {bounds:?} but the \
+                 program reports uv against a different image, so every drag \
+                 is scaled by the ratio between them."
+            );
+        }
+    }
+
+    #[test]
+    fn the_crop_tool_does_not_shift_what_the_eyedropper_reads() {
+        let (w, h) = (800u32, 1040u32);
+        for tool_open in [false, true] {
+            let mut p = ViewProgram::default();
+            p.set_image(ImageData::new(vec![0u8; (w * h * 4) as usize], w, h));
+            p.modifiers_mut()
+                .push(Modifier::new(ModifierKind::Crop(Crop {
+                    x: 100.0,
+                    y: 200.0,
+                    width: 400.0,
+                    height: 500.0,
+                })));
+            p.set_bounds(Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: 1000.0,
+                height: 800.0,
+            });
+            p.crop_tool_active = tool_open;
+            p.fit();
+
+            let got = p
+                .screen_to_image_coords(vec2(500.0, 400.0))
+                .expect("the viewport centre is over the image");
+            let want = if tool_open {
+                vec2(400.0, 520.0)
+            } else {
+                vec2(300.0, 450.0)
+            };
+            assert!(
+                (got - want).length() <= 1.5,
+                "crop tool {}: the viewport centre reads {got:?}, not {want:?}",
+                if tool_open { "open" } else { "closed" }
+            );
+        }
+    }
+
+    #[test]
+    fn the_tiler_lays_quads_over_the_region_the_document_covers() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        let (w, h) = (30000u32, 30000u32);
+        let mut p = ViewProgram::default();
+        p.set_image(ImageData::new(Vec::new(), w, h));
+        p.modifiers_mut()
+            .push(Modifier::new(ModifierKind::Crop(Crop {
+                x: 5000.0,
+                y: 5000.0,
+                width: 10000.0,
+                height: 10000.0,
+            })));
+
+        assert_eq!(
+            p.doc_region(),
+            [5000.0, 5000.0, 15000.0, 15000.0],
+            "the document is the crop, so the quads span the crop's extent"
+        );
+
+        p.modifiers_mut()
+            .push(Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: 50.0,
+                height: 50.0,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            })));
+        assert_eq!(p.doc_region(), [5000.0, 5000.0, 15000.0, 15000.0]);
+
+        p.crop_tool_active = true;
+        assert_eq!(p.doc_region(), [0.0, 0.0, w as f32, h as f32]);
+    }
+
+    #[test]
+    fn an_uncropped_document_covers_the_whole_source() {
+        let (w, h) = (4096u32, 2731u32);
+        let mut p = ViewProgram::default();
+        p.set_image(ImageData::new(Vec::new(), w, h));
+        assert_eq!(p.doc_region(), [0.0, 0.0, w as f32, h as f32]);
+    }
+
+    #[test]
+    fn the_pixel_grid_covers_the_document_it_draws_over() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        let (w, h) = (800u32, 1040u32);
+        let bounds = Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: 1000.0,
+            height: 800.0,
+        };
+        for with_resize in [false, true] {
+            for tool_open in [false, true] {
+                let mut p = ViewProgram::default();
+                p.set_image(ImageData::new(vec![0u8; (w * h * 4) as usize], w, h));
+                if with_resize {
+                    p.modifiers_mut()
+                        .push(Modifier::new(ModifierKind::Resize(Resize {
+                            mode: ResizeMode::Percent,
+                            width: 50.0,
+                            height: 50.0,
+                            filter: ResizeFilter::Lanczos,
+                            lock_aspect: true,
+                        })));
+                }
+                p.modifiers_mut()
+                    .push(Modifier::new(ModifierKind::Crop(Crop {
+                        x: 100.0,
+                        y: 200.0,
+                        width: 300.0,
+                        height: 400.0,
+                    })));
+                p.set_bounds(bounds);
+                p.show_pixel_grid = true;
+                p.crop_tool_active = tool_open;
+                p.fit();
+
+                let g = p.grid_uniforms(bounds).expect("grid is on");
+                let eff = p.effective_display_size();
+                assert_eq!(
+                    g.bounds_img,
+                    [0.0, 0.0, eff.x, eff.y],
+                    "resize={with_resize} tool_open={tool_open}: the grid must                      span exactly the {eff:?} document it draws over"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_rendered_stack_matches_the_document_the_view_lays_out() {
+        let (w, h) = (800u32, 1040u32);
+        for tool_open in [false, true] {
+            let mut p = ViewProgram::default();
+            p.set_image(ImageData::new(vec![0u8; (w * h * 4) as usize], w, h));
+            p.modifiers_mut()
+                .push(Modifier::new(ModifierKind::Crop(Crop {
+                    x: 100.0,
+                    y: 200.0,
+                    width: 400.0,
+                    height: 500.0,
+                })));
+            p.crop_tool_active = tool_open;
+
+            let rendered = if p.crop_tool_active {
+                ViewProgram::widen_crops(&p.modifiers)
+            } else {
+                p.modifiers.to_vec()
+            };
+            let doc = chain_output_spec(ImageSpec::new(w, h), &plan_modifiers(&rendered));
+            let laid_out = p.effective_display_size();
+
+            assert_eq!(
+                (doc.w as f32, doc.h as f32),
+                (laid_out.x, laid_out.y),
+                "crop tool {}: the pipeline renders a {}x{} document while the \
+                 view lays out {laid_out:?}. The texture is drawn onto a quad \
+                 of the wrong size, so the picture stretches.",
+                if tool_open { "open" } else { "closed" },
+                doc.w,
+                doc.h
+            );
+        }
+    }
+
+    #[test]
+    fn the_screen_and_uv_conversions_round_trip_with_the_crop_tool_open() {
+        let (w, h) = (800u32, 1040u32);
+        let mut p = ViewProgram::default();
+        p.set_image(ImageData::new(vec![0u8; (w * h * 4) as usize], w, h));
+        p.modifiers_mut()
+            .push(Modifier::new(ModifierKind::Crop(Crop {
+                x: 100.0,
+                y: 200.0,
+                width: 400.0,
+                height: 500.0,
+            })));
+        p.set_bounds(Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: 1000.0,
+            height: 800.0,
+        });
+        p.crop_tool_active = true;
+        p.fit();
+
+        for (pan, zoom) in [
+            (Vec2::ZERO, 1.0f32),
+            (vec2(120.0, -60.0), 1.0),
+            (Vec2::ZERO, 2.5),
+            (vec2(-200.0, 90.0), 0.6),
+        ] {
+            p.set_scale(zoom, Vec2::ZERO);
+            p.offset = pan;
+            for probe in [vec2(500.0, 400.0), vec2(420.0, 300.0), vec2(560.0, 520.0)] {
+                let Some(uv) = p.screen_to_image_uv(probe) else {
+                    continue;
+                };
+                let back = p
+                    .image_uv_to_screen(uv)
+                    .expect("uv maps back to the screen");
+                assert!(
+                    (back - probe).length() <= 1.0,
+                    "pan {pan:?} zoom {zoom}: screen {probe:?} -> uv {uv:?} -> \
+                     screen {back:?}. The two conversions disagree about which \
+                     space uv is in, so a drag reads one space and draws in \
+                     another and the rect jumps."
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_overlay_is_bounded_by_the_crops_own_stage() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        let mut program = ViewProgram::default();
+        program.set_image(ImageData::new(vec![0u8; 100 * 50 * 4], 100, 50));
+        program
+            .modifiers_mut()
+            .push(Modifier::new(ModifierKind::Resize(Resize {
+                mode: ResizeMode::Percent,
+                width: 50.0,
+                height: 50.0,
+                filter: ResizeFilter::Lanczos,
+                lock_aspect: true,
+            })));
+        program
+            .modifiers_mut()
+            .push(Modifier::new(ModifierKind::Crop(Crop {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 10.0,
+            })));
+
+        assert_eq!(program.stage_input_size(1), Some((50, 25)));
+    }
+
+    #[test]
+    fn a_disabled_crop_is_neither_shown_nor_exported() {
         let mut program = program_with_crop();
         program.modifiers_mut()[0].enabled = false;
-        assert_eq!(program.crop(), None);
-        assert_eq!(program.displayed_crop(), None);
         assert_eq!(
-            program.export_frame_data().expect("image is loaded").crop,
-            None,
+            program.effective_display_size(),
+            vec2(100.0, 50.0),
+            "a disabled crop must leave the view at the source size"
+        );
+        assert_eq!(
+            exported_size(&program),
+            (100, 50),
+            "a disabled crop must leave the source size"
         );
     }
 }
@@ -1750,7 +2151,6 @@ mod eyedropper_resize_tests {
             "the second resize sits after a half resize, so it receives 400x400"
         );
 
-        // Drive the second resize the way the panel does.
         let img_size = program.stage_input_size(1);
         program.modifiers_mut()[1].apply_param(ModifierParam::ResizeWidth(50.0), img_size);
 
@@ -2302,48 +2702,65 @@ mod document_size_tests {
         );
         assert_eq!(
             p.effective_display_size(),
-            vec2(200.0, 150.0),
-            "the crop selects half the source, which is half the resized \
-             document: 200x150 of 400x300"
+            vec2(400.0, 300.0),
+            "the crop names 400x300 of the image the resize produced, which is \
+             the whole thing"
         );
+
+        let half = program(
+            vec![resize_pct(50.0), crop_of(0.0, 0.0, 200.0, 150.0)],
+            800,
+            600,
+        );
+        assert_eq!(half.effective_display_size(), vec2(200.0, 150.0));
     }
 
     #[test]
-    fn a_crop_is_the_same_fraction_at_every_resize() {
-        for pct in [25.0f32, 50.0, 100.0, 200.0] {
+    fn a_crop_takes_the_pixels_it_names_from_the_stage_it_sits_at() {
+        for (pct, want) in [
+            (25.0f32, vec2(200.0, 150.0)),
+            (50.0, vec2(400.0, 300.0)),
+            (100.0, vec2(400.0, 300.0)),
+            (200.0, vec2(400.0, 300.0)),
+        ] {
             let p = program(
                 vec![resize_pct(pct), crop_of(0.0, 0.0, 400.0, 300.0)],
                 800,
                 600,
             );
-            let doc = vec2(800.0 * pct / 100.0, 600.0 * pct / 100.0);
             assert_eq!(
                 p.effective_display_size(),
-                vec2(doc.x * 0.5, doc.y * 0.5),
-                "at {pct}% a half-the-source crop must stay half the document; \
-                 crop stores source pixels, so its fraction is scale-free"
+                want,
+                "at {pct}% a 400x300 crop of the resized image should be {want:?}"
             );
         }
     }
 
     #[test]
-    fn crop_origin_is_in_the_resized_space() {
+    fn a_crop_clamps_to_an_input_smaller_than_its_rect() {
         let p = program(
-            vec![resize_pct(50.0), crop_of(400.0, 300.0, 400.0, 300.0)],
+            vec![resize_pct(25.0), crop_of(0.0, 0.0, 400.0, 300.0)],
             800,
             600,
         );
-        assert_eq!(
-            p.crop_origin(),
-            vec2(200.0, 150.0),
-            "the origin is placed in the document the extent is measured in"
-        );
+        assert_eq!(p.effective_display_size(), vec2(200.0, 150.0));
     }
 
     #[test]
-    fn crop_origin_without_a_resize_is_the_source_offset() {
-        let p = program(vec![crop_of(400.0, 300.0, 400.0, 300.0)], 800, 600);
-        assert_eq!(p.crop_origin(), vec2(400.0, 300.0));
+    fn the_crop_tool_shows_the_picture_the_rect_cuts_from() {
+        let mut p = program(
+            vec![resize_pct(50.0), crop_of(100.0, 60.0, 200.0, 150.0)],
+            800,
+            600,
+        );
+        assert_eq!(p.effective_display_size(), vec2(200.0, 150.0));
+
+        p.crop_tool_active = true;
+        assert_eq!(
+            p.effective_display_size(),
+            vec2(400.0, 300.0),
+            "the tool shows the whole resized image, not just the kept region"
+        );
     }
 
     #[test]

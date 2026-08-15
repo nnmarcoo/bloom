@@ -298,6 +298,104 @@ mod tests {
 
     #[test]
     #[ignore = "GPU timing baseline; run with --release --ignored --nocapture"]
+    fn gpu_bench_crop_stage() {
+        let _serialize = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((device, queue)) = try_device() else {
+            eprintln!("gpu_bench_crop_headroom: no adapter, skipping");
+            return;
+        };
+
+        use crate::modifiers::kinds::Crop;
+
+        const KEEP: [f32; 3] = [1.0, 0.5, 0.25];
+
+        let cropped = |chain: &[Modifier], keep: f32| -> Vec<Modifier> {
+            let mut v = vec![m(ModifierKind::Crop(Crop {
+                x: 0.0,
+                y: 0.0,
+                width: (W as f32 * keep).max(1.0),
+                height: (H as f32 * keep).max(1.0),
+            }))];
+            v.extend(chain.iter().cloned());
+            v
+        };
+
+        let cases: Vec<(&str, Vec<Modifier>)> = vec![
+            (
+                "pointwise x1",
+                vec![m(ModifierKind::Exposure(Exposure { exposure: 0.3 }))],
+            ),
+            ("blur r=8", blur(8.0)),
+            ("blur r=32", blur(32.0)),
+            ("blur r=128", blur(128.0)),
+            (
+                "chromatic aberration",
+                vec![m(ModifierKind::ChromaticAberration(ChromaticAberration {
+                    amount: 20.0,
+                }))],
+            ),
+        ];
+
+        let full_image = ImageData::new(pixels(W, H), W, H);
+        let mut full_source = make_source(&device, &queue, &full_image);
+        set_viewport(&mut full_source, 1.0, 1.0);
+
+        println!(
+            "
+Crop as a chain stage -- measured saving, best of {RUNS}, 100% zoom"
+        );
+        println!("  full frame is {W}x{H}");
+        println!("  {:-<78}", "");
+        println!(
+            "  {:<22} {:>9} {:>15} {:>15} {:>12}",
+            "chain", "no crop", "crop 50%", "crop 25%", "ceiling 25%"
+        );
+        println!("  {:-<78}", "");
+
+        for (label, modifiers) in &cases {
+            let base = time_chain(&device, &queue, &full_source, modifiers)
+                .map(|d| d.as_secs_f64() * 1000.0);
+
+            let mut cells: Vec<String> = Vec::new();
+            for keep in KEEP.iter().skip(1) {
+                let chain = cropped(modifiers, *keep);
+                let ms = time_chain(&device, &queue, &full_source, &chain)
+                    .map(|d| d.as_secs_f64() * 1000.0);
+                cells.push(match (ms, base) {
+                    (Some(v), Some(b)) => format!("{v:.2} ({:.1}x)", b / v),
+                    (Some(v), None) => format!("{v:.2}"),
+                    (None, _) => "n/c".into(),
+                });
+            }
+
+            let keep = KEEP[KEEP.len() - 1];
+            let (cw, ch) = (
+                ((W as f32 * keep) as u32).max(1),
+                ((H as f32 * keep) as u32).max(1),
+            );
+            let small = ImageData::new(pixels(cw, ch), cw, ch);
+            let mut small_source = make_source(&device, &queue, &small);
+            set_viewport(&mut small_source, 1.0, 1.0);
+            let ceiling = time_chain(&device, &queue, &small_source, modifiers)
+                .map(|d| d.as_secs_f64() * 1000.0);
+
+            println!(
+                "  {:<22} {:>9} {:>15} {:>15} {:>12}",
+                label,
+                base.map_or("n/c".into(), |v| format!("{v:.2}")),
+                cells[0],
+                cells[1],
+                ceiling.map_or("n/c".into(), |v| format!("{v:.2}")),
+            );
+        }
+        println!("  {:-<78}", "");
+        println!("  crop N% keeps N% of each axis, so 50% is a quarter of the pixels");
+        println!("  ceiling = same chain on an already-small source: the best a crop could do");
+        println!();
+    }
+
+    #[test]
+    #[ignore = "GPU timing baseline; run with --release --ignored --nocapture"]
     fn gpu_bench_resize() {
         use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
 

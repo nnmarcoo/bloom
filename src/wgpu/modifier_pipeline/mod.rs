@@ -132,7 +132,13 @@ struct TileOutput {
     height: u32,
     proc_px: Option<[f32; 4]>,
     quality_scale: f32,
-    doc: (u32, u32),
+    doc: DocId,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct DocId {
+    pub size: (u32, u32),
+    pub origin: (f32, f32),
 }
 
 struct ScratchTarget {
@@ -221,6 +227,7 @@ use crate::modifiers::gpu::UvRect;
 pub(super) struct DocScale {
     pub src: (u32, u32),
     pub out: (u32, u32),
+    pub offset: (f32, f32),
     pub roi_active: bool,
 }
 
@@ -238,6 +245,7 @@ pub struct ModifierPipeline {
     tile_display_bgs_nearest: Vec<Option<BindGroup>>,
 
     roi_display_uniforms: Vec<Option<iced::wgpu::Buffer>>,
+    tile_display_uv: Vec<Option<UvRect>>,
     reprocess_pending: bool,
 
     uniform_pool: Vec<iced::wgpu::Buffer>,
@@ -267,6 +275,7 @@ pub struct ModifierPipeline {
     linear_sampler: Sampler,
     nearest_sampler: Sampler,
     doc_size: (u32, u32),
+    doc_offset: (f32, f32),
     exec_band_cursor: u32,
     exec_sig: u64,
     exec_slab_pool: Vec<Option<ScratchTarget>>,
@@ -317,6 +326,7 @@ impl ModifierPipeline {
             tile_display_bgs_linear: Vec::new(),
             tile_display_bgs_nearest: Vec::new(),
             roi_display_uniforms: Vec::new(),
+            tile_display_uv: Vec::new(),
             reprocess_pending: false,
             uniform_pool: Vec::new(),
             ca_uniform_pool: Vec::new(),
@@ -345,6 +355,7 @@ impl ModifierPipeline {
             linear_sampler,
             nearest_sampler,
             doc_size: (width, height),
+            doc_offset: (0.0, 0.0),
             exec_band_cursor: 0,
             exec_sig: 0,
             exec_slab_pool: Vec::new(),
@@ -360,6 +371,11 @@ impl ModifierPipeline {
 
     pub fn doc_size(&self) -> (u32, u32) {
         self.doc_size
+    }
+
+    #[cfg(test)]
+    pub(super) fn tile_display_uv(&self, i: usize) -> Option<UvRect> {
+        self.tile_display_uv.get(i).copied().flatten()
     }
 
     pub fn tile_display_bg(&self, i: usize, nearest: bool) -> Option<&BindGroup> {
@@ -386,6 +402,7 @@ impl ModifierPipeline {
         self.tile_display_bgs_linear.resize_with(n_tiles, || None);
         self.tile_display_bgs_nearest.resize_with(n_tiles, || None);
         self.roi_display_uniforms.resize_with(n_tiles, || None);
+        self.tile_display_uv.resize_with(n_tiles, || None);
 
         if dirty {
             for o in self.tile_outputs.iter_mut().flatten() {
@@ -565,8 +582,7 @@ impl ModifierPipeline {
         queue: &Queue,
         source: &TiledSource,
     ) {
-        let full_w = source.full_width as f32;
-        let full_h = source.full_height as f32;
+        let (doc_w, doc_h) = (self.doc_size.0 as f32, self.doc_size.1 as f32);
         for ti in 0..source.tiles.len() {
             let tile = &source.tiles[ti];
             if tile_ndc_culled(tile.last_ndc_rect) {
@@ -579,7 +595,7 @@ impl ModifierPipeline {
                 continue;
             }
             let (proc_px, w, h) = (o.proc_px, o.width, o.height);
-            let pr = proc_rect_from_px(proc_px, tile, full_w, full_h, w, h);
+            let pr = proc_rect_from_px(proc_px, tile, doc_w, doc_h, w, h);
             let roi_active = proc_px.is_some() && tile.isec_px.is_some();
             self.build_roi_display_bgs(
                 device,
@@ -590,6 +606,7 @@ impl ModifierPipeline {
                 DocScale {
                     src: (source.full_width, source.full_height),
                     out: self.doc_size,
+                    offset: self.doc_offset,
                     roi_active,
                 },
             );
@@ -608,7 +625,7 @@ impl ModifierPipeline {
         let display_uniform: &iced::wgpu::Buffer = if doc.roi_active
             && let (Some(isec), Some(base)) = (tile.isec_px, tile.last_transform)
         {
-            let isec = tile_out_rect(isec, doc.src.0, doc.src.1, doc.out.0, doc.out.1);
+            let isec = to_doc(isec, doc.src.0, doc.src.1, doc.out, doc.offset);
             let t = inscribe_transform(base, isec, pr.px);
             if self.roi_display_uniforms[ti].is_none() {
                 self.roi_display_uniforms[ti] =
@@ -629,6 +646,11 @@ impl ModifierPipeline {
         } else {
             &tile.uniform_buffer
         };
+
+        if self.tile_display_uv.len() <= ti {
+            self.tile_display_uv.resize_with(ti + 1, || None);
+        }
+        self.tile_display_uv[ti] = Some(pr.proc);
 
         let output_view = &self.tile_outputs[ti].as_ref().unwrap().view;
         let make_bg = |sampler: &Sampler, label: &str| {

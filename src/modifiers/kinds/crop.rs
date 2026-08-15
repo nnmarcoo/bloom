@@ -1,3 +1,16 @@
+//! Crop: selects a rectangle of its input and outputs only that.
+//!
+//! The rect is stored in the pixels of the stage the crop sits at, so a crop
+//! placed after a resize is measured in the resized image. That is what lets a
+//! stack crop, apply an effect, and crop again: the second crop names a region
+//! of what the first one produced, which a fraction of the final document
+//! cannot express.
+//!
+//! rect_in resolves the stored rect against the stage's real input, so a crop
+//! that outlives an upstream size change still names a region that exists.
+//! output_spec is that rect's extent, which is how the planner learns the
+//! document shrank.
+
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hash;
 
@@ -5,6 +18,7 @@ use iced::Element;
 use iced::widget::column;
 
 use crate::app::{EditMsg, Message};
+use crate::modifiers::plan::ImageSpec;
 use crate::modifiers::{ModifierImpl, ModifierParam, ViewCtx};
 use crate::widgets::value_slider::Fmt;
 
@@ -23,9 +37,20 @@ impl Default for Crop {
         Self {
             x: 0.0,
             y: 0.0,
-            width: 1.0,
-            height: 1.0,
+            width: f32::MAX,
+            height: f32::MAX,
         }
+    }
+}
+
+impl Crop {
+    pub fn rect_in(&self, input: ImageSpec) -> (f32, f32, f32, f32) {
+        let (iw, ih) = (input.w as f32, input.h as f32);
+        let x = self.x.max(0.0).min((iw - 1.0).max(0.0));
+        let y = self.y.max(0.0).min((ih - 1.0).max(0.0));
+        let w = self.width.max(1.0).min(iw - x);
+        let h = self.height.max(1.0).min(ih - y);
+        (x, y, w, h)
     }
 }
 
@@ -34,8 +59,13 @@ impl ModifierImpl for Crop {
         "Crop"
     }
 
-    fn has_effect(&self) -> bool {
-        false
+    fn output_spec(&self, input: ImageSpec) -> ImageSpec {
+        let (_, _, w, h) = self.rect_in(input);
+        ImageSpec::new(w.round() as u32, h.round() as u32)
+    }
+
+    fn changes_geometry(&self) -> bool {
+        true
     }
 
     fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>) {

@@ -10,6 +10,17 @@
 //! backward: unmap first to cross a stage that changes dimensions, then dilate
 //! by the apron in the input's own space. Reversing them would apply a
 //! half-size apron in a full-size space.
+//!
+//! unmap_region carries a scale and no offset, which is everything a resize
+//! needs. A crop is the other half of that: same scale, pure offset. unmap_offset
+//! crosses it, and crop_stage_feasibility shows the two together reproduce the
+//! tile culling the display-time crop does today -- which is what a crop stage
+//! would have to preserve.
+//!
+//! stage_origin is where a stage's output sits inside its input, zero for
+//! everything but a crop. The backward walk adds it after unmapping; picking
+//! between the two rules by whether that origin is nonzero is wrong, since a
+//! crop anchored at (0, 0) still translates rather than scales.
 
 use crate::modifiers::{InputRequest, ModifierKind};
 
@@ -35,6 +46,16 @@ pub fn step_class(kind: &ModifierKind) -> StepClass {
         },
         InputRequest::ScanLines { step } => StepClass::Scanline { dir: step },
         InputRequest::FullFrame => StepClass::WholeFrame,
+    }
+}
+
+pub fn stage_origin(kind: &ModifierKind, input: crate::modifiers::plan::ImageSpec) -> (f32, f32) {
+    match kind.as_crop() {
+        Some(c) => {
+            let (x, y, _, _) = c.rect_in(input);
+            (x, y)
+        }
+        None => (0.0, 0.0),
     }
 }
 
@@ -81,6 +102,15 @@ pub fn unmap_region(from: (f32, f32), to: (f32, f32), r: RegionPx) -> RegionPx {
     }
     let (sx, sy) = (to.0 / from.0, to.1 / from.1);
     [r[0] * sx, r[1] * sy, r[2] * sx, r[3] * sy]
+}
+
+pub fn unmap_offset(origin: (f32, f32), r: RegionPx) -> RegionPx {
+    [
+        r[0] + origin.0,
+        r[1] + origin.1,
+        r[2] + origin.0,
+        r[3] + origin.1,
+    ]
 }
 
 pub fn input_needed(class: StepClass, out: RegionPx, w: f32, h: f32) -> RegionPx {
@@ -339,6 +369,144 @@ mod tests {
                 "{name}: StepClass {step:?} and EffectClass {effect:?} describe \
                  different input reaches, so ROI and the backend would disagree \
                  about how much input this stage needs."
+            );
+        }
+    }
+
+    mod crop_stage_feasibility {
+        use super::*;
+
+        const FULL_W: f32 = 4096.0;
+        const FULL_H: f32 = 2731.0;
+        const TILE: f32 = 1024.0;
+
+        const CROP: RegionPx = [1500.0, 800.0, 2600.0, 1900.0];
+
+        fn tiles() -> Vec<RegionPx> {
+            let mut v = Vec::new();
+            let mut y = 0.0;
+            while y < FULL_H {
+                let mut x = 0.0;
+                while x < FULL_W {
+                    v.push([x, y, (x + TILE).min(FULL_W), (y + TILE).min(FULL_H)]);
+                    x += TILE;
+                }
+                y += TILE;
+            }
+            v
+        }
+
+        fn intersects(a: RegionPx, b: RegionPx) -> bool {
+            a[0].max(b[0]) < a[2].min(b[2]) && a[1].max(b[1]) < a[3].min(b[3])
+        }
+
+        fn culled_today() -> Vec<bool> {
+            tiles().iter().map(|t| !intersects(CROP, *t)).collect()
+        }
+
+        fn culled_by_walk(chain_after_crop: &[StepClass]) -> Vec<bool> {
+            let (cw, ch) = (CROP[2] - CROP[0], CROP[3] - CROP[1]);
+
+            let mut cur = [0.0, 0.0, cw, ch];
+            for c in chain_after_crop.iter().rev() {
+                cur = input_needed(*c, cur, cw, ch);
+            }
+
+            let src = clamp_region(unmap_offset((CROP[0], CROP[1]), cur), FULL_W, FULL_H);
+            tiles().iter().map(|t| !intersects(src, *t)).collect()
+        }
+
+        #[test]
+        fn a_crop_stage_culls_exactly_the_tiles_the_display_crop_culls() {
+            assert_eq!(
+                culled_by_walk(&[]),
+                culled_today(),
+                "the backward walk through a crop stage must reach the same \
+                 source region the display-time crop culls against. If it does \
+                 not, moving crop into the chain loses tile culling and large \
+                 documents read tiles they do not need."
+            );
+        }
+
+        #[test]
+        fn culling_survives_a_pointwise_stage_after_the_crop() {
+            assert_eq!(culled_by_walk(&[StepClass::Pointwise]), culled_today());
+        }
+
+        #[test]
+        fn a_blur_after_the_crop_widens_the_read_but_not_past_the_apron() {
+            let with_blur = culled_by_walk(&[StepClass::Kernel {
+                apron_px: 32.0,
+                separable: true,
+            }]);
+            let plain = culled_today();
+
+            for (i, (blurred_culls, plain_culls)) in with_blur.iter().zip(&plain).enumerate() {
+                let dropped_a_needed_tile = *blurred_culls && !*plain_culls;
+                assert!(
+                    !dropped_a_needed_tile,
+                    "tile {i}: the blurred chain culled a tile the plain crop \
+                     kept, so the apron was applied in the wrong direction"
+                );
+            }
+            assert!(
+                with_blur.iter().filter(|c| **c).count() > 0,
+                "a 32px apron around a {}x{} crop of a {FULL_W}x{FULL_H} image \
+                 should still cull most tiles; culling nothing means the walk \
+                 widened to the whole frame",
+                CROP[2] - CROP[0],
+                CROP[3] - CROP[1]
+            );
+        }
+
+        #[test]
+        fn a_whole_frame_stage_after_the_crop_still_only_reads_the_crop() {
+            assert_eq!(
+                culled_by_walk(&[StepClass::WholeFrame]),
+                culled_today(),
+                "a full-frame effect placed after a crop reads the cropped \
+                 frame. If this widened to the source, cropping early would \
+                 stop being an optimisation."
+            );
+        }
+
+        #[test]
+        fn a_crop_at_the_origin_translates_rather_than_scales() {
+            let out = [0.0, 0.0, 400.0, 520.0];
+
+            assert_eq!(unmap_offset((0.0, 0.0), out), out);
+
+            let as_scale = unmap_region((400.0, 520.0), (800.0, 1040.0), out);
+            assert_eq!(
+                as_scale,
+                [0.0, 0.0, 800.0, 1040.0],
+                "sanity: the scale rule doubles the region here"
+            );
+            assert_ne!(
+                as_scale, out,
+                "a crop at the origin must not be crossed as a scale; the two \
+                 rules differ even when the origin is zero, so the choice has \
+                 to be made from the stage's kind rather than its origin"
+            );
+        }
+
+        #[test]
+        fn the_offset_unmap_is_what_makes_this_work() {
+            let (cw, ch) = (CROP[2] - CROP[0], CROP[3] - CROP[1]);
+            let scale_only = clamp_region(
+                unmap_region((cw, ch), (cw, ch), [0.0, 0.0, cw, ch]),
+                FULL_W,
+                FULL_H,
+            );
+            let wrong: Vec<bool> = tiles()
+                .iter()
+                .map(|t| !intersects(scale_only, *t))
+                .collect();
+            assert_ne!(
+                wrong,
+                culled_today(),
+                "if a scale-only unmap already reproduced the culling, the \
+                 offset would be unnecessary; this pins why it is needed"
             );
         }
     }
