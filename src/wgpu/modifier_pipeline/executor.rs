@@ -153,6 +153,35 @@ fn chain_doc_offset(specs: &[crate::modifiers::plan::StageSpec], plan: &[PlanIte
     off
 }
 
+/// The source region the chain's output was produced from, in source pixels.
+///
+/// A crop narrows it to the crop's extent; a resize leaves it alone, since a
+/// resize changes the document's size without changing which source pixels it
+/// stands for. to_doc divides by this, so folding a crop's extent into the
+/// resize ratio squeezes the texture.
+fn chain_kept_extent(
+    specs: &[crate::modifiers::plan::StageSpec],
+    plan: &[PlanItem],
+    src: (u32, u32),
+) -> (u32, u32) {
+    let mut kept = (src.0 as f32, src.1 as f32);
+    for (k, item) in plan.iter().enumerate() {
+        let (iw, ih) = (specs[k].input.w as f32, specs[k].input.h as f32);
+        let (ow, oh) = (specs[k].output.w as f32, specs[k].output.h as f32);
+        if let PlanItem::Step(_, m) = item
+            && m.kind.as_crop().is_some()
+            && iw > 0.0
+            && ih > 0.0
+        {
+            kept = (kept.0 * ow / iw, kept.1 * oh / ih);
+        }
+    }
+    (
+        (kept.0.round() as u32).max(1),
+        (kept.1.round() as u32).max(1),
+    )
+}
+
 fn full_tile_info(source: &TiledSource) -> TileInfo {
     TileInfo {
         tile_x: 0,
@@ -298,7 +327,7 @@ impl ModifierPipeline {
                 tile,
                 &pr,
                 DocScale {
-                    src: (source.full_width, source.full_height),
+                    kept: (source.full_width, source.full_height),
                     out: (source.full_width, source.full_height),
                     offset: (0.0, 0.0),
                     roi_active: true,
@@ -328,7 +357,12 @@ impl ModifierPipeline {
         let source_spec_doc = ImageSpec::new(source.full_width, source.full_height);
         let specs = infer_specs(source_spec_doc, plan);
         let doc_spec = specs.last().map_or(source_spec_doc, |s| s.output);
+        // Recorded before any culling, for the reason in the header: these
+        // describe the chain, not what happened to be on screen, and the
+        // all-tiles-culled return below would otherwise leave them stale.
         self.doc_size = (doc_spec.w, doc_spec.h);
+        self.doc_offset = chain_doc_offset(&specs, plan);
+        self.doc_kept = chain_kept_extent(&specs, plan, (source.full_width, source.full_height));
 
         let n_tiles = source.tiles.len();
         let mut visible: Vec<usize> = Vec::new();
@@ -376,8 +410,8 @@ impl ModifierPipeline {
         }
 
         let out_spec_doc = doc_spec;
-        let chain_offset = chain_doc_offset(&specs, plan);
-        self.doc_offset = chain_offset;
+        let chain_offset = self.doc_offset;
+        let chain_kept = self.doc_kept;
         let chain_resizes = out_spec_doc != source_spec_doc || chain_offset != (0.0, 0.0);
         let classes: Vec<StepClass> = plan
             .iter()
@@ -447,13 +481,7 @@ impl ModifierPipeline {
                 size: (out_spec_doc.w, out_spec_doc.h),
                 origin: chain_offset,
             };
-            let roi_doc = to_doc(
-                roi,
-                source.full_width,
-                source.full_height,
-                doc.size,
-                chain_offset,
-            );
+            let roi_doc = to_doc(roi, chain_kept, doc.size, chain_offset);
             let reuse = self.tile_outputs[ti].as_ref().is_some_and(|o| {
                 o.doc == doc
                     && o.proc_px.is_some_and(|p| rect_contains(p, roi_doc))
@@ -475,8 +503,7 @@ impl ModifierPipeline {
             let pr = if chain_resizes && !reuse {
                 let px = to_doc(
                     pr.px,
-                    source.full_width,
-                    source.full_height,
+                    chain_kept,
                     (out_spec_doc.w, out_spec_doc.h),
                     chain_offset,
                 );
@@ -1200,7 +1227,7 @@ impl ModifierPipeline {
                 &source.tiles[ti],
                 &pr,
                 DocScale {
-                    src: (source.full_width, source.full_height),
+                    kept: chain_kept,
                     out: (out_spec_doc.w, out_spec_doc.h),
                     offset: chain_offset,
                     roi_active: true,

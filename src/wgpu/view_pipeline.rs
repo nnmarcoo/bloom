@@ -26,6 +26,15 @@
 //! guard never fired and a tile the crop excluded kept its old placement -- a
 //! fragment of the picture stranded in the viewport.
 //!
+//! doc_region is in source pixels, but the view's scale is chosen against the
+//! *document* -- fit is viewport/document. A resize keeps every source pixel,
+//! so the two spaces differ by exactly the resize ratio, and quads measured in
+//! source pixels came out that much too large: a document resized to 25% drew
+//! at 4x the size fit had chosen, which reads as the image refusing to shrink.
+//! ViewGeometry carries doc_size so inv_tile_vp can divide it back out. Without
+//! a resize the ratio is 1 and nothing changes, which is why only a resized
+//! document showed it.
+//!
 //! place_tile is that layout as a pure function, so the display_harness module
 //! can drive a real multi-tile grid through pan and zoom. Every crop bug that
 //! reached a user lived in this arithmetic, and none were visible to a test
@@ -80,6 +89,12 @@ pub(crate) fn tile_doc_intersection(tile: [f32; 4], doc: [f32; 4]) -> [f32; 4] {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ViewGeometry {
     pub doc_region: [f32; 4],
+    /// The document's size in its own pixels. doc_region is in *source* pixels
+    /// and a resize keeps every source pixel, so the two differ by exactly the
+    /// resize ratio. scale is chosen against the document (fit is
+    /// viewport/document), so quads measured in source pixels must be divided
+    /// back down by this or a downscaled document draws at its old size.
+    pub doc_size: Vec2,
     pub viewport: Vec2,
     pub scale: f32,
     pub pan_ndc: Vec2,
@@ -87,11 +102,20 @@ pub(crate) struct ViewGeometry {
 }
 
 impl ViewGeometry {
+    /// Source pixels per document pixel, per axis.
+    fn src_per_doc(&self) -> Vec2 {
+        let [l, t, r, b] = self.doc_region;
+        let region = vec2((r - l).max(1e-6), (b - t).max(1e-6));
+        let doc = vec2(self.doc_size.x.max(1e-6), self.doc_size.y.max(1e-6));
+        region / doc
+    }
+
     fn inv_tile_vp(&self) -> Vec2 {
+        let k = self.src_per_doc();
         if self.rotation.is_multiple_of(2) {
-            vec2(1.0 / self.viewport.x, 1.0 / self.viewport.y)
+            vec2(1.0 / (self.viewport.x * k.x), 1.0 / (self.viewport.y * k.y))
         } else {
-            vec2(1.0 / self.viewport.y, 1.0 / self.viewport.x)
+            vec2(1.0 / (self.viewport.y * k.y), 1.0 / (self.viewport.x * k.x))
         }
     }
 }
@@ -102,6 +126,23 @@ pub(crate) struct TilePlacement {
     pub crop_uv: [f32; 4],
     pub ndc: (Vec2, Vec2),
     pub isec: [f32; 4],
+}
+
+/// Whether this frame may defer reprocessing, and what must be remembered.
+///
+/// Deferring postpones the work; it must never consume the request for it. The
+/// caller has already taken `dirty` out of its holding field, so a deferred
+/// frame has to hand it back or the reprocess is lost entirely: the pipeline
+/// keeps whatever it last rendered, and nothing marks it again once the view
+/// settles.
+pub(crate) fn defer_decision(
+    has_expensive: bool,
+    doc_changed: bool,
+    interacting: bool,
+    dirty: bool,
+) -> (bool, bool) {
+    let defer = has_expensive && !doc_changed && interacting;
+    (defer, defer && dirty)
 }
 
 pub(crate) fn place_tile(tile: [f32; 4], g: ViewGeometry) -> Option<TilePlacement> {
@@ -282,6 +323,7 @@ impl ViewPipeline {
         pan_ndc: Vec2,
         rotation: u8,
         doc_region: [f32; 4],
+        doc_size: Vec2,
     ) {
         if self.last_view != Some(*uniforms) {
             self.last_view = Some(*uniforms);
@@ -325,6 +367,7 @@ impl ViewPipeline {
 
         let geom = ViewGeometry {
             doc_region,
+            doc_size,
             viewport,
             scale,
             pan_ndc,
@@ -436,11 +479,9 @@ impl ViewPipeline {
         let has_expensive = modifiers
             .iter()
             .any(|m| m.has_visible_effect() && !m.kind.effect_class().is_pointwise());
-        if has_expensive
-            && !doc_changed
-            && self.interacting()
-            && let Some(mp) = self.modifier_pipeline.as_mut()
-        {
+        let (defer, carry) = defer_decision(has_expensive, doc_changed, self.interacting(), dirty);
+        if defer && let Some(mp) = self.modifier_pipeline.as_mut() {
+            self.pending_source_dirty |= carry;
             mp.refresh_display_transforms(device, queue, source);
             return;
         }
@@ -692,8 +733,19 @@ mod display_harness {
     }
 
     pub(super) fn geometry(doc_region: [f32; 4], scale: f32, pan: Vec2) -> ViewGeometry {
+        let doc_size = vec2(doc_region[2] - doc_region[0], doc_region[3] - doc_region[1]);
+        geometry_sized(doc_region, doc_size, scale, pan)
+    }
+
+    pub(super) fn geometry_sized(
+        doc_region: [f32; 4],
+        doc_size: Vec2,
+        scale: f32,
+        pan: Vec2,
+    ) -> ViewGeometry {
         ViewGeometry {
             doc_region,
+            doc_size,
             viewport: vec2(1600.0, 900.0),
             scale,
             pan_ndc: pan,
@@ -718,7 +770,17 @@ mod display_harness {
     }
 
     fn drawn_bounds(doc: [f32; 4], scale: f32, pan: Vec2) -> Option<[f32; 4]> {
-        let g = geometry(doc, scale, pan);
+        let doc_size = vec2(doc[2] - doc[0], doc[3] - doc[1]);
+        drawn_bounds_sized(doc, doc_size, scale, pan)
+    }
+
+    fn drawn_bounds_sized(
+        doc: [f32; 4],
+        doc_size: Vec2,
+        scale: f32,
+        pan: Vec2,
+    ) -> Option<[f32; 4]> {
+        let g = geometry_sized(doc, doc_size, scale, pan);
         let mut u: Option<[f32; 4]> = None;
         for t in tiles(SRC, TILE) {
             let Some(p) = place_tile(t, g) else { continue };
@@ -774,6 +836,123 @@ mod display_harness {
             shape(cropped),
             shape(full)
         );
+    }
+
+    #[test]
+    fn dragging_a_crop_slider_keeps_the_shape_on_a_tiled_image() {
+        // A slider drag is a sequence of doc_regions on the same source. Each
+        // one must draw with the shape of the document it names, on a source
+        // large enough to be tiled.
+        let mut worst: Option<(f32, [f32; 4], f32, f32)> = None;
+        for w in [30000.0f32, 20000.0, 12000.0, 8000.0, 4000.0, 1500.0, 600.0] {
+            let doc = [0.0, 0.0, w, 20000.0];
+            let scale = 0.03;
+            let b = drawn_bounds(doc, scale, Vec2::ZERO).expect("something is drawn");
+            let g = geometry(doc, scale, Vec2::ZERO);
+            let got = (b[2] - b[0]) / (b[3] - b[1]);
+            let want = (w / 20000.0) * (g.viewport.y / g.viewport.x);
+            let err = (got - want).abs();
+            if worst.as_ref().is_none_or(|(e, ..)| err > *e) {
+                worst = Some((err, doc, got, want));
+            }
+        }
+        let (err, doc, got, want) = worst.unwrap();
+        assert!(
+            err < 1e-2,
+            "doc {doc:?}: drawn with aspect {got:.4} but the document's own \
+             aspect on screen is {want:.4}. Dragging a crop slider on a tiled \
+             image stretches the picture."
+        );
+    }
+
+    #[test]
+    fn a_downscaled_document_is_drawn_at_the_size_fit_chose() {
+        // fit picks scale = viewport / document. place_tile sizes quads from
+        // doc_region, which is in source pixels: a resize keeps every pixel, so
+        // doc_region stays the whole source while the document shrinks. The
+        // drawn result must still be the document at the fitted scale.
+        let viewport = vec2(1600.0, 900.0);
+        for pct in [1.0f32, 0.25, 0.5, 1.0, 2.0] {
+            let doc_len = SRC * pct;
+            let fit_scale = (viewport.x / doc_len).min(viewport.y / doc_len);
+
+            // A resize keeps every source pixel, so doc_region stays the whole
+            // source while the document itself shrinks to doc_len.
+            let b = drawn_bounds_sized(
+                [0.0, 0.0, SRC, SRC],
+                vec2(doc_len, doc_len),
+                fit_scale,
+                Vec2::ZERO,
+            )
+            .expect("drawn");
+            let drawn_px = vec2(
+                (b[2] - b[0]) * 0.5 * viewport.x,
+                (b[3] - b[1]) * 0.5 * viewport.y,
+            );
+
+            assert!(
+                (drawn_px.x - doc_len * fit_scale).abs() < 2.0,
+                "resize to {}%: fit chose scale {fit_scale:.5} for a {doc_len}px \
+                 document, so it should draw {:.1}px wide, but the quads span \
+                 {:.1}px. The document shrank while doc_region stayed the whole \
+                 source, so the picture keeps its old size.",
+                pct * 100.0,
+                doc_len * fit_scale,
+                drawn_px.x
+            );
+        }
+    }
+
+    #[test]
+    fn deferring_never_swallows_the_reprocess_it_postpones() {
+        use super::defer_decision;
+
+        let (defer, carry) = defer_decision(true, false, true, true);
+        assert!(defer, "an expensive chain mid-interaction should defer");
+        assert!(
+            carry,
+            "the dirty frame was deferred but not carried, so the reprocess is \
+             lost: the pipeline keeps its last render once the view settles"
+        );
+
+        let (defer, carry) = defer_decision(true, false, true, false);
+        assert!(defer && !carry, "nothing to carry when the frame is clean");
+
+        for (label, he, dc, it) in [
+            ("cheap chain", false, false, true),
+            ("document changed", true, true, true),
+            ("settled", true, false, false),
+        ] {
+            let (defer, carry) = defer_decision(he, dc, it, true);
+            assert!(!defer, "{label}: must not defer");
+            assert!(!carry, "{label}: must not carry, the work runs now");
+        }
+    }
+
+    #[test]
+    fn one_tile_lays_the_document_out_like_many_do() {
+        // update() returns early for a single tile and writes the transform as
+        // given, never consulting doc_region. A source small enough to fit one
+        // tile must still draw a crop the way the tiled path does.
+        const SMALL: f32 = 800.0;
+        let doc = [200.0, 100.0, 600.0, 500.0];
+
+        for &scale in &[0.2f32, 1.0] {
+            let g = geometry(doc, scale, Vec2::ZERO);
+            let one = place_tile([0.0, 0.0, SMALL, SMALL], g).expect("the tile is drawn");
+            let q = quad_ndc(&one);
+            let (w, h) = (q[2] - q[0], q[3] - q[1]);
+            let (dw, dh) = (doc[2] - doc[0], doc[3] - doc[1]);
+            let want_w = 2.0 * scale * dw / g.viewport.x;
+            let want_h = 2.0 * scale * dh / g.viewport.y;
+
+            assert!(
+                (w - want_w).abs() < 1e-2 && (h - want_h).abs() < 1e-2,
+                "single tile at scale {scale}: the quad spans {w:.4}x{h:.4} of \
+                 NDC, not the {want_w:.4}x{want_h:.4} a {dw}x{dh} document \
+                 occupies. A one-tile source draws its crop stretched."
+            );
+        }
     }
 
     #[test]

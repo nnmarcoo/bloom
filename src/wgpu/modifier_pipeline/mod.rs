@@ -225,7 +225,10 @@ use crate::modifiers::gpu::UvRect;
 
 #[derive(Clone, Copy)]
 pub(super) struct DocScale {
-    pub src: (u32, u32),
+    /// The source region the document was produced from: the source narrowed by
+    /// any crop, before any resize. to_doc maps by doc/kept, so this is not
+    /// interchangeable with src the moment a crop is in the chain.
+    pub kept: (u32, u32),
     pub out: (u32, u32),
     pub offset: (f32, f32),
     pub roi_active: bool,
@@ -276,6 +279,7 @@ pub struct ModifierPipeline {
     nearest_sampler: Sampler,
     doc_size: (u32, u32),
     doc_offset: (f32, f32),
+    doc_kept: (u32, u32),
     exec_band_cursor: u32,
     exec_sig: u64,
     exec_slab_pool: Vec<Option<ScratchTarget>>,
@@ -358,6 +362,7 @@ impl ModifierPipeline {
             nearest_sampler,
             doc_size: (width, height),
             doc_offset: (0.0, 0.0),
+            doc_kept: (width, height),
             exec_band_cursor: 0,
             exec_sig: 0,
             exec_slab_pool: Vec::new(),
@@ -608,7 +613,7 @@ impl ModifierPipeline {
                 tile,
                 &pr,
                 DocScale {
-                    src: (source.full_width, source.full_height),
+                    kept: self.doc_kept,
                     out: self.doc_size,
                     offset: self.doc_offset,
                     roi_active,
@@ -629,7 +634,7 @@ impl ModifierPipeline {
         let display_uniform: &iced::wgpu::Buffer = if doc.roi_active
             && let (Some(isec), Some(base)) = (tile.isec_px, tile.last_transform)
         {
-            let isec = to_doc(isec, doc.src.0, doc.src.1, doc.out, doc.offset);
+            let isec = to_doc(isec, doc.kept, doc.out, doc.offset);
             let t = inscribe_transform(base, isec, pr.px);
             if self.roi_display_uniforms[ti].is_none() {
                 self.roi_display_uniforms[ti] =

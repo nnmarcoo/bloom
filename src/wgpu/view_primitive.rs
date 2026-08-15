@@ -39,6 +39,7 @@ pub struct ViewPrimitive {
     pub smooth_zoom_in: bool,
     pub modifiers: Arc<Vec<Modifier>>,
     pub doc_region: [f32; 4],
+    pub doc_size: Vec2,
     pub dirty: bool,
     pub pre_clear_gpu: Arc<std::sync::atomic::AtomicBool>,
     pub reprocess_pending: Arc<std::sync::atomic::AtomicBool>,
@@ -81,6 +82,7 @@ impl Primitive for ViewPrimitive {
             self.pan_ndc,
             self.rotation,
             self.doc_region,
+            self.doc_size,
         );
         if self.show_checkerboard {
             pipeline.update_checkerboard(queue, self.checker_uniforms);

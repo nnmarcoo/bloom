@@ -1284,6 +1284,7 @@ impl Program<Message> for ViewProgram {
             mipmap_zoom_out: self.mipmap_zoom_out,
             smooth_zoom_in: self.smooth_zoom_in,
             doc_region: self.doc_region(),
+            doc_size: self.effective_display_size(),
             modifiers: if self.crop_tool_active {
                 Arc::new(Self::widen_crops(&self.modifiers))
             } else {
@@ -1706,6 +1707,80 @@ mod crop_tests {
             "the tool shows the uncropped picture so the rect can be dragged \
              back out, but that must not change what is exported"
         );
+    }
+
+    #[test]
+    fn doc_region_spans_the_whole_document_when_upscaled() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        let (w, h) = (800u32, 600u32);
+        for pct in [100.0f32, 200.0, 400.0] {
+            let mut p = ViewProgram::default();
+            p.set_image(ImageData::new(Vec::new(), w, h));
+            p.modifiers_mut()
+                .push(Modifier::new(ModifierKind::Resize(Resize {
+                    mode: ResizeMode::Percent,
+                    width: pct,
+                    height: pct,
+                    filter: ResizeFilter::Lanczos,
+                    lock_aspect: true,
+                })));
+
+            let r = p.doc_region();
+            assert_eq!(
+                r,
+                [0.0, 0.0, w as f32, h as f32],
+                "{pct}%: the quads must span the whole source; got {r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cropped_then_resized_document_keeps_its_shape_on_screen() {
+        use crate::modifiers::kinds::{Resize, ResizeFilter, ResizeMode};
+
+        let (w, h) = (800u32, 1040u32);
+        let viewport = vec2(1000.0, 800.0);
+
+        for pct in [50.0f32, 100.0, 200.0, 400.0] {
+            let mut p = ViewProgram::default();
+            p.set_image(ImageData::new(vec![0u8; (w * h * 4) as usize], w, h));
+            p.modifiers_mut()
+                .push(Modifier::new(ModifierKind::Crop(Crop {
+                    x: 400.0,
+                    y: 0.0,
+                    width: 400.0,
+                    height: h as f32,
+                })));
+            p.modifiers_mut()
+                .push(Modifier::new(ModifierKind::Resize(Resize {
+                    mode: ResizeMode::Percent,
+                    width: pct,
+                    height: pct,
+                    filter: ResizeFilter::Lanczos,
+                    lock_aspect: true,
+                })));
+            p.set_bounds(Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: viewport.x,
+                height: viewport.y,
+            });
+            p.fit();
+
+            let tl = p.image_uv_to_screen(vec2(0.0, 0.0)).expect("top left");
+            let br = p.image_uv_to_screen(vec2(1.0, 1.0)).expect("bottom right");
+            let drawn = (br - tl).abs();
+            let want = 400.0 / h as f32;
+            let got = drawn.x / drawn.y;
+            assert!(
+                (got - want).abs() < 0.01,
+                "crop then resize {pct}%: the document has aspect {want:.3} but \
+                 is drawn {:.1}x{:.1} (aspect {got:.3})",
+                drawn.x,
+                drawn.y
+            );
+        }
     }
 
     #[test]
