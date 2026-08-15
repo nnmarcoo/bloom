@@ -18,11 +18,15 @@
 //! would have to preserve.
 //!
 //! stage_origin is where a stage's output sits inside its input, zero for
-//! everything but a crop. The backward walk adds it after unmapping; picking
-//! between the two rules by whether that origin is nonzero is wrong, since a
-//! crop anchored at (0, 0) still translates rather than scales.
+//! everything that scales. Picking between the two rules by whether that origin
+//! is nonzero is wrong, since a crop anchored at (0, 0) still translates rather
+//! than scales -- so the stage declares which rule applies via StageTransform
+//! and unmap_stage dispatches on that declaration. Backward walks call
+//! unmap_stage rather than choosing between unmap_region and unmap_offset
+//! themselves, which is what keeps a new geometry modifier from having to edit
+//! every walk.
 
-use crate::modifiers::{InputRequest, ModifierKind};
+use crate::modifiers::{InputRequest, ModifierKind, StageTransform};
 
 pub type RegionPx = [f32; 4];
 
@@ -50,12 +54,27 @@ pub fn step_class(kind: &ModifierKind) -> StepClass {
 }
 
 pub fn stage_origin(kind: &ModifierKind, input: crate::modifiers::plan::ImageSpec) -> (f32, f32) {
-    match kind.as_crop() {
-        Some(c) => {
-            let (x, y, _, _) = c.rect_in(input);
-            (x, y)
-        }
-        None => (0.0, 0.0),
+    kind.stage_transform(input).origin()
+}
+
+/// Cross one stage backward: map a region of its output into its input space.
+///
+/// The two rules are not interchangeable and the stage picks which applies.
+/// Callers walking a chain backward must use this rather than choosing by hand,
+/// which is how the offset rule came to be keyed on "is this a Crop".
+pub fn unmap_stage(
+    kind: &ModifierKind,
+    input: crate::modifiers::plan::ImageSpec,
+    output: crate::modifiers::plan::ImageSpec,
+    r: RegionPx,
+) -> RegionPx {
+    match kind.stage_transform(input) {
+        StageTransform::Translate { x, y } => unmap_offset((x, y), r),
+        StageTransform::Scale => unmap_region(
+            (output.w as f32, output.h as f32),
+            (input.w as f32, input.h as f32),
+            r,
+        ),
     }
 }
 
@@ -370,6 +389,95 @@ mod tests {
                  different input reaches, so ROI and the backend would disagree \
                  about how much input this stage needs."
             );
+        }
+    }
+
+    /// The backward walk must pick its rule from the stage's declaration, not
+    /// from the modifier's type. A translating stage shifts its region; a
+    /// scaling stage divides it. Getting this backward is invisible at
+    /// scale 1, which is why the case below crops inside a resized stage.
+    #[test]
+    fn unmap_stage_follows_the_declared_transform() {
+        use crate::modifiers::kinds::Crop;
+        use crate::modifiers::plan::ImageSpec;
+
+        let input = ImageSpec::new(800, 600);
+        let crop = ModifierKind::Crop(Crop {
+            x: 100.0,
+            y: 50.0,
+            width: 400.0,
+            height: 300.0,
+        });
+        let output = crop.output_spec(input);
+        assert_eq!(output, ImageSpec::new(400, 300));
+
+        let r = [10.0, 20.0, 60.0, 80.0];
+        assert_eq!(
+            unmap_stage(&crop, input, output, r),
+            [110.0, 70.0, 160.0, 130.0],
+            "a crop's output sits at its origin inside the input, so crossing it \
+             backward is a shift. The size ratio here is 0.5, so a scaling rule \
+             would have doubled the region instead of moving it."
+        );
+
+        let blur = ModifierKind::GaussianBlur(GaussianBlur { radius: 4.0 });
+        assert_eq!(
+            unmap_stage(&blur, input, input, r),
+            r,
+            "a stage that does not change geometry must leave the region alone"
+        );
+    }
+
+    #[test]
+    fn a_crop_anchored_at_the_origin_still_translates() {
+        use crate::modifiers::kinds::Crop;
+        use crate::modifiers::plan::ImageSpec;
+
+        let input = ImageSpec::new(800, 600);
+        let crop = ModifierKind::Crop(Crop {
+            x: 0.0,
+            y: 0.0,
+            width: 400.0,
+            height: 300.0,
+        });
+        assert!(
+            crop.stage_transform(input).is_translate(),
+            "picking the rule by whether the origin is nonzero is the bug this \
+             declaration exists to prevent: this crop shifts by zero but must \
+             still not be treated as a half-scale resize."
+        );
+
+        let r = [10.0, 20.0, 60.0, 80.0];
+        assert_eq!(unmap_stage(&crop, input, crop.output_spec(input), r), r);
+    }
+
+    /// Every modifier that changes geometry has to declare which rule it uses,
+    /// and a stage that does not change geometry must not claim to translate.
+    #[test]
+    fn every_kind_declares_a_transform_consistent_with_its_geometry() {
+        use crate::modifiers::ModifierType;
+        use crate::modifiers::plan::ImageSpec;
+
+        let input = ImageSpec::new(800, 600);
+        for t in ModifierType::ALL {
+            let kind = ModifierKind::from(t.clone());
+            let name = kind.name();
+            if kind.stage_transform(input).is_translate() {
+                assert!(
+                    kind.changes_geometry(),
+                    "{name}: declares a translating transform but says it does \
+                     not change geometry, so the planner would fuse it and the \
+                     shift would be silently dropped."
+                );
+            }
+            if !kind.changes_geometry() {
+                assert_eq!(
+                    kind.stage_transform(input),
+                    StageTransform::Scale,
+                    "{name}: a stage that does not change geometry must map its \
+                     input identically."
+                );
+            }
         }
     }
 

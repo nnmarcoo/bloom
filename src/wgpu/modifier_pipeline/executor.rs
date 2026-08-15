@@ -38,6 +38,7 @@
 //! carrying progress across frames so the UI stays responsive.
 
 use super::*;
+use crate::modifiers::StageTransform;
 use crate::modifiers::pixel_sort::SortMode as ExecSortMode;
 use crate::modifiers::roi::{self, RegionPx, StepClass};
 use crate::wgpu::passes::resample::ResampleRegion;
@@ -141,13 +142,16 @@ fn chain_doc_offset(specs: &[crate::modifiers::plan::StageSpec], plan: &[PlanIte
     for (k, item) in plan.iter().enumerate() {
         let (iw, ih) = (specs[k].input.w as f32, specs[k].input.h as f32);
         let (ow, oh) = (specs[k].output.w as f32, specs[k].output.h as f32);
-        if let PlanItem::Step(_, m) = item
-            && m.kind.as_crop().is_some()
-        {
-            let (ox, oy) = roi::stage_origin(&m.kind, specs[k].input);
-            off = (off.0 + ox, off.1 + oy);
-        } else if iw > 0.0 && ih > 0.0 {
-            off = (off.0 * ow / iw, off.1 * oh / ih);
+        let transform = match item {
+            PlanItem::Step(_, m) => m.kind.stage_transform(specs[k].input),
+            PlanItem::Fused(_) => StageTransform::Scale,
+        };
+        match transform {
+            StageTransform::Translate { x, y } => off = (off.0 + x, off.1 + y),
+            StageTransform::Scale if iw > 0.0 && ih > 0.0 => {
+                off = (off.0 * ow / iw, off.1 * oh / ih)
+            }
+            StageTransform::Scale => {}
         }
     }
     off
@@ -155,10 +159,10 @@ fn chain_doc_offset(specs: &[crate::modifiers::plan::StageSpec], plan: &[PlanIte
 
 /// The source region the chain's output was produced from, in source pixels.
 ///
-/// A crop narrows it to the crop's extent; a resize leaves it alone, since a
-/// resize changes the document's size without changing which source pixels it
-/// stands for. to_doc divides by this, so folding a crop's extent into the
-/// resize ratio squeezes the texture.
+/// A translating stage narrows it to that stage's extent; a scaling stage leaves
+/// it alone, since resizing changes the document's size without changing which
+/// source pixels it stands for. to_doc divides by this, so folding a crop's
+/// extent into the resize ratio squeezes the texture.
 fn chain_kept_extent(
     specs: &[crate::modifiers::plan::StageSpec],
     plan: &[PlanItem],
@@ -169,7 +173,7 @@ fn chain_kept_extent(
         let (iw, ih) = (specs[k].input.w as f32, specs[k].input.h as f32);
         let (ow, oh) = (specs[k].output.w as f32, specs[k].output.h as f32);
         if let PlanItem::Step(_, m) = item
-            && m.kind.as_crop().is_some()
+            && m.kind.stage_transform(specs[k].input).is_translate()
             && iw > 0.0
             && ih > 0.0
         {
@@ -659,17 +663,12 @@ impl ModifierPipeline {
             let mut cur = roi::clamp_region(band_img, out_spec.w as f32, out_spec.h as f32);
             for k in (0..n).rev() {
                 let (iw, ih) = (specs[k].input.w as f32, specs[k].input.h as f32);
-                let (ow, oh) = (specs[k].output.w as f32, specs[k].output.h as f32);
-                let crop_origin = match &plan[k] {
-                    PlanItem::Step(_, m) if m.kind.as_crop().is_some() => {
-                        Some(roi::stage_origin(&m.kind, specs[k].input))
-                    }
-                    _ => None,
-                };
                 let to_input = |r: RegionPx| -> RegionPx {
-                    match crop_origin {
-                        Some(o) => roi::unmap_offset(o, r),
-                        None => roi::unmap_region((ow, oh), (iw, ih), r),
+                    match &plan[k] {
+                        PlanItem::Step(_, m) => {
+                            roi::unmap_stage(&m.kind, specs[k].input, specs[k].output, r)
+                        }
+                        PlanItem::Fused(_) => r,
                     }
                 };
                 let back = |r: RegionPx| -> RegionPx {
@@ -960,7 +959,9 @@ impl ModifierPipeline {
                         }
                         prev = outs;
                     }
-                    PlanItem::Step(_, m) if m.kind.as_crop().is_some() => {
+                    PlanItem::Step(_, m)
+                        if m.kind.stage_transform(specs[k].input).is_translate() =>
+                    {
                         let origin = roi::stage_origin(&m.kind, specs[k].input);
                         let (ow, oh) = rect_dims(out_r, scale);
 

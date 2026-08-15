@@ -15,6 +15,16 @@
 //! run however cheap its per-pixel work is -- fusing a crop made it plan, size,
 //! and then render as a passthrough with the whole suite green.
 //!
+//! stage_transform is the third geometric fact, and the one output_spec cannot
+//! supply: two stages can report the same output size while mapping their input
+//! to it in incompatible ways. A resize stretches, so a point maps by the size
+//! ratio; a crop translates, so a point maps by the rect's origin at ratio one.
+//! Every geometry walk -- the ROI walks in both backends, the document offset,
+//! the kept source extent, the banded row mapping -- has to pick one of those
+//! rules, and each used to pick it by asking whether the modifier was a Crop.
+//! Declaring it here is what lets a new geometry modifier land without editing
+//! those six walks.
+//!
 //! tool_target answers which modifier a tool edits when the stack holds several
 //! of a kind: the selected one, else the last. It lives here because the tool's
 //! message handling and the overlay that draws it must reach the same one; when
@@ -38,6 +48,34 @@ use crate::modifiers::plan::ImageSpec;
 pub enum Axis {
     Horizontal,
     Vertical,
+}
+
+/// How a stage maps a point in its input space to its output space.
+///
+/// Scale is the default and covers every modifier whose output stands for the
+/// whole of its input, whether or not it resized it. Translate is for a stage
+/// that outputs a sub-rectangle of its input, where the mapping is a pure shift
+/// and the size ratio would be wrong: a crop's output is not a squeezed input.
+///
+/// Chosen per modifier rather than inferred from the origin being nonzero,
+/// because a crop anchored at (0, 0) still translates rather than scales.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StageTransform {
+    Scale,
+    Translate { x: f32, y: f32 },
+}
+
+impl StageTransform {
+    pub fn origin(&self) -> (f32, f32) {
+        match self {
+            StageTransform::Scale => (0.0, 0.0),
+            StageTransform::Translate { x, y } => (*x, *y),
+        }
+    }
+
+    pub fn is_translate(&self) -> bool {
+        matches!(self, StageTransform::Translate { .. })
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -145,6 +183,10 @@ pub trait ModifierImpl {
 
     fn changes_geometry(&self) -> bool {
         false
+    }
+
+    fn stage_transform(&self, _input: ImageSpec) -> StageTransform {
+        StageTransform::Scale
     }
 
     fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>);
@@ -320,6 +362,10 @@ impl ModifierKind {
 
     pub fn changes_geometry(&self) -> bool {
         self.as_impl().changes_geometry()
+    }
+
+    pub fn stage_transform(&self, input: ImageSpec) -> StageTransform {
+        self.as_impl().stage_transform(input)
     }
 
     pub fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>) {

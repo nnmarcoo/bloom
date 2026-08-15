@@ -504,6 +504,12 @@ mod tests {
         );
     }
 
+    /// A modifier needs a dedicated CPU branch exactly when the planner refuses
+    /// to fuse it. Being pointwise is not the rule on its own: Crop reads one
+    /// sample per output pixel and is Pointwise, but it changes geometry, so it
+    /// gets its own step and its own CPU arm. Asserting against is_pointwise
+    /// alone passed only because Crop was left out of the list, which made the
+    /// list agree with the assertion by cancelling two errors.
     #[test]
     fn planner_classification_covers_every_modifier_type() {
         use crate::modifiers::ModifierType;
@@ -516,19 +522,23 @@ mod tests {
             "Drawing",
             "Pixel Sort",
             "Resize",
+            "Crop",
         ];
 
         for t in ModifierType::ALL {
             let kind = ModifierKind::from(t.clone());
             let name = kind.name();
-            let pointwise = kind.effect_class().is_pointwise();
+            let m = Modifier::new(kind);
+            let fusable = is_fusable(&m);
             let cpu_dedicated = CPU_DEDICATED.contains(&name);
             assert_eq!(
-                !pointwise,
+                !fusable,
                 cpu_dedicated,
-                "{name}: planner says pointwise={pointwise} but the CPU path \
-                 {} give it a dedicated branch. The two backends would segment \
-                 this modifier differently.",
+                "{name}: the planner {} fuse this modifier but the CPU path \
+                 {} give it a dedicated branch. A modifier the planner splits \
+                 into its own step renders as a passthrough unless the CPU \
+                 backend has an arm for it.",
+                if fusable { "does" } else { "does not" },
                 if cpu_dedicated { "does" } else { "does not" }
             );
         }

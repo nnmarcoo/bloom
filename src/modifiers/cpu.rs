@@ -43,7 +43,7 @@ use crate::modifiers::kinds::ResizeFilter;
 use crate::modifiers::plan::{ImageSpec, PlanItem, infer_specs, plan_modifiers};
 use crate::modifiers::roi::{StepClass, step_class_for};
 use crate::modifiers::text_raster::TextRaster;
-use crate::modifiers::{Modifier, ModifierKind, motion_blur_samples};
+use crate::modifiers::{Modifier, ModifierKind, StageTransform, motion_blur_samples};
 
 fn rows_needed(
     class: StepClass,
@@ -86,9 +86,9 @@ pub(crate) fn source_rows_for_band(
             PlanItem::Step(_, m) => step_class_for(&m.kind, in_h, out_h),
         };
         if let PlanItem::Step(_, m) = item
-            && let Some(c) = m.kind.as_crop()
+            && let StageTransform::Translate { y, .. } = m.kind.stage_transform(spec.input)
         {
-            let oy = c.rect_in(spec.input).1 as u32;
+            let oy = y as u32;
             lo = (lo + oy).min(in_h);
             hi = (hi + oy).min(in_h).max(lo);
             continue;
@@ -187,13 +187,13 @@ pub(crate) fn render_band(
             raster_to_doc(ImageSpec::new(img_w, img_h), spec.input),
         );
         if spec.input != spec.output {
-            let crop_origin_y = match item {
-                PlanItem::Step(_, m) => m.kind.as_crop().map(|c| c.rect_in(spec.input).1 as u32),
-                _ => None,
+            let transform = match item {
+                PlanItem::Step(_, m) => m.kind.stage_transform(spec.input),
+                PlanItem::Fused(_) => StageTransform::Scale,
             };
-            y_off = match crop_origin_y {
-                Some(oy) => y_off.saturating_sub(oy),
-                None => {
+            y_off = match transform {
+                StageTransform::Translate { y, .. } => y_off.saturating_sub(y as u32),
+                StageTransform::Scale => {
                     let num = spec.output.h as u64;
                     let den = spec.input.h.max(1) as u64;
                     ((y_off as u64 * num) / den) as u32

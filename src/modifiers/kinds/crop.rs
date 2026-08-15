@@ -19,7 +19,7 @@ use iced::widget::column;
 
 use crate::app::{EditMsg, Message};
 use crate::modifiers::plan::ImageSpec;
-use crate::modifiers::{ModifierImpl, ModifierParam, ViewCtx};
+use crate::modifiers::{ModifierImpl, ModifierParam, StageTransform, ViewCtx};
 use crate::widgets::value_slider::Fmt;
 
 use super::{finish, hash_f32, value_row};
@@ -66,6 +66,11 @@ impl ModifierImpl for Crop {
 
     fn changes_geometry(&self) -> bool {
         true
+    }
+
+    fn stage_transform(&self, input: ImageSpec) -> StageTransform {
+        let (x, y, _, _) = self.rect_in(input);
+        StageTransform::Translate { x, y }
     }
 
     fn apply_param(&mut self, param: ModifierParam, img_size: Option<(u32, u32)>) {
