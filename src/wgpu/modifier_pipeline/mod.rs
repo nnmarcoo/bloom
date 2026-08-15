@@ -279,6 +279,8 @@ pub struct ModifierPipeline {
     exec_band_cursor: u32,
     exec_sig: u64,
     exec_slab_pool: Vec<Option<ScratchTarget>>,
+    #[cfg(test)]
+    pub(super) elided_crop_copies: u32,
 
     format: TextureFormat,
     pub width: u32,
@@ -359,6 +361,8 @@ impl ModifierPipeline {
             exec_band_cursor: 0,
             exec_sig: 0,
             exec_slab_pool: Vec::new(),
+            #[cfg(test)]
+            elided_crop_copies: 0,
             format,
             width,
             height,

@@ -26,6 +26,14 @@
 //! and concluded deferring was safe, and the view kept quads placed for the old
 //! document -- which reads as the fit being broken after a resize.
 //!
+//! A crop whose slab already holds exactly the rect it selects skips its copy
+//! and relabels the stage's rect into output space instead. The backward ROI
+//! walk usually arranges precisely that, so the copy is normally an identity
+//! blit costing a full output's worth of bandwidth. Eliding it is what closes
+//! the gap to the ceiling on cheap chains, and it is safe because slab slots are
+//! handed out in increasing order: no stage writes the slot it reads, so leaving
+//! a slot unclaimed cannot alias the texture the next stage samples.
+//!
 //! Work is split into bands when a chain is expensive, with exec_band_cursor
 //! carrying progress across frames so the UI stays responsive.
 
@@ -928,11 +936,21 @@ impl ModifierPipeline {
                     PlanItem::Step(_, m) if m.kind.as_crop().is_some() => {
                         let origin = roi::stage_origin(&m.kind, specs[k].input);
                         let (ow, oh) = rect_dims(out_r, scale);
-                        let outs = self.pooled_stage(device, &mut slab_slot, ow, oh, out_r);
 
                         let want = roi::unmap_offset(origin, out_r);
                         let src = scale_rect(prev.rect, scale);
                         let dst = scale_rect(want, scale);
+
+                        if src == dst && rect_dims(prev.rect, scale) == (ow, oh) {
+                            #[cfg(test)]
+                            {
+                                self.elided_crop_copies += 1;
+                            }
+                            prev.rect = out_r;
+                            continue;
+                        }
+
+                        let outs = self.pooled_stage(device, &mut slab_slot, ow, oh, out_r);
                         let i = [
                             dst[0].max(src[0]),
                             dst[1].max(src[1]),
