@@ -12,6 +12,16 @@
 //! (1179x1159 in 512px tiles, neither axis dividing evenly), covering
 //! downscale, upscale, and the degenerate one-pixel document.
 //!
+//! to_doc maps a source rect into the document by translating away the crop's
+//! origin and then scaling by doc/kept, where kept is the source region the
+//! document was made from -- the crop's extent, before any resize. Deriving
+//! that as "source minus the origin" leaves the crop's own extent in the
+//! ratio, so a crop at the origin rescaled by doc/src and squeezed the texture
+//! by exactly the crop's fraction. It showed up only on tiled images, since
+//! this path runs for per-tile ROIs and a single-tile source never reaches it,
+//! which is why dragging a crop slider on a large image stretched the picture
+//! while every small-image test stayed green.
+//!
 //! device_dims exists for the same reason grid_edge does, one level down. A
 //! tile's texture must be sized from its scaled *edges*, never from its span:
 //! round(span * scale) and round(r * scale) - round(l * scale) differ by a
@@ -79,22 +89,26 @@ pub(super) fn tile_out_rect(
     ]
 }
 
+/// Maps a source-pixel rect into document pixels.
+///
+/// `kept` is the source region the document was produced from: the crop's
+/// extent, before any resize. Deriving it as "source minus the crop's origin"
+/// leaves the crop's own width in the ratio, so a crop at the origin rescales
+/// by doc/src and the texture is squeezed by exactly the crop's fraction --
+/// visible only on a tiled image, since this path runs for per-tile ROIs.
 pub(super) fn to_doc(
     r: RegionPx,
-    src_w: u32,
-    src_h: u32,
+    kept: (u32, u32),
     doc: (u32, u32),
     offset: (f32, f32),
 ) -> RegionPx {
-    let kept_w = ((src_w as f32 - offset.0).max(1.0)).round() as u32;
-    let kept_h = ((src_h as f32 - offset.1).max(1.0)).round() as u32;
     let shifted = [
         r[0] - offset.0,
         r[1] - offset.1,
         r[2] - offset.0,
         r[3] - offset.1,
     ];
-    let mapped = tile_out_rect(shifted, kept_w, kept_h, doc.0, doc.1);
+    let mapped = tile_out_rect(shifted, kept.0.max(1), kept.1.max(1), doc.0, doc.1);
     roi::clamp_region(mapped, doc.0 as f32, doc.1 as f32)
 }
 
@@ -231,16 +245,49 @@ mod to_doc_tests {
     use super::to_doc;
 
     #[test]
+    fn a_crop_maps_source_pixels_to_document_pixels_one_to_one() {
+        // A crop selects pixels; it never resamples them. A source pixel inside
+        // the crop must land on the document pixel at the same offset from the
+        // crop's origin, whatever the crop's size or position.
+        const SRC: u32 = 30000;
+        for (ox, oy, dw, dh) in [
+            (0.0f32, 0.0f32, 10000u32, 10000u32),
+            (5000.0, 5000.0, 10000.0 as u32, 10000),
+            (0.0, 0.0, 25000, 20000),
+            (1000.0, 2000.0, 4000, 3000),
+        ] {
+            let doc = (dw, dh);
+            let offset = (ox, oy);
+            let probe = [ox + 100.0, oy + 200.0, ox + 900.0, oy + 700.0];
+            // A crop alone keeps exactly the document's extent.
+            let mapped = to_doc(probe, doc, doc, offset);
+            assert_eq!(
+                mapped,
+                [100.0, 200.0, 900.0, 700.0],
+                "crop at ({ox},{oy}) sized {dw}x{dh}: a pixel {:?} from the \
+                 crop origin landed at {mapped:?} instead. The crop is being \
+                 scaled by src/doc rather than translated, so the texture is \
+                 stretched across the quad.",
+                [100.0, 200.0, 900.0, 700.0]
+            );
+        }
+    }
+
+    #[test]
     fn a_crop_translates_its_tiles_instead_of_scaling_them() {
         const SRC: u32 = 30000;
         let doc = (10000u32, 10000u32);
         let offset = (5000.0f32, 5000.0f32);
+        // A crop alone: the kept region is the crop's extent, which is the
+        // document's own size. The mapping is then a pure translation.
+        let kept = (doc.0, doc.1);
 
         let tile = [8192.0, 8192.0, 16384.0, 16384.0];
-        let mapped = to_doc(tile, SRC, SRC, doc, offset);
+        let mapped = to_doc(tile, kept, doc, offset);
 
-        let kept = (SRC as f32 - offset.0) as u32;
-        let expect = |v: f32| ((v - offset.0) * doc.0 as f32 / kept as f32).round();
+        // Translated, then clamped to the document: the tile runs past the
+        // crop's far edge and cannot claim pixels the document does not have.
+        let expect = |v: f32| (v - offset.0).clamp(0.0, doc.0 as f32);
         assert_eq!(
             mapped,
             [
@@ -248,7 +295,8 @@ mod to_doc_tests {
                 expect(tile[1]),
                 expect(tile[2]),
                 expect(tile[3])
-            ]
+            ],
+            "a crop must translate its tiles, not rescale them"
         );
 
         let by_ratio = super::tile_out_rect(tile, SRC, SRC, doc.0, doc.1);
@@ -258,21 +306,39 @@ mod to_doc_tests {
              this test proves nothing"
         );
         assert!(
-            (mapped[0] - by_ratio[0]).abs() > 1000.0,
+            (mapped[0] - by_ratio[0]).abs() > 100.0,
             "the drift on a 30000px source is large: {mapped:?} vs {by_ratio:?}"
         );
     }
 
     #[test]
-    fn no_offset_is_the_plain_ratio_mapping() {
+    fn a_resize_without_a_crop_is_the_plain_ratio_mapping() {
+        // No crop, so the whole source is kept and the document is a scaled
+        // copy of it. This is the one case where to_doc *is* a ratio mapping.
         const SRC: u32 = 4096;
         let doc = (2048u32, 2048u32);
         let r = [1024.0, 512.0, 3072.0, 2048.0];
         assert_eq!(
-            to_doc(r, SRC, SRC, doc, (0.0, 0.0)),
+            to_doc(r, (SRC, SRC), doc, (0.0, 0.0)),
             super::tile_out_rect(r, SRC, SRC, doc.0, doc.1),
             "without a crop the two must be the same mapping, or every resize \
              would shift"
+        );
+    }
+
+    #[test]
+    fn a_crop_then_resize_scales_by_the_resize_alone() {
+        // Crop 30000 -> 10000, then resize to 5000. The kept region is the
+        // crop's 10000, so the ratio is the resize's 5000/10000, not 5000/30000.
+        let kept = (10000u32, 10000u32);
+        let doc = (5000u32, 5000u32);
+        let offset = (5000.0f32, 5000.0f32);
+
+        let m = to_doc([5000.0, 5000.0, 15000.0, 15000.0], kept, doc, offset);
+        assert_eq!(
+            m,
+            [0.0, 0.0, 5000.0, 5000.0],
+            "the crop's full extent must fill the document exactly"
         );
     }
 
@@ -282,7 +348,7 @@ mod to_doc_tests {
         let doc = (590u32, 400u32);
         let offset = (37.0f32, 61.0f32);
         for x in [0.0f32, 512.0, 1024.0, 1179.0] {
-            let m = to_doc([x, 0.0, x + 1.0, 1.0], SRC, SRC, doc, offset);
+            let m = to_doc([x, 0.0, x + 1.0, 1.0], (SRC, SRC), doc, offset);
             for v in m {
                 assert_eq!(v, v.round(), "edge {v} is fractional, so tiles seam");
             }

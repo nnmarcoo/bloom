@@ -777,6 +777,59 @@ mod display_harness {
     }
 
     #[test]
+    fn dragging_a_crop_slider_keeps_the_shape_on_a_tiled_image() {
+        // A slider drag is a sequence of doc_regions on the same source. Each
+        // one must draw with the shape of the document it names, on a source
+        // large enough to be tiled.
+        let mut worst: Option<(f32, [f32; 4], f32, f32)> = None;
+        for w in [30000.0f32, 20000.0, 12000.0, 8000.0, 4000.0, 1500.0, 600.0] {
+            let doc = [0.0, 0.0, w, 20000.0];
+            let scale = 0.03;
+            let b = drawn_bounds(doc, scale, Vec2::ZERO).expect("something is drawn");
+            let g = geometry(doc, scale, Vec2::ZERO);
+            let got = (b[2] - b[0]) / (b[3] - b[1]);
+            let want = (w / 20000.0) * (g.viewport.y / g.viewport.x);
+            let err = (got - want).abs();
+            if worst.as_ref().is_none_or(|(e, ..)| err > *e) {
+                worst = Some((err, doc, got, want));
+            }
+        }
+        let (err, doc, got, want) = worst.unwrap();
+        assert!(
+            err < 1e-2,
+            "doc {doc:?}: drawn with aspect {got:.4} but the document's own \
+             aspect on screen is {want:.4}. Dragging a crop slider on a tiled \
+             image stretches the picture."
+        );
+    }
+
+    #[test]
+    fn one_tile_lays_the_document_out_like_many_do() {
+        // update() returns early for a single tile and writes the transform as
+        // given, never consulting doc_region. A source small enough to fit one
+        // tile must still draw a crop the way the tiled path does.
+        const SMALL: f32 = 800.0;
+        let doc = [200.0, 100.0, 600.0, 500.0];
+
+        for &scale in &[0.2f32, 1.0] {
+            let g = geometry(doc, scale, Vec2::ZERO);
+            let one = place_tile([0.0, 0.0, SMALL, SMALL], g).expect("the tile is drawn");
+            let q = quad_ndc(&one);
+            let (w, h) = (q[2] - q[0], q[3] - q[1]);
+            let (dw, dh) = (doc[2] - doc[0], doc[3] - doc[1]);
+            let want_w = 2.0 * scale * dw / g.viewport.x;
+            let want_h = 2.0 * scale * dh / g.viewport.y;
+
+            assert!(
+                (w - want_w).abs() < 1e-2 && (h - want_h).abs() < 1e-2,
+                "single tile at scale {scale}: the quad spans {w:.4}x{h:.4} of \
+                 NDC, not the {want_w:.4}x{want_h:.4} a {dw}x{dh} document \
+                 occupies. A one-tile source draws its crop stretched."
+            );
+        }
+    }
+
+    #[test]
     fn the_document_is_centred_when_the_view_is_not_panned() {
         for &doc in &[
             [0.0, 0.0, SRC, SRC],
