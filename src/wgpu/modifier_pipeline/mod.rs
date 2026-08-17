@@ -520,13 +520,20 @@ impl ModifierPipeline {
             for (ti, o) in self.tile_outputs.iter_mut().enumerate() {
                 let Some(o) = o else { continue };
                 let tile = &source.tiles[ti];
-                let cover = o.proc_px.unwrap_or([
-                    tile.x as f32,
-                    tile.y as f32,
-                    (tile.x + tile.width) as f32,
-                    (tile.y + tile.height) as f32,
-                ]);
-                if cover[0] < dr[2] && dr[0] < cover[2] && cover[1] < dr[3] && dr[1] < cover[3] {
+                let cover = o.proc_px.unwrap_or_else(|| {
+                    to_doc(
+                        [
+                            tile.x as f32,
+                            tile.y as f32,
+                            (tile.x + tile.width) as f32,
+                            (tile.y + tile.height) as f32,
+                        ],
+                        self.doc_kept,
+                        self.doc_size,
+                        self.doc_offset,
+                    )
+                });
+                if stroke_touches_tile(dr, cover, self.doc_kept, self.doc_size, self.doc_offset) {
                     o.valid = false;
                 }
             }

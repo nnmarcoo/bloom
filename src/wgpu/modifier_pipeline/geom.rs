@@ -66,6 +66,15 @@
 //! crop drag is ever deferred, the first because full-resolution textures left
 //! on shrunken quads read as flicker, the second because a deferred frame
 //! redraws from a doc_offset it never updated.
+//!
+//! stroke_touches_tile is the partial invalidation a brush stroke gets: only
+//! the tiles the stroke lands on are dropped, so painting does not reprocess
+//! the whole image. It is the one invalidator that can under-fire, and it did.
+//! DrawingLayer::sync reports its dirty rect in source pixels while proc_px is
+//! in the document, so under a crop the two were compared directly and a
+//! stroke could miss the very tile it was drawn on -- the stroke then stayed
+//! invisible until something else invalidated that tile. Mapping the stroke
+//! through to_doc first is what makes the two comparable.
 
 use super::*;
 use crate::modifiers::roi::{self, RegionPx};
@@ -240,6 +249,17 @@ pub(super) fn tile_roi(tile: TileGeom, visible_px: [f32; 4]) -> Option<[f32; 4]>
         ]
     });
     (roi[2] > roi[0] && roi[3] > roi[1]).then_some(roi)
+}
+
+pub(super) fn stroke_touches_tile(
+    stroke_src: [f32; 4],
+    cover_doc: [f32; 4],
+    kept: (u32, u32),
+    doc: (u32, u32),
+    offset: (f32, f32),
+) -> bool {
+    let s = to_doc(stroke_src, kept, doc, offset);
+    cover_doc[0] < s[2] && s[0] < cover_doc[2] && cover_doc[1] < s[3] && s[1] < cover_doc[3]
 }
 
 pub(super) fn can_reuse(
@@ -773,6 +793,51 @@ mod reuse_tests {
              resizing lets the frame defer, and refresh_display_transforms \
              rebuilds the quad from the pipeline's stored doc_offset, which the \
              deferred frame never updated. outcome was {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn a_stroke_invalidates_the_tile_it_lands_on_under_a_crop() {
+        let kept = (10000u32, 10000u32);
+        let doc = (10000u32, 10000u32);
+        let offset = (5000.0f32, 5000.0f32);
+
+        let stroke_src = [9000.0f32, 9000.0, 9500.0, 9500.0];
+        let cover_doc = [3500.0f32, 3500.0, 5000.0, 5000.0];
+
+        assert!(
+            stroke_touches_tile(stroke_src, cover_doc, kept, doc, offset),
+            "the stroke at {stroke_src:?} in source space lands at \
+             {:?} in the document, which overlaps the tile's {cover_doc:?}, \
+             so that tile must be reprocessed",
+            to_doc(stroke_src, kept, doc, offset)
+        );
+
+        let unmapped = cover_doc[0] < stroke_src[2]
+            && stroke_src[0] < cover_doc[2]
+            && cover_doc[1] < stroke_src[3]
+            && stroke_src[1] < cover_doc[3];
+        assert!(
+            !unmapped,
+            "comparing the source-space stroke against the document-space cover \
+             must not agree here, or this test proves nothing"
+        );
+    }
+
+    #[test]
+    fn a_stroke_outside_a_tile_leaves_it_alone() {
+        let kept = (10000u32, 10000u32);
+        let doc = (10000u32, 10000u32);
+        let offset = (5000.0f32, 5000.0f32);
+
+        let stroke_src = [5100.0f32, 5100.0, 5300.0, 5300.0];
+        let far_tile_doc = [8000.0f32, 8000.0, 10000.0, 10000.0];
+
+        assert!(
+            !stroke_touches_tile(stroke_src, far_tile_doc, kept, doc, offset),
+            "a stroke that maps to {:?} must not invalidate a tile covering \
+             {far_tile_doc:?}, or every stroke reprocesses the whole image",
+            to_doc(stroke_src, kept, doc, offset)
         );
     }
 
