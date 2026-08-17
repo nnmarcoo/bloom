@@ -58,11 +58,14 @@
 //! that postpones it. Deferring takes dirty out of the caller's holding field,
 //! so a deferred frame must hand it back or the edit is lost for good -- the
 //! pipeline keeps its last render and nothing marks it again once the view
-//! settles. The harness calls the real view_pipeline::defer_decision rather
-//! than restating its rule, so the two cannot drift apart, and replays whole
-//! drags: edit mid-drag, several more drag frames, then release. A resize is
-//! never deferred, because full-resolution textures left on shrunken quads read
-//! as flicker.
+//! settles. The harness calls the real view_pipeline::defer_decision and
+//! view_pipeline::doc_changed rather than restating their rules, so the two
+//! cannot drift apart -- modelling them instead hid a live bug, since breaking
+//! the production rule left every test green. It replays whole drags: edit
+//! mid-drag, several more drag frames, then release. Neither a resize nor a
+//! crop drag is ever deferred, the first because full-resolution textures left
+//! on shrunken quads read as flicker, the second because a deferred frame
+//! redraws from a doc_offset it never updated.
 
 use super::*;
 use crate::modifiers::roi::{self, RegionPx};
@@ -326,7 +329,8 @@ pub(super) mod harness {
         pub geom: TileGeom,
         pub cached: Option<Cached>,
         pub pending_dirty: bool,
-        pub doc_size: Option<(u32, u32)>,
+        pub stored_doc: Option<DocId>,
+        pub stored_kept: Option<(u32, u32)>,
     }
 
     impl TileState {
@@ -335,14 +339,26 @@ pub(super) mod harness {
                 geom,
                 cached: None,
                 pending_dirty: false,
-                doc_size: None,
+                stored_doc: None,
+                stored_kept: None,
             }
+        }
+
+        pub fn display_quad(&self) -> Option<[f32; 4]> {
+            let doc = self.stored_doc?;
+            let kept = self.stored_kept?;
+            let px = self.cached?.proc_px?;
+            Some(to_doc(px, kept, doc.size, doc.origin))
         }
 
         pub fn frame(&mut self, f: Frame) -> Outcome {
             let dirty = f.edited || self.pending_dirty;
             self.pending_dirty = false;
-            let doc_changed = self.doc_size.is_some_and(|s| s != f.doc.size);
+            let doc_changed = crate::wgpu::view_pipeline::doc_changed(
+                self.stored_doc.map(|d| (d.size, d.origin)),
+                f.doc.size,
+                f.doc.origin,
+            );
             let (defer, carry) = crate::wgpu::view_pipeline::defer_decision(
                 f.has_expensive,
                 doc_changed,
@@ -353,7 +369,8 @@ pub(super) mod harness {
                 self.pending_dirty |= carry;
                 return Outcome::Deferred;
             }
-            self.doc_size = Some(f.doc.size);
+            self.stored_doc = Some(f.doc);
+            self.stored_kept = Some(f.kept);
 
             let Some(roi) = tile_roi(self.geom, f.visible_px) else {
                 self.cached = None;
@@ -724,6 +741,39 @@ mod reuse_tests {
         }
 
         assert_eq!(t.frame(whole_source_frame(1.0)), Outcome::Processed);
+    }
+
+    #[test]
+    fn a_crop_dragged_without_resizing_is_not_deferred_onto_stale_quads() {
+        let doc = (10000u32, 10000u32);
+        let mut t = TileState::new(tile_at(TILE, TILE));
+
+        let at = |ox: f32, oy: f32| Frame {
+            doc: DocId {
+                size: doc,
+                origin: (ox, oy),
+            },
+            kept: doc,
+            interacting: true,
+            has_expensive: true,
+            edited: true,
+            ..whole_source_frame(1.0)
+        };
+
+        assert_eq!(t.frame(at(5000.0, 5000.0)), Outcome::Processed);
+        let settled = t.display_quad().expect("the tile has a quad");
+
+        let outcome = t.frame(at(4000.0, 4000.0));
+        let dragged = t.display_quad().expect("the tile still has a quad");
+
+        assert_ne!(
+            dragged, settled,
+            "the crop moved by 1000px but the tile is still drawn at {settled:?}. \
+             doc_changed compares only DocId::size, so a crop dragged without \
+             resizing lets the frame defer, and refresh_display_transforms \
+             rebuilds the quad from the pipeline's stored doc_offset, which the \
+             deferred frame never updated. outcome was {outcome:?}"
+        );
     }
 
     #[test]

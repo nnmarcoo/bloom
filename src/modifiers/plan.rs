@@ -21,7 +21,7 @@
 //! the kind here. A modifier that changes dimensions declares that itself, so
 //! adding one does not mean editing the planner.
 
-use crate::modifiers::Modifier;
+use crate::modifiers::{Modifier, StageTransform};
 
 #[derive(Debug)]
 pub enum PlanItem<'a> {
@@ -76,6 +76,26 @@ pub fn chain_output_spec(source: ImageSpec, plan: &[PlanItem]) -> ImageSpec {
     infer_specs(source, plan)
         .last()
         .map_or(source, |s| s.output)
+}
+
+pub fn chain_doc_offset(specs: &[StageSpec], plan: &[PlanItem]) -> (f32, f32) {
+    let mut off = (0.0f32, 0.0f32);
+    for (k, item) in plan.iter().enumerate() {
+        let (iw, ih) = (specs[k].input.w as f32, specs[k].input.h as f32);
+        let (ow, oh) = (specs[k].output.w as f32, specs[k].output.h as f32);
+        let transform = match item {
+            PlanItem::Step(_, m) => m.kind.stage_transform(specs[k].input),
+            PlanItem::Fused(_) => StageTransform::Scale,
+        };
+        match transform {
+            StageTransform::Translate { x, y } => off = (off.0 + x, off.1 + y),
+            StageTransform::Scale if iw > 0.0 && ih > 0.0 => {
+                off = (off.0 * ow / iw, off.1 * oh / ih)
+            }
+            StageTransform::Scale => {}
+        }
+    }
+    off
 }
 
 pub fn stage_inputs(source: ImageSpec, modifiers: &[Modifier]) -> Vec<ImageSpec> {

@@ -15,7 +15,16 @@
 //! one pixel. A resize may also defer while interacting, but only while the
 //! document holds the size its textures were built for; deferring across a size
 //! change leaves full-resolution textures on shrunken quads, which reads as
-//! flicker. That is what the doc_size comparison guards.
+//! flicker. That is what the doc_changed comparison guards.
+//!
+//! doc_changed compares the document's offset as well as its size, because a
+//! crop dragged without resizing changes only the offset. Comparing size alone
+//! let such a frame defer, and a deferred frame skips prepare entirely and
+//! rebuilds its quads in refresh_display_transforms from the pipeline's stored
+//! doc_offset -- the one the deferred frame never updated. The picture stayed
+//! drawn where the crop used to be until the drag ended. The tile-level DocId
+//! check does catch the staleness, but only once a frame actually reaches the
+//! executor, which deferral is precisely what prevents.
 //!
 //! doc_region is the source rect the document covers, narrowed by a crop. Three
 //! separate things used to be one field, and collapsing them cost a bug each:
@@ -55,7 +64,9 @@ use iced::{
 
 use crate::{
     modifiers::Modifier,
-    modifiers::plan::{ImageSpec, chain_output_spec, plan_modifiers},
+    modifiers::plan::{
+        ImageSpec, chain_doc_offset, chain_output_spec, infer_specs, plan_modifiers,
+    },
     wgpu::{
         error::ViewError,
         gpu,
@@ -143,6 +154,14 @@ pub(crate) fn defer_decision(
 ) -> (bool, bool) {
     let defer = has_expensive && !doc_changed && interacting;
     (defer, defer && dirty)
+}
+
+pub(crate) fn doc_changed(
+    have: Option<((u32, u32), (f32, f32))>,
+    want_size: (u32, u32),
+    want_offset: (f32, f32),
+) -> bool {
+    have.is_some_and(|(size, offset)| size != want_size || offset != want_offset)
 }
 
 pub(crate) fn place_tile(tile: [f32; 4], g: ViewGeometry) -> Option<TilePlacement> {
@@ -468,14 +487,17 @@ impl ViewPipeline {
             return;
         }
 
-        let doc = chain_output_spec(
-            ImageSpec::new(source.full_width, source.full_height),
-            &plan_modifiers(modifiers),
+        let source_spec = ImageSpec::new(source.full_width, source.full_height);
+        let plan = plan_modifiers(modifiers);
+        let doc = chain_output_spec(source_spec, &plan);
+        let doc_offset = chain_doc_offset(&infer_specs(source_spec, &plan), &plan);
+        let doc_changed = doc_changed(
+            self.modifier_pipeline
+                .as_ref()
+                .map(|mp| (mp.doc_size(), mp.doc_offset())),
+            (doc.w, doc.h),
+            doc_offset,
         );
-        let doc_changed = self
-            .modifier_pipeline
-            .as_ref()
-            .is_some_and(|mp| mp.doc_size() != (doc.w, doc.h));
         let has_expensive = modifiers
             .iter()
             .any(|m| m.has_visible_effect() && !m.kind.effect_class().is_pointwise());
@@ -901,6 +923,32 @@ mod display_harness {
                 drawn_px.x
             );
         }
+    }
+
+    #[test]
+    fn a_crop_moved_without_resizing_counts_as_a_document_change() {
+        use super::doc_changed;
+
+        let size = (10000u32, 10000u32);
+        assert!(
+            !doc_changed(Some((size, (5000.0, 5000.0))), size, (5000.0, 5000.0)),
+            "nothing moved, so nothing changed"
+        );
+        assert!(
+            doc_changed(Some((size, (5000.0, 5000.0))), size, (4000.0, 5000.0)),
+            "a crop dragged without resizing leaves the size identical, so \
+             comparing size alone lets the frame defer -- and a deferred frame \
+             rebuilds its quads from the stored doc_offset it never updated, \
+             leaving the picture drawn where the crop used to be"
+        );
+        assert!(
+            doc_changed(Some((size, (0.0, 0.0))), (5000, 5000), (0.0, 0.0)),
+            "a resize must still count"
+        );
+        assert!(
+            !doc_changed(None, size, (0.0, 0.0)),
+            "with no pipeline yet there is nothing to compare against"
+        );
     }
 
     #[test]

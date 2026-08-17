@@ -171,7 +171,7 @@ impl ScratchTarget {
     }
 }
 
-use crate::modifiers::plan::{ImageSpec, PlanItem, infer_specs, plan_modifiers};
+use crate::modifiers::plan::{ImageSpec, PlanItem, chain_doc_offset, infer_specs, plan_modifiers};
 
 const TILE_BUDGET: usize = 2;
 
@@ -380,6 +380,10 @@ impl ModifierPipeline {
 
     pub fn doc_size(&self) -> (u32, u32) {
         self.doc_size
+    }
+
+    pub fn doc_offset(&self) -> (f32, f32) {
+        self.doc_offset
     }
 
     #[cfg(test)]

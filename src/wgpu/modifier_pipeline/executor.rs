@@ -38,7 +38,6 @@
 //! carrying progress across frames so the UI stays responsive.
 
 use super::*;
-use crate::modifiers::StageTransform;
 use crate::modifiers::pixel_sort::SortMode as ExecSortMode;
 use crate::modifiers::roi::{self, RegionPx, StepClass};
 use crate::wgpu::passes::resample::ResampleRegion;
@@ -136,26 +135,6 @@ fn pr_with_roi(
         w,
         h,
     }
-}
-
-fn chain_doc_offset(specs: &[crate::modifiers::plan::StageSpec], plan: &[PlanItem]) -> (f32, f32) {
-    let mut off = (0.0f32, 0.0f32);
-    for (k, item) in plan.iter().enumerate() {
-        let (iw, ih) = (specs[k].input.w as f32, specs[k].input.h as f32);
-        let (ow, oh) = (specs[k].output.w as f32, specs[k].output.h as f32);
-        let transform = match item {
-            PlanItem::Step(_, m) => m.kind.stage_transform(specs[k].input),
-            PlanItem::Fused(_) => StageTransform::Scale,
-        };
-        match transform {
-            StageTransform::Translate { x, y } => off = (off.0 + x, off.1 + y),
-            StageTransform::Scale if iw > 0.0 && ih > 0.0 => {
-                off = (off.0 * ow / iw, off.1 * oh / ih)
-            }
-            StageTransform::Scale => {}
-        }
-    }
-    off
 }
 
 /// The source region the chain's output was produced from, in source pixels.
