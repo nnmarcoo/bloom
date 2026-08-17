@@ -24,6 +24,40 @@ use crate::wgpu::{
     view_pipeline::DisplayUniforms,
 };
 
+/// The part of a tile the geometry path reads: where it sits in the source and
+/// which region of it is worth processing.
+///
+/// The rect math needs these five numbers and nothing else, but a `Tile` also
+/// owns a texture, three bind groups and a buffer, so it can only be built with
+/// a live device. Taking the plain data instead is what lets the reuse decision
+/// be driven from a test.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct TileGeom {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub proc_rect_px: Option<[f32; 4]>,
+}
+
+impl TileGeom {
+    pub fn left(&self) -> f32 {
+        self.x as f32
+    }
+
+    pub fn top(&self) -> f32 {
+        self.y as f32
+    }
+
+    pub fn right(&self) -> f32 {
+        (self.x + self.width) as f32
+    }
+
+    pub fn bottom(&self) -> f32 {
+        (self.y + self.height) as f32
+    }
+}
+
 pub struct Tile {
     pub _source_texture: Texture,
     pub source_view: TextureView,
@@ -42,6 +76,18 @@ pub struct Tile {
     pub width: u32,
     pub height: u32,
     pub mip_count: u32,
+}
+
+impl Tile {
+    pub fn geom(&self) -> TileGeom {
+        TileGeom {
+            x: self.x,
+            y: self.y,
+            width: self.width,
+            height: self.height,
+            proc_rect_px: self.proc_rect_px,
+        }
+    }
 }
 
 pub struct TiledSource {

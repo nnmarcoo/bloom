@@ -42,6 +42,7 @@ use crate::modifiers::StageTransform;
 use crate::modifiers::pixel_sort::SortMode as ExecSortMode;
 use crate::modifiers::roi::{self, RegionPx, StepClass};
 use crate::wgpu::passes::resample::ResampleRegion;
+use crate::wgpu::tiled_source::TileGeom;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 
@@ -93,7 +94,7 @@ fn uv_of(r: RegionPx, full_w: f32, full_h: f32) -> UvRect {
 
 #[allow(clippy::too_many_arguments)]
 fn pr_with_roi(
-    tile: &crate::wgpu::tiled_source::Tile,
+    tile: TileGeom,
     full_w: f32,
     full_h: f32,
     scale: f32,
@@ -101,10 +102,10 @@ fn pr_with_roi(
     roi: RegionPx,
     pitch: f32,
 ) -> ProcRect {
-    let tl = tile.x as f32;
-    let tt = tile.y as f32;
-    let fw = tl + tile.width as f32;
-    let fh = tt + tile.height as f32;
+    let tl = tile.left();
+    let tt = tile.top();
+    let fw = tile.right();
+    let fh = tile.bottom();
     let margin = if downscale { 0.0 } else { ROI_MARGIN_PX };
     let s = snap_region(
         [
@@ -239,9 +240,17 @@ impl ModifierPipeline {
 
             let pr = if reuse {
                 let o = self.tile_outputs[ti].as_ref().unwrap();
-                proc_rect_from_px(o.proc_px, tile, full_w, full_h, o.width, o.height)
+                proc_rect_from_px(o.proc_px, tile.geom(), full_w, full_h, o.width, o.height)
             } else {
-                tile_proc_rect(tile, full_w, full_h, quality_scale, downscale, 0.0, true)
+                tile_proc_rect(
+                    tile.geom(),
+                    full_w,
+                    full_h,
+                    quality_scale,
+                    downscale,
+                    0.0,
+                    true,
+                )
             };
 
             if !reuse {
@@ -466,43 +475,32 @@ impl ModifierPipeline {
         let mut prs: Vec<Option<ProcRect>> = (0..n_tiles).map(|_| None).collect();
         for &ti in &visible {
             let tile = &source.tiles[ti];
-            let roi = tile.proc_rect_px.unwrap_or_else(|| {
-                let g = roi::dilate(u_disp, ROI_MARGIN_PX);
-                [
-                    g[0].max(tile.x as f32),
-                    g[1].max(tile.y as f32),
-                    g[2].min((tile.x + tile.width) as f32),
-                    g[3].min((tile.y + tile.height) as f32),
-                ]
-            });
-            if roi[2] <= roi[0] || roi[3] <= roi[1] {
+            let Some(roi) = tile_roi(tile.geom(), u_disp) else {
                 self.tile_outputs[ti] = None;
                 self.tile_display_bgs_linear[ti] = None;
                 self.tile_display_bgs_nearest[ti] = None;
                 continue;
-            }
+            };
             let doc = DocId {
                 size: (out_spec_doc.w, out_spec_doc.h),
                 origin: chain_offset,
             };
             let roi_doc = to_doc(roi, chain_kept, doc.size, chain_offset);
-            let reuse = self.tile_outputs[ti].as_ref().is_some_and(|o| {
-                o.doc == doc
-                    && o.proc_px.is_some_and(|p| rect_contains(p, roi_doc))
-                    && (o.quality_scale - scale).abs() < 1e-4
-            });
+            let reuse = self.tile_outputs[ti]
+                .as_ref()
+                .is_some_and(|o| can_reuse(o.doc, o.proc_px, o.quality_scale, doc, roi_doc, scale));
             let pr = if reuse {
                 let o = self.tile_outputs[ti].as_ref().unwrap();
                 proc_rect_from_px(
                     o.proc_px,
-                    tile,
+                    tile.geom(),
                     doc.size.0 as f32,
                     doc.size.1 as f32,
                     o.width,
                     o.height,
                 )
             } else {
-                pr_with_roi(tile, full_w, full_h, scale, downscale, roi, pitch)
+                pr_with_roi(tile.geom(), full_w, full_h, scale, downscale, roi, pitch)
             };
             let pr = if chain_resizes && !reuse {
                 let px = to_doc(

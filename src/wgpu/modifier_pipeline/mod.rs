@@ -135,7 +135,7 @@ struct TileOutput {
     doc: DocId,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) struct DocId {
     pub size: (u32, u32),
     pub origin: (f32, f32),
@@ -604,7 +604,7 @@ impl ModifierPipeline {
                 continue;
             }
             let (proc_px, w, h) = (o.proc_px, o.width, o.height);
-            let pr = proc_rect_from_px(proc_px, tile, doc_w, doc_h, w, h);
+            let pr = proc_rect_from_px(proc_px, tile.geom(), doc_w, doc_h, w, h);
             let roi_active = proc_px.is_some() && tile.isec_px.is_some();
             self.build_roi_display_bgs(
                 device,
