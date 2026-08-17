@@ -761,6 +761,10 @@ mod docs_tests {
         std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("reading {}: {e}", p.display()))
     }
 
+    fn menu_count() -> usize {
+        ModifierType::ALL.iter().filter(|t| t.in_menu()).count()
+    }
+
     fn docs_alias(name: &str) -> &str {
         match name {
             "Brightness & Contrast" => "Brightness / Contrast",
@@ -774,6 +778,7 @@ mod docs_tests {
         let html = docs_page();
         let missing: Vec<&str> = ModifierType::ALL
             .iter()
+            .filter(|t| t.in_menu())
             .map(|t| docs_alias(t.label()))
             .filter(|label| !html.contains(&format!(">{label}<")))
             .collect();
@@ -797,14 +802,17 @@ mod docs_tests {
             .collect();
         let real: Vec<&str> = ModifierType::ALL
             .iter()
+            .filter(|t| t.in_menu())
             .map(|t| docs_alias(t.label()))
             .collect();
         let phantom: Vec<&&str> = listed.iter().filter(|l| !real.contains(l)).collect();
         assert!(
             phantom.is_empty(),
-            "docs/guide/modifiers.html advertises {phantom:?}, which no \
-             ModifierType provides. The site promises a feature the app does \
-             not have."
+            "docs/guide/modifiers.html advertises {phantom:?}, which no user \
+             can add. Either no ModifierType provides it, or in_menu() hides \
+             it the way RadialBlur is hidden -- registered and sliderable but \
+             inert, with has_effect() pinned false and no render arm in either \
+             backend. Either way the site promises a feature nobody can reach."
         );
         assert_eq!(
             listed.len(),
@@ -818,7 +826,7 @@ mod docs_tests {
     #[test]
     fn the_search_placeholder_states_the_real_count() {
         let html = docs_page();
-        let want = format!("Search {} modifiers", ModifierType::ALL.len());
+        let want = format!("Search {} modifiers", menu_count());
         assert!(
             html.contains(&want),
             "the search box should say {want:?}; it drifts every time a \
@@ -829,7 +837,7 @@ mod docs_tests {
     #[test]
     fn no_page_advertises_a_stale_modifier_count() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let n = ModifierType::ALL.len();
+        let n = menu_count();
         let claims: &[(&str, &str)] = &[
             (
                 "docs/index.html",

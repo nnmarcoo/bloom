@@ -57,7 +57,7 @@
     "title": "Modifiers",
     "section": "Reference",
     "url": "modifiers.html",
-    "text": "modifiers 27 non-destructive stack brightness contrast exposure levels hue saturation vibrance color balance temperature posterize threshold grayscale greyscale invert sepia duotone solarize gaussian blur motion blur radial blur chromatic aberration halftone pixel sort glitch grain noise vignette crop resize scale resample dimensions trim time animation video clip range drawing brush text type font"
+    "text": "modifiers 26 non-destructive stack brightness contrast exposure levels hue saturation vibrance color balance temperature posterize threshold grayscale greyscale invert sepia duotone solarize gaussian blur motion blur chromatic aberration halftone pixel sort glitch grain noise vignette crop resize scale resample dimensions trim time animation video clip range drawing brush text type font"
   },
   {
     "title": "Themes",

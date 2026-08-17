@@ -20,7 +20,7 @@ Bloom is a fast, lightweight media viewer with GPU-accelerated rendering and a w
 
 - **GPU rendering:** hardware-accelerated via [wgpu](https://wgpu.rs), with mipmaps and tiled textures for images beyond GPU limits
 - **Broad format support:** dozens of image formats plus animation (GIF, APNG, WebP) and video (MP4, MOV, MKV, WebM, and more) with audio, scrubbing, and frame stepping
-- **Non-destructive modifiers:** 27 stackable effects, from color correction (levels, exposure, vibrance, and more) to blur (Gaussian, motion, radial), halftone, grain, pixel sort at any angle, and geometry (crop, resize, trim)
+- **Non-destructive modifiers:** 26 stackable effects, from color correction (levels, exposure, vibrance, and more) to blur (Gaussian, motion), halftone, grain, pixel sort at any angle, and geometry (crop, resize, trim)
 - **Draw and text tools:** paint freehand brush strokes and place text directly on the canvas
 - **Export:** PNG, JPEG, or WebP with crop, rotation, and modifiers applied
 - **Gallery:** browse every image in a folder, and open files by drag and drop or clipboard paste
