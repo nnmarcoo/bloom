@@ -751,3 +751,111 @@ mod shader_id_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod docs_tests {
+    use super::ModifierType;
+
+    fn docs_page() -> String {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/guide/modifiers.html");
+        std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("reading {}: {e}", p.display()))
+    }
+
+    fn docs_alias(name: &str) -> &str {
+        match name {
+            "Brightness & Contrast" => "Brightness / Contrast",
+            "Hue & Saturation" => "Hue / Saturation",
+            other => other,
+        }
+    }
+
+    #[test]
+    fn every_modifier_is_listed_in_the_docs() {
+        let html = docs_page();
+        let missing: Vec<&str> = ModifierType::ALL
+            .iter()
+            .map(|t| docs_alias(t.label()))
+            .filter(|label| !html.contains(&format!(">{label}<")))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "docs/guide/modifiers.html does not list {missing:?}. A modifier \
+             shipped without a docs entry is invisible to anyone reading the \
+             site, and the count in the search placeholder goes stale with it."
+        );
+    }
+
+    #[test]
+    fn the_docs_do_not_list_modifiers_that_do_not_exist() {
+        let html = docs_page();
+        let listed: Vec<&str> = html
+            .match_indices("<span class=\"fmt-name\">")
+            .filter_map(|(i, m)| {
+                let rest = &html[i + m.len()..];
+                rest.find('<').map(|e| &rest[..e])
+            })
+            .collect();
+        let real: Vec<&str> = ModifierType::ALL
+            .iter()
+            .map(|t| docs_alias(t.label()))
+            .collect();
+        let phantom: Vec<&&str> = listed.iter().filter(|l| !real.contains(l)).collect();
+        assert!(
+            phantom.is_empty(),
+            "docs/guide/modifiers.html advertises {phantom:?}, which no \
+             ModifierType provides. The site promises a feature the app does \
+             not have."
+        );
+        assert_eq!(
+            listed.len(),
+            real.len(),
+            "the docs list {} modifiers but the app has {}",
+            listed.len(),
+            real.len()
+        );
+    }
+
+    #[test]
+    fn the_search_placeholder_states_the_real_count() {
+        let html = docs_page();
+        let want = format!("Search {} modifiers", ModifierType::ALL.len());
+        assert!(
+            html.contains(&want),
+            "the search box should say {want:?}; it drifts every time a \
+             modifier is added and nobody updates the number by hand"
+        );
+    }
+
+    #[test]
+    fn no_page_advertises_a_stale_modifier_count() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let n = ModifierType::ALL.len();
+        let claims: &[(&str, &str)] = &[
+            (
+                "docs/index.html",
+                r#"<span class="n">{}</span><span class="l">modifiers</span>"#,
+            ),
+            ("docs/index.html", "All {} modifiers"),
+            (
+                "docs/guide/index.html",
+                "non-destructive pipeline of {} effects.",
+            ),
+            ("docs/guide/modifiers.html", "bloom's {} non-destructive"),
+            (
+                "README.md",
+                "**Non-destructive modifiers:** {} stackable effects",
+            ),
+        ];
+        for (rel, shape) in claims {
+            let text = std::fs::read_to_string(root.join(rel))
+                .unwrap_or_else(|e| panic!("reading {rel}: {e}"));
+            let want = shape.replace("{}", &n.to_string());
+            assert!(
+                text.contains(&want),
+                "{rel} should contain {want:?}. Every one of these is a \
+                 hand-written count of the modifiers the app ships, and each \
+                 goes stale silently the next time one is added."
+            );
+        }
+    }
+}
