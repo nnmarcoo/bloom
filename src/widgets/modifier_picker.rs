@@ -288,7 +288,7 @@ fn build_content<'a>(query: &str, timed: bool) -> Element<'a, Op, Theme, Rendere
 
 fn categories() -> Vec<(&'static str, Vec<&'static ModifierType>)> {
     let mut cats: Vec<(&'static str, Vec<&'static ModifierType>)> = Vec::new();
-    for t in ModifierType::ALL.iter().filter(|t| t.in_menu()) {
+    for t in ModifierType::ALL.iter() {
         match cats.last_mut() {
             Some((cat, items)) if *cat == t.category() => items.push(t),
             _ => cats.push((t.category(), vec![t])),
@@ -316,7 +316,7 @@ fn submenu_body<'a>(timed: bool) -> Element<'a, Op, Theme, Renderer> {
 fn filtered_body<'a>(query_lower: &str, timed: bool) -> Element<'a, Op, Theme, Renderer> {
     let mut col = column![].spacing(2).width(Length::Fill);
     let mut count = 0usize;
-    for t in ModifierType::ALL.iter().filter(|t| t.in_menu()) {
+    for t in ModifierType::ALL.iter() {
         if t.label().to_lowercase().contains(query_lower) {
             count += 1;
             col = col.push(result_row(t, t.enabled_for(timed)));

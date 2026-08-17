@@ -39,8 +39,7 @@ use crate::modifiers::gpu::{ModEntry, TileInfo};
 use crate::modifiers::kinds::{
     BrightnessContrast, ChromaticAberration, ColorBalance, Crop, Drawing, Duotone, Exposure,
     GaussianBlur, Grain, Grayscale, Halftone, HueSaturation, Invert, Levels, MotionBlur, PixelSort,
-    Posterize, RadialBlur, Resize, Sepia, Solarize, Temperature, Text, Threshold, Trim, Vibrance,
-    Vignette,
+    Posterize, Resize, Sepia, Solarize, Temperature, Text, Threshold, Trim, Vibrance, Vignette,
 };
 use crate::modifiers::plan::ImageSpec;
 
@@ -261,10 +260,6 @@ macro_rules! define_modifiers {
                 }
             }
 
-            pub fn in_menu(&self) -> bool {
-                !matches!(self, ModifierType::RadialBlur)
-            }
-
             pub fn enabled_for(&self, timed: bool) -> bool {
                 match self {
                     ModifierType::Trim => timed,
@@ -329,7 +324,6 @@ define_modifiers!(
     Grain => "Grain" @ "Stylize",
     GaussianBlur => "Gaussian Blur" @ "Blur",
     MotionBlur => "Motion Blur" @ "Blur",
-    RadialBlur => "Radial Blur" @ "Blur",
     Halftone => "Halftone" @ "Distort",
     PixelSort => "Pixel Sort" @ "Distort",
     Crop => "Crop" @ "Transform",
@@ -459,7 +453,6 @@ pub enum ModifierParam {
     GaussianBlurRadius(f32),
     MotionBlurAngle(f32),
     MotionBlurDistance(f32),
-    RadialBlurAmount(f32),
     HalftoneSize(f32),
     HalftoneAngle(f32),
     PixelSortThreshold(f32),
@@ -580,10 +573,6 @@ mod menu_gating_tests {
 
     #[test]
     fn trim_is_listed_but_disabled_for_stills() {
-        assert!(
-            ModifierType::Trim.in_menu(),
-            "Trim should stay visible so users can see it exists"
-        );
         assert!(!ModifierType::Trim.enabled_for(false));
         assert!(ModifierType::Trim.enabled_for(true));
     }
@@ -605,11 +594,6 @@ mod menu_gating_tests {
                 t.label()
             );
         }
-    }
-
-    #[test]
-    fn radial_blur_stays_hidden() {
-        assert!(!ModifierType::RadialBlur.in_menu());
     }
 }
 
@@ -761,10 +745,6 @@ mod docs_tests {
         std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("reading {}: {e}", p.display()))
     }
 
-    fn menu_count() -> usize {
-        ModifierType::ALL.iter().filter(|t| t.in_menu()).count()
-    }
-
     fn docs_alias(name: &str) -> &str {
         match name {
             "Brightness & Contrast" => "Brightness / Contrast",
@@ -778,7 +758,6 @@ mod docs_tests {
         let html = docs_page();
         let missing: Vec<&str> = ModifierType::ALL
             .iter()
-            .filter(|t| t.in_menu())
             .map(|t| docs_alias(t.label()))
             .filter(|label| !html.contains(&format!(">{label}<")))
             .collect();
@@ -802,17 +781,16 @@ mod docs_tests {
             .collect();
         let real: Vec<&str> = ModifierType::ALL
             .iter()
-            .filter(|t| t.in_menu())
             .map(|t| docs_alias(t.label()))
             .collect();
         let phantom: Vec<&&str> = listed.iter().filter(|l| !real.contains(l)).collect();
         assert!(
             phantom.is_empty(),
-            "docs/guide/modifiers.html advertises {phantom:?}, which no user \
-             can add. Either no ModifierType provides it, or in_menu() hides \
-             it the way RadialBlur is hidden -- registered and sliderable but \
-             inert, with has_effect() pinned false and no render arm in either \
-             backend. Either way the site promises a feature nobody can reach."
+            "docs/guide/modifiers.html advertises {phantom:?}, which no \
+             ModifierType provides, so the site promises a feature nobody can \
+             reach. Radial Blur was listed this way for months: registered and \
+             sliderable but inert, with has_effect() pinned false and no render \
+             arm in either backend."
         );
         assert_eq!(
             listed.len(),
@@ -826,7 +804,7 @@ mod docs_tests {
     #[test]
     fn the_search_placeholder_states_the_real_count() {
         let html = docs_page();
-        let want = format!("Search {} modifiers", menu_count());
+        let want = format!("Search {} modifiers", ModifierType::ALL.len());
         assert!(
             html.contains(&want),
             "the search box should say {want:?}; it drifts every time a \
@@ -837,7 +815,7 @@ mod docs_tests {
     #[test]
     fn no_page_advertises_a_stale_modifier_count() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let n = menu_count();
+        let n = ModifierType::ALL.len();
         let claims: &[(&str, &str)] = &[
             (
                 "docs/index.html",
