@@ -9,6 +9,12 @@
 //! Mipmaps are generated only when zooming out needs them, and regenerated
 //! when mips_dirty is set. Level count is derived from the tile's own
 //! dimensions, since asking for more levels than a tile can hold is a crash.
+//!
+//! TileGeom is the part of a tile the geometry path reads: its position, its
+//! extent, and the region worth processing. A Tile also owns a texture, three
+//! bind groups and a buffer, so it can only exist with a live device, which put
+//! the rect math out of reach of any test. Splitting the plain data out is what
+//! lets the reuse decision in modifier_pipeline::geom be driven without one.
 
 use glam::{Mat4, Vec2};
 use iced::wgpu::{
@@ -24,13 +30,6 @@ use crate::wgpu::{
     view_pipeline::DisplayUniforms,
 };
 
-/// The part of a tile the geometry path reads: where it sits in the source and
-/// which region of it is worth processing.
-///
-/// The rect math needs these five numbers and nothing else, but a `Tile` also
-/// owns a texture, three bind groups and a buffer, so it can only be built with
-/// a live device. Taking the plain data instead is what lets the reuse decision
-/// be driven from a test.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct TileGeom {
     pub x: u32,

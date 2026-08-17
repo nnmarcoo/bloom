@@ -37,12 +37,21 @@
 //! The reuse tests replay whole frame sequences over those three functions
 //! because no single one of them can show that class of bug.
 //!
-//! The reuse keys are deliberately three separate facts. A document resize and
-//! a crop drag both leave DocId::size or its origin changed while the ROI and
-//! quality are untouched; a zoom that only changes quality_scale leaves the
-//! region identical. Dropping any one key leaves a real bug uncaught, which the
-//! tests were each verified to detect by removing that key and watching exactly
-//! one of them fail.
+//! The reuse keys are deliberately three separate facts, because each catches
+//! something the others cannot. DocId::size catches a document resize; its
+//! origin catches a crop dragged without resizing, where the size is identical;
+//! rect_contains catches a pan onto pixels never processed; quality_scale
+//! catches a zoom that leaves the region identical but changes resolution.
+//! Dropping any one leaves a real bug uncaught, and each test was verified to
+//! detect exactly that by deleting the key it covers.
+//!
+//! A composition test spanning several keys has to prove the other keys did not
+//! fire, or it silently tests something else. The crop-origin test first passed
+//! with the origin check deleted: to_doc subtracts the offset, so a crop moved
+//! away from zero pushes its tiles to lower document coordinates, outside the
+//! cached region, and rect_contains refused the reuse before the origin was
+//! ever consulted. It now moves the crop toward zero and asserts containment
+//! still holds before asserting the reuse is refused.
 
 use super::*;
 use crate::modifiers::roi::{self, RegionPx};
@@ -105,13 +114,6 @@ pub(super) fn tile_out_rect(
     ]
 }
 
-/// Maps a source-pixel rect into document pixels.
-///
-/// `kept` is the source region the document was produced from: the crop's
-/// extent, before any resize. Deriving it as "source minus the crop's origin"
-/// leaves the crop's own width in the ratio, so a crop at the origin rescales
-/// by doc/src and the texture is squeezed by exactly the crop's fraction --
-/// visible only on a tiled image, since this path runs for per-tile ROIs.
 pub(super) fn to_doc(
     r: RegionPx,
     kept: (u32, u32),
@@ -213,12 +215,6 @@ pub(super) fn rect_contains(outer: [f32; 4], inner: [f32; 4]) -> bool {
         && inner[3] <= outer[3] + 0.5
 }
 
-/// The source region of `tile` worth processing this frame.
-///
-/// A tile carries its own `proc_rect_px` once the viewport has culled it;
-/// before that the visible rect is dilated by the margin and clipped to the
-/// tile. Returns `None` when nothing of the tile survives, which is the
-/// caller's signal to drop the tile's output rather than reuse it.
 pub(super) fn tile_roi(tile: TileGeom, visible_px: [f32; 4]) -> Option<[f32; 4]> {
     let roi = tile.proc_rect_px.unwrap_or_else(|| {
         let g = roi::dilate(visible_px, ROI_MARGIN_PX);
@@ -232,14 +228,6 @@ pub(super) fn tile_roi(tile: TileGeom, visible_px: [f32; 4]) -> Option<[f32; 4]>
     (roi[2] > roi[0] && roi[3] > roi[1]).then_some(roi)
 }
 
-/// What an existing tile output must match to be reused unprocessed.
-///
-/// Every field here is a fact the cached pixels depend on, and all three are
-/// checked against the same frame's values: the document the output was made
-/// for, the region it actually covers, and the quality it was rendered at.
-/// `want_doc` is in document space, so the caller maps the source ROI through
-/// `to_doc` first -- comparing a source rect against a document-space
-/// `proc_px` is the two-space mistake that keeps recurring here.
 pub(super) fn can_reuse(
     have_doc: DocId,
     have_proc_px: Option<[f32; 4]>,
@@ -291,20 +279,10 @@ pub(super) fn tex_copy_info(
     }
 }
 
-/// Drives the tile reuse decision over a sequence of frames without a device.
-///
-/// The executor's per-tile loop is three pure steps -- pick the tile's ROI, map
-/// it into the document, decide whether the cached output still covers it --
-/// wrapped in GPU allocation. This replays exactly those steps against cached
-/// state, so a zoom, a pan and an edit can be driven in order and the reuse
-/// decisions checked. It exists because the bugs this path keeps producing are
-/// never in one function: they are two functions disagreeing about which space
-/// a rect is in, and only a composition can see that.
 #[cfg(test)]
 pub(super) mod harness {
     use super::*;
 
-    /// A cached tile output, holding the same facts the real `TileOutput` does.
     #[derive(Clone, Copy, PartialEq, Debug)]
     pub(in crate::wgpu::modifier_pipeline) struct Cached {
         pub doc: DocId,
@@ -314,24 +292,18 @@ pub(super) mod harness {
         pub h: u32,
     }
 
-    /// One frame's worth of view state, as the executor would see it.
     #[derive(Clone, Copy, Debug)]
     pub(in crate::wgpu::modifier_pipeline) struct Frame {
         pub visible_px: [f32; 4],
         pub quality: f32,
         pub doc: DocId,
-        /// The source extent the document was made from: the crop's extent
-        /// before any resize, or the whole source when there is no crop.
         pub kept: (u32, u32),
     }
 
     #[derive(Clone, Copy, PartialEq, Debug)]
     pub(in crate::wgpu::modifier_pipeline) enum Outcome {
-        /// Nothing of the tile is visible; the output is dropped.
         Culled,
-        /// The cached output still covers what this frame needs.
         Reused,
-        /// The tile is reprocessed and the cache replaced.
         Processed,
     }
 
@@ -345,7 +317,6 @@ pub(super) mod harness {
             Self { geom, cached: None }
         }
 
-        /// Runs one frame, updating the cache exactly as the executor does.
         pub fn frame(&mut self, f: Frame) -> Outcome {
             let Some(roi) = tile_roi(self.geom, f.visible_px) else {
                 self.cached = None;
@@ -423,9 +394,6 @@ mod reuse_tests {
 
     #[test]
     fn a_settled_view_stops_reprocessing() {
-        // The first frame must process; every identical frame after it must
-        // reuse. If this regresses the preview reprocesses every tile forever
-        // and the UI never goes idle.
         let mut t = TileState::new(tile_at(0, 0));
         let f = whole_source_frame(1.0);
         assert_eq!(t.frame(f), Outcome::Processed);
@@ -440,9 +408,6 @@ mod reuse_tests {
 
     #[test]
     fn a_quality_change_reprocesses_even_at_the_same_region() {
-        // quality_scale is the third reuse key. A zoom that changes only the
-        // scale leaves the ROI identical, so nothing but the quality check can
-        // catch it -- and reusing here shows the previous zoom's pixel size.
         let mut t = TileState::new(tile_at(0, 0));
         assert_eq!(t.frame(whole_source_frame(0.25)), Outcome::Processed);
         assert_eq!(
@@ -456,9 +421,6 @@ mod reuse_tests {
 
     #[test]
     fn zooming_in_within_the_processed_region_reuses() {
-        // Zooming into a region already covered must not reprocess: the cached
-        // output already holds those pixels. This is the whole point of
-        // rect_contains being a containment test rather than an equality one.
         let mut t = TileState::new(tile_at(0, 0));
         let mut f = whole_source_frame(1.0);
         f.visible_px = [0.0, 0.0, TILE as f32, TILE as f32];
@@ -474,9 +436,6 @@ mod reuse_tests {
 
     #[test]
     fn panning_to_new_pixels_reprocesses() {
-        // The opposite direction: once the view moves past what was processed,
-        // the cache no longer covers it. Reusing here draws stale pixels in the
-        // newly revealed area.
         let mut t = TileState::new(tile_at(0, 0));
         let mut f = whole_source_frame(1.0);
         f.visible_px = [0.0, 0.0, 1000.0, 1000.0];
@@ -492,9 +451,6 @@ mod reuse_tests {
 
     #[test]
     fn a_document_resize_invalidates_every_tile() {
-        // DocId is what catches a size change; exec_sig deliberately does not
-        // hash it. A tile reused across a resize is drawn at the old
-        // document's scale.
         for tile in [tile_at(0, 0), tile_at(TILE, 0), tile_at(TILE, TILE)] {
             let mut t = TileState::new(tile);
             assert_eq!(t.frame(whole_source_frame(1.0)), Outcome::Processed);
@@ -515,16 +471,6 @@ mod reuse_tests {
 
     #[test]
     fn moving_a_crop_by_its_origin_alone_invalidates() {
-        // A crop dragged so that its size is unchanged but its origin moves
-        // keeps DocId::size identical. Only the origin distinguishes the two
-        // documents, and it is the reason DocId carries one at all: without
-        // it, dragging a crop shows the pixels from where it used to be.
-        //
-        // The crop must move so that the new ROI lands *inside* the cached
-        // region, or rect_contains rejects the reuse on its own and the origin
-        // is never consulted. Subtracting the origin means a crop moved toward
-        // zero pushes its tiles to *higher* document coordinates, so that is
-        // the direction that keeps the ROI within what was already covered.
         let doc = (10000u32, 10000u32);
         let mut t = TileState::new(tile_at(TILE, TILE));
 
@@ -565,8 +511,6 @@ mod reuse_tests {
 
     #[test]
     fn a_culled_tile_drops_its_output_and_reprocesses_on_return() {
-        // Culling clears the cache, so coming back must process rather than
-        // reuse whatever was there before the tile left the viewport.
         let mut t = TileState::new(tile_at(TILE, TILE));
         let mut f = whole_source_frame(1.0);
         assert_eq!(t.frame(f), Outcome::Processed);
@@ -585,9 +529,6 @@ mod reuse_tests {
 
     #[test]
     fn a_cached_output_never_claims_pixels_outside_the_document() {
-        // Whatever the crop and zoom, the region a tile records must lie inside
-        // the document. A proc_px past the edge is sampled from a texture that
-        // has no such pixels, which is the two-space bug in its visible form.
         for (ox, oy, dw, dh) in [
             (0.0f32, 0.0f32, SRC, SRC),
             (5000.0, 5000.0, 10000, 10000),
@@ -630,9 +571,6 @@ mod reuse_tests {
 
     #[test]
     fn a_reused_tile_keeps_the_texture_size_it_was_given() {
-        // Reuse rebuilds the ProcRect from the cached px and the cached
-        // width/height. Those must still describe the same texture, or the
-        // quad is drawn from dimensions the texture does not have.
         let mut t = TileState::new(tile_at(0, 0));
         let mut f = whole_source_frame(0.5);
         f.visible_px = [0.0, 0.0, TILE as f32, TILE as f32];
