@@ -52,6 +52,17 @@
 //! cached region, and rect_contains refused the reuse before the origin was
 //! ever consulted. It now moves the crop toward zero and asserts containment
 //! still holds before asserting the reuse is refused.
+//!
+//! Above the three reuse keys sits a fourth mechanism the harness also drives:
+//! the dirty flag, which clears every tile output outright, and the deferral
+//! that postpones it. Deferring takes dirty out of the caller's holding field,
+//! so a deferred frame must hand it back or the edit is lost for good -- the
+//! pipeline keeps its last render and nothing marks it again once the view
+//! settles. The harness calls the real view_pipeline::defer_decision rather
+//! than restating its rule, so the two cannot drift apart, and replays whole
+//! drags: edit mid-drag, several more drag frames, then release. A resize is
+//! never deferred, because full-resolution textures left on shrunken quads read
+//! as flicker.
 
 use super::*;
 use crate::modifiers::roi::{self, RegionPx};
@@ -298,11 +309,15 @@ pub(super) mod harness {
         pub quality: f32,
         pub doc: DocId,
         pub kept: (u32, u32),
+        pub edited: bool,
+        pub interacting: bool,
+        pub has_expensive: bool,
     }
 
     #[derive(Clone, Copy, PartialEq, Debug)]
     pub(in crate::wgpu::modifier_pipeline) enum Outcome {
         Culled,
+        Deferred,
         Reused,
         Processed,
     }
@@ -310,18 +325,43 @@ pub(super) mod harness {
     pub(in crate::wgpu::modifier_pipeline) struct TileState {
         pub geom: TileGeom,
         pub cached: Option<Cached>,
+        pub pending_dirty: bool,
+        pub doc_size: Option<(u32, u32)>,
     }
 
     impl TileState {
         pub fn new(geom: TileGeom) -> Self {
-            Self { geom, cached: None }
+            Self {
+                geom,
+                cached: None,
+                pending_dirty: false,
+                doc_size: None,
+            }
         }
 
         pub fn frame(&mut self, f: Frame) -> Outcome {
+            let dirty = f.edited || self.pending_dirty;
+            self.pending_dirty = false;
+            let doc_changed = self.doc_size.is_some_and(|s| s != f.doc.size);
+            let (defer, carry) = crate::wgpu::view_pipeline::defer_decision(
+                f.has_expensive,
+                doc_changed,
+                f.interacting,
+                dirty,
+            );
+            if defer && self.cached.is_some() {
+                self.pending_dirty |= carry;
+                return Outcome::Deferred;
+            }
+            self.doc_size = Some(f.doc.size);
+
             let Some(roi) = tile_roi(self.geom, f.visible_px) else {
                 self.cached = None;
                 return Outcome::Culled;
             };
+            if dirty {
+                self.cached = None;
+            }
             let roi_doc = to_doc(roi, f.kept, f.doc.size, f.doc.origin);
             let reuse = self
                 .cached
@@ -389,6 +429,9 @@ mod reuse_tests {
             quality,
             doc: doc_of((SRC, SRC)),
             kept: (SRC, SRC),
+            edited: false,
+            interacting: false,
+            has_expensive: false,
         }
     }
 
@@ -475,13 +518,12 @@ mod reuse_tests {
         let mut t = TileState::new(tile_at(TILE, TILE));
 
         let at = |ox: f32, oy: f32| Frame {
-            visible_px: [0.0, 0.0, SRC as f32, SRC as f32],
-            quality: 1.0,
             doc: DocId {
                 size: doc,
                 origin: (ox, oy),
             },
             kept: doc,
+            ..whole_source_frame(1.0)
         };
 
         assert_eq!(t.frame(at(5000.0, 5000.0)), Outcome::Processed);
@@ -538,13 +580,12 @@ mod reuse_tests {
                 for tile in [tile_at(0, 0), tile_at(TILE, TILE), tile_at(TILE * 2, 0)] {
                     let mut t = TileState::new(tile);
                     let f = Frame {
-                        visible_px: [0.0, 0.0, SRC as f32, SRC as f32],
-                        quality,
                         doc: DocId {
                             size: (dw, dh),
                             origin: (ox, oy),
                         },
                         kept: (dw, dh),
+                        ..whole_source_frame(quality)
                     };
                     if t.frame(f) == Outcome::Culled {
                         continue;
@@ -600,6 +641,106 @@ mod reuse_tests {
             (dw, dh),
             "the rebuilt ProcRect disagrees with the region it covers, so the \
              reused texture is sampled at the wrong size"
+        );
+    }
+
+    fn expensive_drag(quality: f32) -> Frame {
+        Frame {
+            interacting: true,
+            has_expensive: true,
+            ..whole_source_frame(quality)
+        }
+    }
+
+    #[test]
+    fn an_edit_invalidates_a_tile_that_would_otherwise_be_reused() {
+        let mut t = TileState::new(tile_at(0, 0));
+        assert_eq!(t.frame(whole_source_frame(1.0)), Outcome::Processed);
+        assert_eq!(t.frame(whole_source_frame(1.0)), Outcome::Reused);
+
+        let edited = Frame {
+            edited: true,
+            ..whole_source_frame(1.0)
+        };
+        assert_eq!(
+            t.frame(edited),
+            Outcome::Processed,
+            "the modifier stack changed but the tile was reused, so the edit \
+             never reaches the screen"
+        );
+    }
+
+    #[test]
+    fn an_edit_deferred_mid_drag_still_runs_once_the_view_settles() {
+        let mut t = TileState::new(tile_at(0, 0));
+        assert_eq!(t.frame(expensive_drag(1.0)), Outcome::Processed);
+
+        let edited_mid_drag = Frame {
+            edited: true,
+            ..expensive_drag(1.0)
+        };
+        assert_eq!(
+            t.frame(edited_mid_drag),
+            Outcome::Deferred,
+            "an expensive chain mid-drag should postpone the reprocess"
+        );
+        assert!(
+            t.pending_dirty,
+            "the deferred edit was not carried, so nothing will mark the tile \
+             again and the pipeline keeps its last render forever"
+        );
+
+        assert_eq!(
+            t.frame(whole_source_frame(1.0)),
+            Outcome::Processed,
+            "the view settled on a clean frame, but the edit deferred during \
+             the drag was swallowed rather than replayed"
+        );
+        assert!(!t.pending_dirty, "the carry outlived the frame that ran it");
+    }
+
+    #[test]
+    fn repeated_deferrals_keep_carrying_the_same_edit() {
+        let mut t = TileState::new(tile_at(0, 0));
+        assert_eq!(t.frame(expensive_drag(1.0)), Outcome::Processed);
+
+        let edited_mid_drag = Frame {
+            edited: true,
+            ..expensive_drag(1.0)
+        };
+        assert_eq!(t.frame(edited_mid_drag), Outcome::Deferred);
+
+        for i in 0..4 {
+            assert_eq!(
+                t.frame(expensive_drag(1.0)),
+                Outcome::Deferred,
+                "drag frame {i} should still be deferring"
+            );
+            assert!(
+                t.pending_dirty,
+                "drag frame {i} dropped the carried edit: a clean frame takes \
+                 dirty out of the holding field and must put it back"
+            );
+        }
+
+        assert_eq!(t.frame(whole_source_frame(1.0)), Outcome::Processed);
+    }
+
+    #[test]
+    fn a_document_resize_is_never_deferred() {
+        let mut t = TileState::new(tile_at(0, 0));
+        assert_eq!(t.frame(expensive_drag(1.0)), Outcome::Processed);
+
+        let resized_mid_drag = Frame {
+            doc: doc_of((SRC / 2, SRC / 2)),
+            edited: true,
+            ..expensive_drag(1.0)
+        };
+        assert_eq!(
+            t.frame(resized_mid_drag),
+            Outcome::Processed,
+            "deferring across a size change leaves full-resolution textures on \
+             shrunken quads, which reads as flicker"
         );
     }
 }
