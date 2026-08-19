@@ -67,10 +67,10 @@ jobs:
             sudo apt-get install -y clang libclang-dev libasound2-dev
             ffmpeg_url=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
               "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases?per_page=20" \
-              | grep -oE '"browser_download_url": *"[^"]*linux64-gpl-shared-8\.1\.tar\.xz"' \
+              | grep -oE '"browser_download_url": *"[^"]*linux64-gpl-shared-9\.0\.tar\.xz"' \
               | grep -oE 'https://[^"]*' | head -n1)
             if [ -z "$ffmpeg_url" ]; then
-              echo "::error::could not resolve an n8.1 gpl-shared FFmpeg build" >&2
+              echo "::error::could not resolve an n9.0 gpl-shared FFmpeg build" >&2
               exit 1
             fi
             echo "Downloading $ffmpeg_url"
@@ -126,12 +126,12 @@ jobs:
             $headers = @{ Authorization = "Bearer $env:GH_TOKEN" }
             $releases = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases?per_page=20"
             $ffmpegUrl = $releases.assets.browser_download_url |
-              Where-Object { $_ -match "win64-gpl-shared-8\.1\.zip$" } | Select-Object -First 1
-            if (-not $ffmpegUrl) { throw "could not resolve an n8.1 gpl-shared FFmpeg build" }
+              Where-Object { $_ -match "win64-gpl-shared-9\.0\.zip$" } | Select-Object -First 1
+            if (-not $ffmpegUrl) { throw "could not resolve an n9.0 gpl-shared FFmpeg build" }
             Write-Host "Downloading $ffmpegUrl"
             Invoke-WebRequest -Uri $ffmpegUrl -OutFile "$env:RUNNER_TEMP\ffmpeg.zip"
             Expand-Archive -Path "$env:RUNNER_TEMP\ffmpeg.zip" -DestinationPath "$env:RUNNER_TEMP"
-            $extracted = (Get-ChildItem -Directory "$env:RUNNER_TEMP" -Filter "ffmpeg-n8.1*").FullName
+            $extracted = (Get-ChildItem -Directory "$env:RUNNER_TEMP" -Filter "ffmpeg-n9.0*").FullName
             echo "FFMPEG_DIR=$extracted" >> $env:GITHUB_ENV
           }
 

@@ -8,7 +8,7 @@ $BinDir     = Join-Path $FfmpegDir "bin"
 
 $LlvmDir    = Join-Path $VendorDir "llvm"
 
-$FfmpegUrl  = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip"
+$FfmpegUrl  = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-gpl-shared-9.0.zip"
 $LibclangWheelUrl = "https://files.pythonhosted.org/packages/py2.py3/l/libclang/libclang-18.1.1-py2.py3-none-win_amd64.whl"
 
 if (Test-Path (Join-Path $FfmpegDir "include\libavformat\avformat.h")) {
@@ -23,7 +23,7 @@ if (Test-Path (Join-Path $FfmpegDir "include\libavformat\avformat.h")) {
     if (Test-Path $Tmp) { Remove-Item -Recurse -Force $Tmp }
     Expand-Archive -Path $Zip -DestinationPath $Tmp
 
-    $Extracted = (Get-ChildItem -Directory $Tmp -Filter "ffmpeg-n8.1*").FullName
+    $Extracted = (Get-ChildItem -Directory $Tmp -Filter "ffmpeg-n9.0*").FullName
     New-Item -ItemType Directory -Force -Path $FfmpegDir | Out-Null
     Copy-Item -Recurse -Force (Join-Path $Extracted "include") $FfmpegDir
     Copy-Item -Recurse -Force (Join-Path $Extracted "lib")     $FfmpegDir
