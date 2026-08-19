@@ -828,6 +828,7 @@ fn run_decode(
 
     let mut decoded = ffmpeg::frame::Video::empty();
     let mut decoded_audio = ffmpeg::frame::Audio::empty();
+    let mut rgba = ffmpeg::frame::Video::empty();
     let mut epoch: u64 = 0;
     let mut seek_target = Duration::ZERO;
     let mut pending_seek: Option<(Duration, bool)> = None;
@@ -877,7 +878,7 @@ fn run_decode(
                     if pts < seek_target {
                         continue;
                     }
-                    let frame = build_frame(&mut scaler, &decoded, pts, epoch)?;
+                    let frame = build_frame(&mut scaler, &decoded, &mut rgba, pts, epoch)?;
                     match send_frame(frame_tx, cmd_rx, &mut pending_frames, frame) {
                         Flow::Continue => {}
                         Flow::Stop => return Ok(()),
@@ -927,7 +928,7 @@ fn run_decode(
             if pts < seek_target {
                 continue;
             }
-            let frame = build_frame(&mut scaler, &decoded, pts, epoch)?;
+            let frame = build_frame(&mut scaler, &decoded, &mut rgba, pts, epoch)?;
             match send_frame(frame_tx, cmd_rx, &mut pending_frames, frame) {
                 Flow::Continue => {}
                 Flow::Stop => return Ok(()),
@@ -977,19 +978,20 @@ fn ts_to_duration(ts: Option<i64>, tb: f64) -> Duration {
 fn build_frame(
     scaler: &mut Scaler,
     decoded: &ffmpeg::frame::Video,
+    rgba: &mut ffmpeg::frame::Video,
     pts: Duration,
     epoch: u64,
 ) -> Result<VideoFrame, ImageError> {
-    let data = frame_to_image(scaler, decoded)?;
+    let data = frame_to_image(scaler, decoded, rgba)?;
     Ok(VideoFrame { data, pts, epoch })
 }
 
 fn frame_to_image(
     scaler: &mut Scaler,
     frame: &ffmpeg::frame::Video,
+    rgba: &mut ffmpeg::frame::Video,
 ) -> Result<Arc<ImageData>, ImageError> {
-    let mut rgba = ffmpeg::frame::Video::empty();
-    scaler.run(frame, &mut rgba).map_err(err)?;
+    scaler.run(frame, rgba).map_err(err)?;
 
     let width = rgba.width();
     let height = rgba.height();
