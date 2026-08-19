@@ -83,7 +83,7 @@ open = { version = "5.3.6", features = ["shellexecute-on-windows"] }
 libheif-rs = { version = "2", default-features = false, features = ["v1_17"], optional = true }
 
 # A/V (optional)
-ffmpeg-next = { version = "8", optional = true }
+ffmpeg-next = { version = "9", optional = true }
 cpal = { version = "0.16", optional = true }
 ringbuf = { version = "0.4", optional = true }
 crossbeam-channel = { version = "0.5", optional = true }
