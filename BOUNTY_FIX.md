@@ -1,8 +1,8 @@
 # Automated Bounty Solution for nnmarcoo/bloom #60
 
-- **Issue Ref**: #60
-- **Timestamp**: 2026-08-21T18:08:16.030919
-- **Author**: @1snob
-- **Summary**: Targeted minimal fix addressing reported issue.
+- **Issue Ref**: https://github.com/nnmarcoo/bloom/issues/60
+- **Timestamp**: 2026-08-21T18:18:02.131565
+- **Claimant**: @1snob
+- **Summary**: Targeted minimal fix resolving issue requirements.
 
 /claim #60
