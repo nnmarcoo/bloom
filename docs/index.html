@@ -106,9 +106,15 @@
     divider.style.left = pct + '%';
   });
 
-  /* smart download: resolves the latest release's assets per platform.
-     matches by file extension so it survives asset renames, and falls
-     back to the releases page until a non-prerelease exists. */
+  /* smart download: resolves the newest release's assets per platform.
+     matches by file extension so it survives asset renames.
+
+     /releases/latest skips prereleases and 404s while every tag is one, so
+     fall back to the release list. that list still reaches the archival
+     pre-alpha releases, whose assets belong to the old app and are named
+     img_*, so only bloom-* assets count and a release carrying none of them
+     is skipped. the plain Download button still points at /releases if
+     nothing resolves. */
   const REPO = 'nnmarcoo/bloom';
 
   const PLATFORMS = [
@@ -118,10 +124,13 @@
                   : (n.endsWith('.tar.gz') && !n.endsWith('.app.tar.gz')) ? 0.5 : -1 },
   ];
 
+  const isBuild = n => n.toLowerCase().startsWith('bloom-');
+
   function bestAsset(assets, p) {
     let best = null, score = -1;
     for (const a of assets) {
       const n = a.name.toLowerCase();
+      if (!isBuild(n)) continue;
       const r = p.rank(n);
       if (r < 0) continue;
       const full = !/minimal|heif/.test(n) ? 0.3 : 0;
@@ -132,10 +141,20 @@
 
   function fmtSize(b) { return (b / 1048576).toFixed(1) + ' MB'; }
 
-  fetch('https://api.github.com/repos/' + REPO + '/releases/latest', {
-    headers: { Accept: 'application/vnd.github+json' }
-  })
-    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+  function api(path) {
+    return fetch('https://api.github.com/repos/' + REPO + path, {
+      headers: { Accept: 'application/vnd.github+json' }
+    }).then(r => r.ok ? r.json() : Promise.reject(r.status));
+  }
+
+  const hasBuilds = rel => (rel.assets || []).some(a => isBuild(a.name));
+
+  api('/releases/latest')
+    .then(rel => hasBuilds(rel) ? rel : Promise.reject('no builds'))
+    .catch(() => api('/releases?per_page=10').then(list => {
+      const rel = (list || []).find(r => !r.draft && hasBuilds(r));
+      return rel || Promise.reject('no release with builds');
+    }))
     .then(rel => {
       const assets = rel.assets || [];
       const items = [];
