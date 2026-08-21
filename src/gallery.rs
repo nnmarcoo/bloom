@@ -122,13 +122,19 @@ impl Gallery {
             .into_iter()
             .flatten()
             .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|p| {
-                p.is_file()
-                    && p.extension()
-                        .and_then(|ext| ext.to_str())
-                        .map(|ext_str| SUPPORTED.iter().any(|&s| s.eq_ignore_ascii_case(ext_str)))
-                        .unwrap_or(false)
+            .filter_map(|entry| {
+                let name = entry.file_name();
+                let ext = Path::new(&name).extension()?.to_str()?;
+                if !SUPPORTED.iter().any(|&s| s.eq_ignore_ascii_case(ext)) {
+                    return None;
+                }
+                let file_type = entry.file_type().ok()?;
+                let is_file = if file_type.is_symlink() {
+                    entry.path().is_file()
+                } else {
+                    file_type.is_file()
+                };
+                is_file.then(|| entry.path())
             })
             .collect();
 
@@ -219,5 +225,72 @@ impl fmt::Debug for Gallery {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("bloom-gallery-{}-{label}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn names(gallery: &Gallery) -> Vec<String> {
+        gallery
+            .paths
+            .iter()
+            .map(|p| p.file_name().unwrap_or_default().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn only_supported_files_are_listed() {
+        let dir = fixture("filter");
+        std::fs::write(dir.join("a.jpg"), b"x").unwrap();
+        std::fs::write(dir.join("b.PNG"), b"x").unwrap();
+        std::fs::write(dir.join("c.txt"), b"x").unwrap();
+        std::fs::write(dir.join("noext"), b"x").unwrap();
+        std::fs::create_dir(dir.join("d.jpg")).unwrap();
+
+        let gallery = Gallery::new(&dir.join("a.jpg"));
+
+        assert_eq!(names(&gallery), vec!["a.jpg", "b.PNG"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_image_is_listed_like_a_real_one() {
+        let dir = fixture("symlink");
+        std::fs::write(dir.join("real.jpg"), b"x").unwrap();
+        std::os::unix::fs::symlink(dir.join("real.jpg"), dir.join("linked.jpg")).unwrap();
+        std::os::unix::fs::symlink(dir.join("missing.jpg"), dir.join("dangling.jpg")).unwrap();
+
+        let gallery = Gallery::new(&dir.join("real.jpg"));
+
+        assert_eq!(names(&gallery), vec!["linked.jpg", "real.jpg"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn opening_a_symlink_lands_on_that_symlink() {
+        let dir = fixture("position");
+        std::fs::write(dir.join("a_real.jpg"), b"x").unwrap();
+        std::os::unix::fs::symlink(dir.join("a_real.jpg"), dir.join("z_link.jpg")).unwrap();
+
+        let gallery = Gallery::new(&dir.join("z_link.jpg"));
+
+        assert_eq!(gallery.len(), 2);
+        assert_eq!(gallery.position(), 1);
+        assert_eq!(
+            gallery.current().and_then(|p| p.file_name()).unwrap(),
+            "z_link.jpg"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
