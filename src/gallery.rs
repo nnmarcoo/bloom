@@ -233,7 +233,8 @@ mod tests {
     use super::*;
 
     fn fixture(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("bloom-gallery-{}-{label}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("bloom-gallery-{}-{label}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -243,7 +244,12 @@ mod tests {
         gallery
             .paths
             .iter()
-            .map(|p| p.file_name().unwrap_or_default().to_string_lossy().into_owned())
+            .map(|p| {
+                p.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect()
     }
 
