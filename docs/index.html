@@ -113,7 +113,7 @@
 
   const PLATFORMS = [
     { label: 'Windows', rank: n => n.endsWith('.msi') ? 3 : n.endsWith('.exe') ? 2 : -1 },
-    { label: 'macOS', rank: n => n.endsWith('.dmg') ? 3 : n.endsWith('.pkg') ? 2 : n.endsWith('.app.tar.gz') ? 1 : -1 },
+    { label: 'macOS (Apple Silicon)', rank: n => n.endsWith('.dmg') ? 3 : n.endsWith('.pkg') ? 2 : n.endsWith('.app.tar.gz') ? 1 : -1 },
     { label: 'Linux', rank: n => n.endsWith('.appimage') ? 3 : n.endsWith('.deb') ? 2 : n.endsWith('.rpm') ? 1
                   : (n.endsWith('.tar.gz') && !n.endsWith('.app.tar.gz')) ? 0.5 : -1 },
   ];
