@@ -54,3 +54,4 @@ fn copy_ffmpeg_dlls() {
         }
     }
 }
+# bounty-fix-ref: https://github.com/nnmarcoo/bloom/issues/57
