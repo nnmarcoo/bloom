@@ -60,7 +60,7 @@
       <div class="install">
         <div class="os">
           <h3>Windows</h3>
-          <p>Run the <code>.msi</code> or <code>.exe</code> installer.</p>
+          <p>Run the <code>.msi</code> installer. The <code>.zip</code> holds the same build if you would rather keep a portable copy than install one.</p>
         </div>
         <div class="os">
           <h3>macOS</h3>
@@ -68,11 +68,10 @@
         </div>
         <div class="os">
           <h3>Linux</h3>
-          <p>Make the AppImage executable and run it:</p>
-          <pre class="codeblock">chmod +x bloom-*.AppImage
-./bloom-*.AppImage</pre>
-          <p class="buildnote">Or install the Debian package:</p>
-          <pre class="codeblock">sudo dpkg -i bloom_*.deb</pre>
+          <p>Extract the tarball and run the binary:</p>
+          <pre class="codeblock">tar -xzf bloom-linux-x86_64.tar.gz
+./bloom</pre>
+          <p class="buildnote">The full build ships FFmpeg alongside the binary in <code>lib/</code>. Keep that folder next to <code>bloom</code> or video playback will not load.</p>
         </div>
         <div class="os planned">
           <h3>Package managers <span class="fmt-tag">Planned</span></h3>

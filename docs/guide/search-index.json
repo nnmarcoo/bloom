@@ -69,7 +69,7 @@
     "title": "Installation",
     "section": "Get bloom",
     "url": "install.html",
-    "text": "installation download releases windows msi exe installer macos dmg applications unsigned linux appimage chmod debian package dpkg deb package managers planned cargo aur"
+    "text": "installation download releases windows msi installer zip portable macos dmg applications unsigned linux tar gz tarball extract ffmpeg lib folder package managers planned cargo aur"
   },
   {
     "title": "Build from source",
