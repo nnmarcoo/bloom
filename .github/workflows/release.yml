@@ -11,8 +11,37 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  version:
+    name: Check version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # cargo-wix stamps the MSI ProductVersion from Cargo.toml while the macOS
+      # bundle takes CFBundleShortVersionString from the tag. Nothing kept the
+      # two in step, so a forgotten bump ships an installer that Windows will
+      # not treat as an upgrade over the previous one.
+      - name: Cargo.toml version matches the tag
+        run: |
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "not a tag build, nothing to check"
+            exit 0
+          fi
+          tag="${GITHUB_REF_NAME#v}"
+          manifest=$(sed -n '/^\[package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml)
+          if [ -z "$manifest" ]; then
+            echo "::error::could not read the package version from Cargo.toml"
+            exit 1
+          fi
+          if [ "$tag" != "$manifest" ]; then
+            echo "::error::tag $GITHUB_REF_NAME expects version $tag but Cargo.toml has $manifest. Bump Cargo.toml and retag."
+            exit 1
+          fi
+          echo "Cargo.toml $manifest matches tag $GITHUB_REF_NAME"
+
   build:
     name: ${{ matrix.platform }} (${{ matrix.variant }})
+    needs: version
     runs-on: ${{ matrix.runner }}
     env:
       ARTIFACT: bloom-${{ matrix.platform }}${{ matrix.suffix }}.${{ matrix.ext }}
