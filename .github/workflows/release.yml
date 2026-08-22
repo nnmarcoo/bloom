@@ -135,9 +135,12 @@ jobs:
             echo "FFMPEG_DIR=$extracted" >> $env:GITHUB_ENV
           }
 
+      # macos-14 is arm64 only and arm64 macOS starts at 11.0, so the old
+      # 10.15 here did nothing. Pinning the real floor keeps the value honest
+      # and leaves something correct to widen if an Intel job is ever added.
       - name: Set macOS deployment target
         if: matrix.os == 'macos'
-        run: echo "MACOSX_DEPLOYMENT_TARGET=10.15" >> $GITHUB_ENV
+        run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> $GITHUB_ENV
 
       - name: Build
         run: cargo build --release ${{ matrix.features != '' && format('--features {0}', matrix.features) || '' }}

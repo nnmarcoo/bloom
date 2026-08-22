@@ -79,6 +79,8 @@ Prebuilt [releases](https://github.com/nnmarcoo/bloom/releases/latest) come in t
 
 Video is the bulk of the size (it bundles FFmpeg), so grab `-heif` or `-minimal` if you don't need it.
 
+Builds are published for Windows x86_64, Linux x86_64 and Apple Silicon macOS. Intel Macs are not covered yet, so those need a build from source.
+
 ## Build
 
 > The feature flags below only matter when building from source. Prebuilt downloads above already include them.
